@@ -1,0 +1,43 @@
+{
+  "name": "@repo-toolkit/changelog",
+  "description": "Shared conventional changelog preset, generator, and CLI for repository releases",
+  "version": "0.0.0",
+  "license": "Apache-2.0",
+  "type": "module",
+  "sideEffects": false,
+  "keywords": [
+    "changelog",
+    "conventional-changelog",
+    "conventional-commits",
+    "release-it",
+    "tooling"
+  ],
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "bin": {
+    "repo-toolkit-changelog": "dist/cli.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsup --config tsup.config.ts",
+    "test": "pnpm --filter @repo-toolkit/changelog... build && vitest run --config vitest.config.ts",
+    "changelog": "node dist/cli.js"
+  },
+  "files": [
+    "README.md",
+    "dist"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "conventional-changelog": "^7.2.1",
+    "conventional-changelog-conventionalcommits": "^9.3.1"
+  }
+}

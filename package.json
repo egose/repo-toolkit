@@ -1,0 +1,35 @@
+{
+  "name": "repo-toolkit",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Shared monorepo for repository tooling packages",
+  "license": "Apache-2.0",
+  "author": "Junmin Ahn",
+  "packageManager": "pnpm@10.14.0",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "pnpm -r --if-present build",
+    "changelog": "pnpm --filter @repo-toolkit/changelog build && node packages/changelog/dist/cli.js",
+    "publish-all": "pnpm --filter @repo-toolkit/publish-all build && node packages/publish-all/dist/cli.js",
+    "release": "release-it",
+    "test": "pnpm -r --if-present test"
+  },
+  "devDependencies": {
+    "@commitlint/cli": "^20.5.3",
+    "@commitlint/config-conventional": "^20.5.3",
+    "@commitlint/format": "^20.5.0",
+    "@eslint/js": "^10.0.1",
+    "@release-it/bumper": "^7.0.6",
+    "@types/node": "^25.9.4",
+    "eslint": "10.3.0",
+    "globals": "^17.7.0",
+    "prettier": "4.0.0-alpha.13",
+    "release-it": "^20.2.1",
+    "tsup": "^8.5.1",
+    "typescript": "^6.0.3",
+    "typescript-eslint": "^8.63.0",
+    "vitest": "^4.1.10"
+  }
+}

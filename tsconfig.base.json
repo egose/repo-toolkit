@@ -1,0 +1,11 @@
+{
+  "compilerOptions": {
+    "baseUrl": ".",
+    "paths": {
+      "@repo-toolkit/changelog": ["packages/changelog/src/index.ts"],
+      "@repo-toolkit/changelog/*": ["packages/changelog/src/*"],
+      "@repo-toolkit/publish-all": ["packages/publish-all/src/index.ts"],
+      "@repo-toolkit/publish-all/*": ["packages/publish-all/src/*"]
+    }
+  }
+}

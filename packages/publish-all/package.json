@@ -1,0 +1,39 @@
+{
+  "name": "@repo-toolkit/publish-all",
+  "description": "Build, stage, and publish every package in a monorepo to npm",
+  "version": "0.0.0",
+  "license": "Apache-2.0",
+  "type": "module",
+  "sideEffects": false,
+  "keywords": [
+    "monorepo",
+    "publish",
+    "npm",
+    "release",
+    "tooling"
+  ],
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "bin": {
+    "repo-toolkit-publish-all": "dist/cli.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsup --config tsup.config.ts",
+    "test": "pnpm --filter @repo-toolkit/publish-all... build && vitest run --config vitest.config.ts",
+    "publish-all": "node dist/cli.js"
+  },
+  "files": [
+    "README.md",
+    "dist"
+  ],
+  "engines": {
+    "node": ">=20"
+  }
+}
