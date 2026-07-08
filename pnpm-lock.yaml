@@ -60,7 +60,13 @@ importers:
         specifier: ^9.3.1
         version: 9.3.1
 
-  packages/publish-all: {}
+  packages/publish-package: {}
+
+  packages/publish-packages:
+    dependencies:
+      '@repo-toolkit/publish-package':
+        specifier: workspace:*
+        version: link:../publish-package
 
 packages:
 

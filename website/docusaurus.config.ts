@@ -95,8 +95,12 @@ const config: Config = {
               to: '/docs/packages/changelog',
             },
             {
-              label: 'Publish All',
-              to: '/docs/packages/publish-all',
+              label: 'Publish Package',
+              to: '/docs/packages/publish-package',
+            },
+            {
+              label: 'Publish Packages',
+              to: '/docs/packages/publish-packages',
             },
           ],
         },

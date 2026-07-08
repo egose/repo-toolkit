@@ -1,37 +1,45 @@
-# `@repo-toolkit/publish-all`
+# `@repo-toolkit/publish-packages`
 
 Build, stage, and publish every package in a monorepo to npm in dependency order.
 
 ## Installation
 
 ```sh
-pnpm add -D @repo-toolkit/publish-all
+pnpm add -D @repo-toolkit/publish-packages
 ```
 
 ## CLI
 
 ```sh
-repo-toolkit-publish-all --tag v1.2.3
+repo-toolkit-publish-packages --version v1.2.3
 ```
 
-Run the binary from the monorepo root. The tool locates the root `package.json`,
-reads shared metadata (author, bugs, engines, license, repository), then
-iterates over every package under `packages/*`, builds it, copies
-`README.md` / `llms.txt` from each package and the configured root files
-(default `LICENSE`) into the publish directory, rewrites the package manifest
-for publish, and runs `npm publish`.
+Run the binary from the monorepo root. `publish-packages` discovers packages
+under `packages/*`, sorts them by internal dependency order, filters the
+selection, and then calls `@repo-toolkit/publish-package` for each package.
+
+`--tag` is still accepted as a compatibility alias, but `--version` is the
+preferred spelling.
 
 Useful flags:
 
 - `--config <path>` Config file with publish options (JSON, `.mjs`, or `.cjs` default export). CLI flags override config values.
 - `--cwd <path>` Monorepo root directory (default: `process.cwd()`).
-- `--tag <version>` Target version (required). A leading `v` is stripped.
+- `--version <version>` Target version (required). A leading `v` is stripped.
+- `--tag <version>` Compatibility alias for `--version`.
 - `--npm-tag <dist-tag>` npm dist-tag (defaults to the prerelease `preid`).
 - `--filter <name>[,<name>]` Only publish matching packages (by name or directory). Applied before `--from`.
 - `--from <name>` Start publishing from the first package matching this selector, computed against the post-`--filter` list.
+- `--package-files <file>[,<file>]` Files copied from each package root into the publish dir.
 - `--root-files <file>[,<file>]` Files to copy from the monorepo root into each publish dir (default: `['LICENSE']`). Missing files are skipped.
 - `--publish-dir <path>` Publish directory inside each package (default: `dist`).
 - `--version-placeholder <text>` Placeholder rewritten to the target version (default: `0.0.0-PLACEHOLDER`).
+- `--build-command <command>` Command used to build each publish dir (default: `pnpm build`).
+- `--skip-build` Skip the build step.
+- `--access <level>` npm publish access level (default: `public`).
+- `--registry <url>` npm registry URL.
+- `--otp <code>` npm OTP code.
+- `--provenance` Request npm provenance attestation.
 - `--dry-run` Forward `--dry-run` to `npm publish`.
 
 ## Config File
@@ -41,13 +49,15 @@ command line. JSON, `.mjs`, and `.cjs` (default / `module.exports`) configs are
 all supported; use a JS file when you need non-JSON values.
 
 ```js
-/** @type {import('@repo-toolkit/publish-all').PublishAllOptions} */
+/** @type {import('@repo-toolkit/publish-packages').PublishPackagesOptions} */
 export default {
-  tag: '1.2.3',
+  version: '1.2.3',
   filters: ['changelog'],
+  packageFiles: ['README.md', 'llms.txt'],
   rootFiles: ['LICENSE', 'NOTICE'],
   publishDir: 'dist',
   versionPlaceholder: '0.0.0-PLACEHOLDER',
+  buildCommand: 'pnpm build',
   dryRun: true,
 };
 ```
@@ -55,7 +65,7 @@ export default {
 Run it with:
 
 ```sh
-repo-toolkit-publish-all --config publish.config.mjs
+repo-toolkit-publish-packages --config publish.config.mjs
 ```
 
 CLI flags override values from the config file.
@@ -63,12 +73,13 @@ CLI flags override values from the config file.
 ## JavaScript API
 
 ```ts
-import { publishAll } from '@repo-toolkit/publish-all';
+import { publishPackages } from '@repo-toolkit/publish-packages';
 
-publishAll({
-  tag: '1.2.3',
+publishPackages({
+  version: '1.2.3',
   cwd: '/path/to/monorepo',
   filters: ['changelog'],
+  packageFiles: ['README.md', 'llms.txt'],
   rootFiles: ['LICENSE', 'NOTICE'],
   publishDir: 'dist',
   versionPlaceholder: '0.0.0-PLACEHOLDER',
@@ -78,27 +89,31 @@ publishAll({
 
 ### Exports
 
-Pure helpers (no filesystem or process side effects):
-
-- `inferNpmTag(version)` Derive the npm dist-tag from a version string.
-- `createPublishPackageJson(...)` Rewrite a package manifest for publish.
 - `sortPackagesByInternalDependencies(...)` Topologically sort internal packages (throws on cycles).
+- `resolvePublishPackagesPlan(options)` Resolve the selected package list and shared publish options without publishing.
+- `publishPackages(options)` Run the full workspace publish pipeline.
+- `inferNpmTag(version)` Derive the npm dist-tag from a version string.
 
-Pipeline (side-effectful):
-
-- `resolvePublishPlan(options)` Resolve a publish plan (reads filesystem) without publishing. Useful for previewing which packages would be selected.
-- `publishAll(options)` Run the full build + publish pipeline.
+For generic single-package manifest rewriting and npm publish plumbing, use
+`@repo-toolkit/publish-package`.
 
 ### Options
 
-- `tag` _(string, required)_ Target version. A leading `v` is stripped.
+- `version` _(string, required)_ Target version. A leading `v` is stripped.
 - `cwd` _(string)_ Monorepo root directory. Defaults to `process.cwd()`.
 - `npmTag` _(string)_ npm dist-tag. Defaults to the prerelease `preid`.
 - `filters` _(string[])_ Only publish matching packages (by name or directory).
 - `from` _(string)_ Start publishing from the first matching package.
+- `packageFiles` _(string[])_ Files copied from each package root into the publish dir.
 - `rootFiles` _(string[])_ Files to copy from the monorepo root into each publish dir (default: `['LICENSE']`). Missing files are skipped.
 - `publishDir` _(string)_ Publish directory inside each package (default: `dist`).
 - `versionPlaceholder` _(string)_ Placeholder rewritten to the target version (default: `0.0.0-PLACEHOLDER`).
+- `buildCommand` _(string)_ Command used to build each publish dir (default: `pnpm build`).
+- `skipBuild` _(boolean)_ Skip the build step.
+- `access` _(string)_ npm publish access level (default: `public`).
+- `registry` _(string)_ npm registry URL.
+- `otp` _(string)_ npm OTP code.
+- `provenance` _(boolean)_ Request npm provenance attestation.
 - `dryRun` _(boolean)_ Forward `--dry-run` to `npm publish`.
 
 ## Version Placeholders

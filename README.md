@@ -5,12 +5,14 @@ Shared monorepo for repository tooling packages.
 ## Packages
 
 - `@repo-toolkit/changelog`: shared conventional changelog preset, generator, and CLI for repository releases
-- `@repo-toolkit/publish-all`: build, stage, and publish every package in a monorepo to npm in dependency order
+- `@repo-toolkit/publish-package`: build, stage, and publish a single package to npm
+- `@repo-toolkit/publish-packages`: build, stage, and publish every package in a monorepo to npm in dependency order
 
 ## Workspace Layout
 
 - `packages/changelog`: changelog preset, JavaScript API, and `repo-toolkit-changelog` CLI
-- `packages/publish-all`: monorepo publish pipeline and `repo-toolkit-publish-all` CLI
+- `packages/publish-package`: single-package publish pipeline and `repo-toolkit-publish-package` CLI
+- `packages/publish-packages`: monorepo publish pipeline and `repo-toolkit-publish-packages` CLI
 - `website/`: standalone Docusaurus docs site for the workspace packages
 
 ## Development
@@ -31,7 +33,8 @@ Useful root scripts:
 - `pnpm build`
 - `pnpm test`
 - `pnpm changelog`
-- `pnpm publish-all -- --tag v1.2.3`
+- `pnpm publish-package -- --version v1.2.3`
+- `pnpm publish-packages -- --version v1.2.3`
 - `pnpm release`
 
 ## Documentation Site
@@ -52,7 +55,7 @@ The workspace root keeps its own `release-it` setup.
 
 - `pnpm changelog` builds `@repo-toolkit/changelog` and generates the root `CHANGELOG.md`
 - `pnpm release` runs `release-it` using `.release-it.json`
-- the publish workflow publishes package artifacts from git tags via `pnpm publish-all -- --tag <tag>`
+- the publish workflow publishes package artifacts from git tags via `pnpm publish-packages -- --version <tag>`
 
 ## Package Docs
 

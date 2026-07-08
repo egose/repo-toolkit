@@ -1,35 +1,37 @@
 import { readFile } from 'node:fs/promises';
 import { isAbsolute, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { isPlainObject, publishAll, type PublishAllOptions } from './index';
+import { isPlainObject, publishPackages, type PublishPackagesOptions } from './index';
 
 interface ParsedArgs {
   configPath?: string;
-  /**
-   * Only keys explicitly supplied on the command line are present here; absent
-   * keys fall through to the config file. This is what makes the
-   * `{ ...config, ...options }` merge in `main()` give "CLI overrides config"
-   * semantics without per-key footguns.
-   */
-  options: Partial<PublishAllOptions>;
+  options: Partial<PublishPackagesOptions>;
 }
 
 function printHelp(): void {
-  console.log(`repo-toolkit-publish-all
+  console.log(`repo-toolkit-publish-packages
 
 Usage:
-  repo-toolkit-publish-all --tag <version> [options]
+  repo-toolkit-publish-packages --version <version> [options]
 
 Options:
   --config <path>               Config file with publish options (JSON, .mjs, or .cjs default export)
-  --cwd <path>                  Monorepo root directory (default: process.cwd())
-  --tag <version>               Target version (required). A leading "v" is stripped.
+  --cwd <path>                  Workspace root directory (default: process.cwd())
+  --version <version>           Target version (required). A leading "v" is stripped.
+  --tag <version>               Alias for --version (for compatibility)
   --npm-tag <dist-tag>          npm dist-tag (defaults to the prerelease preid)
   --filter <name>[,<name>]      Only publish matching packages (by name or directory)
   --from <name>                 Start publishing from the first matching package (applied after --filter)
-  --root-files <file>[,<file>]  Files to copy from root into each publish dir (default: LICENSE)
+  --package-files <file>[,<file>]  Files copied from each package root into the publish dir
+  --root-files <file>[,<file>]  Files copied from the workspace root into each publish dir
   --publish-dir <path>          Publish directory inside each package (default: dist)
   --version-placeholder <text>  Placeholder rewritten to the target version (default: 0.0.0-PLACEHOLDER)
+  --build-command <command>     Command used to build each publish dir (default: pnpm build)
+  --skip-build                  Skip the build step
+  --access <level>              npm publish access level (default: public)
+  --registry <url>              npm registry URL
+  --otp <code>                  npm OTP code
+  --provenance                  Request npm provenance attestation
   --dry-run                     Forward --dry-run to npm publish
   -h, --help                    Show this help message
 `);
@@ -60,7 +62,7 @@ function resolveConfigPath(configPath: string, cwd?: string): string {
   return resolve(cwd ?? process.cwd(), configPath);
 }
 
-async function loadConfig(configPath: string, cwd?: string): Promise<Partial<PublishAllOptions>> {
+async function loadConfig(configPath: string, cwd?: string): Promise<Partial<PublishPackagesOptions>> {
   const resolvedPath = resolveConfigPath(configPath, cwd);
 
   if (resolvedPath.endsWith('.json')) {
@@ -71,11 +73,9 @@ async function loadConfig(configPath: string, cwd?: string): Promise<Partial<Pub
       throw new Error(`Config file must export an object: ${resolvedPath}`);
     }
 
-    return parsed as Partial<PublishAllOptions>;
+    return parsed as Partial<PublishPackagesOptions>;
   }
 
-  // `.mjs` default exports land on `loaded.default`; `.cjs` `module.exports`
-  // is exposed as `loaded.default` via Node's cjs-interop shim.
   const loaded = (await import(pathToFileURL(resolvedPath).href)) as {
     default?: unknown;
   };
@@ -85,16 +85,14 @@ async function loadConfig(configPath: string, cwd?: string): Promise<Partial<Pub
     throw new Error(`Config file must export an object: ${resolvedPath}`);
   }
 
-  return config as Partial<PublishAllOptions>;
+  return config as Partial<PublishPackagesOptions>;
 }
 
 function parseArgs(argv: string[]): ParsedArgs | null {
-  const options: Partial<PublishAllOptions> = {};
+  const options: Partial<PublishPackagesOptions> = {};
   let configPath: string | undefined;
-
-  // Local accumulators so `options.filters`/`options.rootFiles` are only set
-  // when the CLI actually produced values, preserving config-fallback semantics.
   const filters: string[] = [];
+  const packageFiles: string[] = [];
   const rootFiles: string[] = [];
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -131,41 +129,30 @@ function parseArgs(argv: string[]): ParsedArgs | null {
       continue;
     }
 
-    if (arg === '--dry-run') {
-      options.dryRun = true;
-      continue;
-    }
-
-    if (arg === '--publish-dir') {
-      options.publishDir = readValue(argv, index, arg);
+    if (arg === '--version' || arg === '--tag') {
+      options.version = readValue(argv, index, arg);
       index += 1;
       continue;
     }
 
-    if (arg.startsWith('--publish-dir=')) {
-      options.publishDir = arg.slice('--publish-dir='.length);
-      continue;
-    }
-
-    if (arg === '--version-placeholder') {
-      options.versionPlaceholder = readValue(argv, index, arg);
-      index += 1;
-      continue;
-    }
-
-    if (arg.startsWith('--version-placeholder=')) {
-      options.versionPlaceholder = arg.slice('--version-placeholder='.length);
-      continue;
-    }
-
-    if (arg === '--tag') {
-      options.tag = readValue(argv, index, arg);
-      index += 1;
+    if (arg.startsWith('--version=')) {
+      options.version = arg.slice('--version='.length);
       continue;
     }
 
     if (arg.startsWith('--tag=')) {
-      options.tag = arg.slice('--tag='.length);
+      options.version = arg.slice('--tag='.length);
+      continue;
+    }
+
+    if (arg === '--npm-tag') {
+      options.npmTag = readValue(argv, index, arg);
+      index += 1;
+      continue;
+    }
+
+    if (arg.startsWith('--npm-tag=')) {
+      options.npmTag = arg.slice('--npm-tag='.length);
       continue;
     }
 
@@ -191,14 +178,14 @@ function parseArgs(argv: string[]): ParsedArgs | null {
       continue;
     }
 
-    if (arg === '--npm-tag') {
-      options.npmTag = readValue(argv, index, arg);
+    if (arg === '--package-files') {
+      packageFiles.push(...splitListArg(readValue(argv, index, arg)));
       index += 1;
       continue;
     }
 
-    if (arg.startsWith('--npm-tag=')) {
-      options.npmTag = arg.slice('--npm-tag='.length);
+    if (arg.startsWith('--package-files=')) {
+      packageFiles.push(...splitListArg(arg.slice('--package-files='.length)));
       continue;
     }
 
@@ -213,11 +200,96 @@ function parseArgs(argv: string[]): ParsedArgs | null {
       continue;
     }
 
+    if (arg === '--publish-dir') {
+      options.publishDir = readValue(argv, index, arg);
+      index += 1;
+      continue;
+    }
+
+    if (arg.startsWith('--publish-dir=')) {
+      options.publishDir = arg.slice('--publish-dir='.length);
+      continue;
+    }
+
+    if (arg === '--version-placeholder') {
+      options.versionPlaceholder = readValue(argv, index, arg);
+      index += 1;
+      continue;
+    }
+
+    if (arg.startsWith('--version-placeholder=')) {
+      options.versionPlaceholder = arg.slice('--version-placeholder='.length);
+      continue;
+    }
+
+    if (arg === '--build-command') {
+      options.buildCommand = readValue(argv, index, arg);
+      index += 1;
+      continue;
+    }
+
+    if (arg.startsWith('--build-command=')) {
+      options.buildCommand = arg.slice('--build-command='.length);
+      continue;
+    }
+
+    if (arg === '--skip-build') {
+      options.skipBuild = true;
+      continue;
+    }
+
+    if (arg === '--access') {
+      options.access = readValue(argv, index, arg);
+      index += 1;
+      continue;
+    }
+
+    if (arg.startsWith('--access=')) {
+      options.access = arg.slice('--access='.length);
+      continue;
+    }
+
+    if (arg === '--registry') {
+      options.registry = readValue(argv, index, arg);
+      index += 1;
+      continue;
+    }
+
+    if (arg.startsWith('--registry=')) {
+      options.registry = arg.slice('--registry='.length);
+      continue;
+    }
+
+    if (arg === '--otp') {
+      options.otp = readValue(argv, index, arg);
+      index += 1;
+      continue;
+    }
+
+    if (arg.startsWith('--otp=')) {
+      options.otp = arg.slice('--otp='.length);
+      continue;
+    }
+
+    if (arg === '--provenance') {
+      options.provenance = true;
+      continue;
+    }
+
+    if (arg === '--dry-run') {
+      options.dryRun = true;
+      continue;
+    }
+
     throw new Error(`Unknown argument: ${arg}`);
   }
 
   if (filters.length > 0) {
     options.filters = filters;
+  }
+
+  if (packageFiles.length > 0) {
+    options.packageFiles = packageFiles;
   }
 
   if (rootFiles.length > 0) {
@@ -235,17 +307,16 @@ async function main(): Promise<void> {
   }
 
   const config = parsedArgs.configPath ? await loadConfig(parsedArgs.configPath, parsedArgs.options.cwd) : {};
-
   const options = {
     ...config,
     ...parsedArgs.options,
-  } as PublishAllOptions;
+  } as PublishPackagesOptions;
 
-  if (!options.tag) {
-    throw new Error('`tag` is required. Pass --tag <version> or set `tag` in the config file.');
+  if (!options.version) {
+    throw new Error('version is required. Pass --version <version> or set version in the config file.');
   }
 
-  publishAll(options);
+  publishPackages(options);
 }
 
 main().catch((error: unknown) => {
