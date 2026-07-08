@@ -172,6 +172,11 @@ export function createPublishPackageJson(
       continue;
     }
 
+    if (key === 'bin') {
+      publishPackageJson.bin = rewriteBin(value);
+      continue;
+    }
+
     if (key === 'exports') {
       publishPackageJson.exports = rewriteExports(value);
       continue;
@@ -363,6 +368,18 @@ function rewriteExports(exportsField: unknown): unknown {
   }
 
   return Object.fromEntries(Object.entries(exportsField).map(([key, value]) => [key, rewriteExports(value)]));
+}
+
+function rewriteBin(binField: unknown): unknown {
+  if (typeof binField === 'string') {
+    return rewriteDistPath(binField);
+  }
+
+  if (!isPlainObject(binField)) {
+    return binField;
+  }
+
+  return Object.fromEntries(Object.entries(binField).map(([key, value]) => [key, rewriteDistPath(value as string)]));
 }
 
 function rewriteVersionValue(
