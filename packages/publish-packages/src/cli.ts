@@ -1,7 +1,5 @@
-import { readFile } from 'node:fs/promises';
-import { isAbsolute, resolve } from 'node:path';
-import { pathToFileURL } from 'node:url';
-import { isPlainObject, publishPackages, type PublishPackagesOptions } from './index';
+import { loadConfigFile, readValue, splitListArg } from '@repo-toolkit/publish-package';
+import { publishPackages, type PublishPackagesOptions } from './index';
 
 interface ParsedArgs {
   configPath?: string;
@@ -15,77 +13,30 @@ Usage:
   repo-toolkit-publish-packages --version <version> [options]
 
 Options:
-  --config <path>               Config file with publish options (JSON, .mjs, or .cjs default export)
-  --cwd <path>                  Workspace root directory (default: process.cwd())
-  --version <version>           Target version (required). A leading "v" is stripped.
-  --tag <version>               Alias for --version (for compatibility)
-  --npm-tag <dist-tag>          npm dist-tag (defaults to the prerelease preid)
-  --filter <name>[,<name>]      Only publish matching packages (by name or directory)
-  --from <name>                 Start publishing from the first matching package (applied after --filter)
-  --package-files <file>[,<file>]  Files copied from each package root into the publish dir
-  --root-files <file>[,<file>]  Files copied from the workspace root into each publish dir
-  --publish-dir <path>          Publish directory inside each package (default: dist)
-  --version-placeholder <text>  Placeholder rewritten to the target version (default: 0.0.0-PLACEHOLDER)
-  --build-command <command>     Command used to build each publish dir (default: pnpm build)
-  --skip-build                  Skip the build step
-  --access <level>              npm publish access level (default: public)
-  --registry <url>              npm registry URL
-  --otp <code>                  npm OTP code
-  --provenance                  Request npm provenance attestation
-  --dry-run                     Forward --dry-run to npm publish
-  -h, --help                    Show this help message
+  --config <path>                Config file (JSON, .mjs, or .cjs default export)
+  --cwd <path>                   Workspace root directory (default: process.cwd())
+  --version <version>            Target version (required). A leading "v" is stripped.
+  --tag <version>                Alias for --version
+  --npm-tag <dist-tag>           npm dist-tag (defaults to prerelease preid)
+  --filter <name>[,<name>]       Only publish matching packages (applied before --from)
+  --from <name>                  Start publishing from first matching package
+  --package-files <f>[,<f>]      Files copied from each package root (replaces defaults)
+  --include-package-file <path>  Additional file copied from each package root (repeatable)
+  --no-default-package-files     Skip copying default package files
+  --root-files <f>[,<f>]         Files copied from workspace root (replaces defaults)
+  --include-root-file <path>     Additional file copied from workspace root (repeatable)
+  --no-default-root-files        Skip copying default root files
+  --publish-dir <path>           Publish directory inside each package (default: dist)
+  --version-placeholder <text>   Placeholder rewritten to target version (default: 0.0.0-PLACEHOLDER)
+  --build-command <command>      Command used to build each publish dir (default: pnpm build)
+  --skip-build                   Skip the build step
+  --access <level>               npm publish access level (default: public)
+  --registry <url>               npm registry URL
+  --otp <code>                   npm OTP code
+  --provenance                   Request npm provenance attestation
+  --dry-run                      Forward --dry-run to npm publish
+  -h, --help                     Show this help message
 `);
-}
-
-function readValue(argv: string[], index: number, flag: string): string {
-  const value = argv[index + 1];
-
-  if (!value || value.startsWith('-')) {
-    throw new Error(`Missing value for ${flag}.`);
-  }
-
-  return value;
-}
-
-function splitListArg(value: string): string[] {
-  return value
-    .split(',')
-    .map((part) => part.trim())
-    .filter(Boolean);
-}
-
-function resolveConfigPath(configPath: string, cwd?: string): string {
-  if (isAbsolute(configPath)) {
-    return configPath;
-  }
-
-  return resolve(cwd ?? process.cwd(), configPath);
-}
-
-async function loadConfig(configPath: string, cwd?: string): Promise<Partial<PublishPackagesOptions>> {
-  const resolvedPath = resolveConfigPath(configPath, cwd);
-
-  if (resolvedPath.endsWith('.json')) {
-    const contents = await readFile(resolvedPath, 'utf8');
-    const parsed = JSON.parse(contents) as unknown;
-
-    if (!isPlainObject(parsed)) {
-      throw new Error(`Config file must export an object: ${resolvedPath}`);
-    }
-
-    return parsed as Partial<PublishPackagesOptions>;
-  }
-
-  const loaded = (await import(pathToFileURL(resolvedPath).href)) as {
-    default?: unknown;
-  };
-  const config = loaded.default ?? loaded;
-
-  if (!isPlainObject(config)) {
-    throw new Error(`Config file must export an object: ${resolvedPath}`);
-  }
-
-  return config as Partial<PublishPackagesOptions>;
 }
 
 function parseArgs(argv: string[]): ParsedArgs | null {
@@ -94,6 +45,8 @@ function parseArgs(argv: string[]): ParsedArgs | null {
   const filters: string[] = [];
   const packageFiles: string[] = [];
   const rootFiles: string[] = [];
+  const includePackageFiles: string[] = [];
+  const includeRootFiles: string[] = [];
 
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
@@ -112,7 +65,6 @@ function parseArgs(argv: string[]): ParsedArgs | null {
       index += 1;
       continue;
     }
-
     if (arg.startsWith('--config=')) {
       configPath = arg.slice('--config='.length);
       continue;
@@ -123,7 +75,6 @@ function parseArgs(argv: string[]): ParsedArgs | null {
       index += 1;
       continue;
     }
-
     if (arg.startsWith('--cwd=')) {
       options.cwd = arg.slice('--cwd='.length);
       continue;
@@ -134,12 +85,10 @@ function parseArgs(argv: string[]): ParsedArgs | null {
       index += 1;
       continue;
     }
-
     if (arg.startsWith('--version=')) {
       options.version = arg.slice('--version='.length);
       continue;
     }
-
     if (arg.startsWith('--tag=')) {
       options.version = arg.slice('--tag='.length);
       continue;
@@ -150,7 +99,6 @@ function parseArgs(argv: string[]): ParsedArgs | null {
       index += 1;
       continue;
     }
-
     if (arg.startsWith('--npm-tag=')) {
       options.npmTag = arg.slice('--npm-tag='.length);
       continue;
@@ -161,7 +109,6 @@ function parseArgs(argv: string[]): ParsedArgs | null {
       index += 1;
       continue;
     }
-
     if (arg.startsWith('--filter=')) {
       filters.push(...splitListArg(arg.slice('--filter='.length)));
       continue;
@@ -172,7 +119,6 @@ function parseArgs(argv: string[]): ParsedArgs | null {
       index += 1;
       continue;
     }
-
     if (arg.startsWith('--from=')) {
       options.from = arg.slice('--from='.length);
       continue;
@@ -183,9 +129,23 @@ function parseArgs(argv: string[]): ParsedArgs | null {
       index += 1;
       continue;
     }
-
     if (arg.startsWith('--package-files=')) {
       packageFiles.push(...splitListArg(arg.slice('--package-files='.length)));
+      continue;
+    }
+
+    if (arg === '--include-package-file') {
+      includePackageFiles.push(readValue(argv, index, arg));
+      index += 1;
+      continue;
+    }
+    if (arg.startsWith('--include-package-file=')) {
+      includePackageFiles.push(arg.slice('--include-package-file='.length));
+      continue;
+    }
+
+    if (arg === '--no-default-package-files') {
+      options.noDefaultPackageFiles = true;
       continue;
     }
 
@@ -194,9 +154,23 @@ function parseArgs(argv: string[]): ParsedArgs | null {
       index += 1;
       continue;
     }
-
     if (arg.startsWith('--root-files=')) {
       rootFiles.push(...splitListArg(arg.slice('--root-files='.length)));
+      continue;
+    }
+
+    if (arg === '--include-root-file') {
+      includeRootFiles.push(readValue(argv, index, arg));
+      index += 1;
+      continue;
+    }
+    if (arg.startsWith('--include-root-file=')) {
+      includeRootFiles.push(arg.slice('--include-root-file='.length));
+      continue;
+    }
+
+    if (arg === '--no-default-root-files') {
+      options.noDefaultRootFiles = true;
       continue;
     }
 
@@ -205,7 +179,6 @@ function parseArgs(argv: string[]): ParsedArgs | null {
       index += 1;
       continue;
     }
-
     if (arg.startsWith('--publish-dir=')) {
       options.publishDir = arg.slice('--publish-dir='.length);
       continue;
@@ -216,7 +189,6 @@ function parseArgs(argv: string[]): ParsedArgs | null {
       index += 1;
       continue;
     }
-
     if (arg.startsWith('--version-placeholder=')) {
       options.versionPlaceholder = arg.slice('--version-placeholder='.length);
       continue;
@@ -227,7 +199,6 @@ function parseArgs(argv: string[]): ParsedArgs | null {
       index += 1;
       continue;
     }
-
     if (arg.startsWith('--build-command=')) {
       options.buildCommand = arg.slice('--build-command='.length);
       continue;
@@ -243,7 +214,6 @@ function parseArgs(argv: string[]): ParsedArgs | null {
       index += 1;
       continue;
     }
-
     if (arg.startsWith('--access=')) {
       options.access = arg.slice('--access='.length);
       continue;
@@ -254,7 +224,6 @@ function parseArgs(argv: string[]): ParsedArgs | null {
       index += 1;
       continue;
     }
-
     if (arg.startsWith('--registry=')) {
       options.registry = arg.slice('--registry='.length);
       continue;
@@ -265,7 +234,6 @@ function parseArgs(argv: string[]): ParsedArgs | null {
       index += 1;
       continue;
     }
-
     if (arg.startsWith('--otp=')) {
       options.otp = arg.slice('--otp='.length);
       continue;
@@ -287,13 +255,17 @@ function parseArgs(argv: string[]): ParsedArgs | null {
   if (filters.length > 0) {
     options.filters = filters;
   }
-
   if (packageFiles.length > 0) {
     options.packageFiles = packageFiles;
   }
-
+  if (includePackageFiles.length > 0) {
+    options.includePackageFiles = includePackageFiles;
+  }
   if (rootFiles.length > 0) {
     options.rootFiles = rootFiles;
+  }
+  if (includeRootFiles.length > 0) {
+    options.includeRootFiles = includeRootFiles;
   }
 
   return { configPath, options };
@@ -306,7 +278,9 @@ async function main(): Promise<void> {
     return;
   }
 
-  const config = parsedArgs.configPath ? await loadConfig(parsedArgs.configPath, parsedArgs.options.cwd) : {};
+  const config = parsedArgs.configPath
+    ? await loadConfigFile<PublishPackagesOptions>(parsedArgs.configPath, parsedArgs.options.cwd)
+    : {};
   const options = {
     ...config,
     ...parsedArgs.options,

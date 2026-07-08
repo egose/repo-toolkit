@@ -38,8 +38,12 @@ preferred spelling.
 | `--npm-tag <dist-tag>`            | npm dist-tag                                                                                                 | inferred from the prerelease `preid`        |
 | `--filter <name>[,<name>]`        | Only publish matching packages (by name or directory). Applied before `--from`.                              | —                                           |
 | `--from <name>`                   | Start publishing from the first package matching this selector, computed against the post-`--filter` list.   | —                                           |
-| `--package-files <file>[,<file>]` | Files copied from each package root into the publish dir.                                                    | `['README.md', 'CHANGELOG.md', 'llms.txt']` |
-| `--root-files <file>[,<file>]`    | Files copied from the workspace root into each publish dir.                                                  | `['LICENSE']`                               |
+| `--package-files <file>[,<file>]` | Files copied from each package root into the publish dir (replaces defaults).                                | `['README.md', 'CHANGELOG.md', 'llms.txt']` |
+| `--include-package-file <path>`   | Additional file copied from each package root (repeatable, additive).                                        | —                                           |
+| `--no-default-package-files`      | Skip copying default package files.                                                                          | `false`                                     |
+| `--root-files <file>[,<file>]`    | Files copied from the workspace root into each publish dir (replaces defaults).                              | `['LICENSE']`                               |
+| `--include-root-file <path>`      | Additional file copied from the workspace root (repeatable, additive).                                       | —                                           |
+| `--no-default-root-files`         | Skip copying default root files.                                                                             | `false`                                     |
 | `--publish-dir <path>`            | Publish directory inside each package.                                                                       | `dist`                                      |
 | `--version-placeholder <text>`    | Placeholder rewritten to the target version.                                                                 | `0.0.0-PLACEHOLDER`                         |
 | `--build-command <command>`       | Command used to build each publish dir.                                                                      | `pnpm build`                                |

@@ -7,14 +7,16 @@ import {
   DEFAULT_PUBLISH_DIR,
   DEFAULT_ROOT_FILES,
   DEFAULT_VERSION_PLACEHOLDER,
+  DEPENDENCY_FIELDS,
   inferNpmTag,
   isPlainObject,
+  normalizeVersion,
   publishPackage,
   type PackageJson,
   type PublishPackageOptions,
 } from '@repo-toolkit/publish-package';
 
-export { inferNpmTag, isPlainObject };
+export { inferNpmTag, isPlainObject, normalizeVersion };
 
 export interface PackageEntry {
   dir: string;
@@ -36,8 +38,16 @@ export interface PublishPackagesOptions {
   from?: string;
   /** Files to copy from the package root into each publish directory. */
   packageFiles?: ReadonlyArray<string>;
+  /** Additional files to copy from each package root (appended to `packageFiles`). */
+  includePackageFiles?: ReadonlyArray<string>;
+  /** Skip copying default package files. */
+  noDefaultPackageFiles?: boolean;
   /** Files to copy from the workspace root into each publish directory. */
   rootFiles?: ReadonlyArray<string>;
+  /** Additional files to copy from the workspace root (appended to `rootFiles`). */
+  includeRootFiles?: ReadonlyArray<string>;
+  /** Skip copying default root files. */
+  noDefaultRootFiles?: boolean;
   /** Publish directory inside each package. Defaults to `dist`. */
   publishDir?: string;
   /** Placeholder rewritten to the target version. Defaults to `0.0.0-PLACEHOLDER`. */
@@ -61,7 +71,11 @@ export interface PublishPackagesPlan {
   version: string;
   npmTag?: string;
   packageFiles: ReadonlyArray<string>;
+  includePackageFiles: ReadonlyArray<string>;
+  noDefaultPackageFiles: boolean;
   rootFiles: ReadonlyArray<string>;
+  includeRootFiles: ReadonlyArray<string>;
+  noDefaultRootFiles: boolean;
   publishDir: string;
   versionPlaceholder: string;
   buildCommand: string;
@@ -81,7 +95,8 @@ export function sortPackagesByInternalDependencies(
 ): PackageEntry[] {
   const packagesByName = new Map(packages.map((pkg) => [pkg.packageJson.name as string, pkg]));
   const visited = new Set<string>();
-  const visiting: string[] = [];
+  const visitingSet = new Set<string>();
+  const visitingOrder: string[] = [];
   const ordered: PackageEntry[] = [];
 
   for (const pkg of packages) {
@@ -96,12 +111,14 @@ export function sortPackagesByInternalDependencies(
       return;
     }
 
-    if (visiting.includes(packageName)) {
-      const cycle = [...visiting, packageName].join(' -> ');
+    if (visitingSet.has(packageName)) {
+      const cycleStart = visitingOrder.indexOf(packageName);
+      const cycle = [...visitingOrder.slice(cycleStart), packageName].join(' -> ');
       throw new Error(`Circular internal dependency detected: ${cycle}`);
     }
 
-    visiting.push(packageName);
+    visitingSet.add(packageName);
+    visitingOrder.push(packageName);
 
     for (const dependencyName of getInternalDependencies(pkg.packageJson, internalPackageNames)) {
       const dependencyPackage = packagesByName.get(dependencyName);
@@ -110,7 +127,8 @@ export function sortPackagesByInternalDependencies(
       }
     }
 
-    visiting.pop();
+    visitingOrder.pop();
+    visitingSet.delete(packageName);
     visited.add(packageName);
     ordered.push(pkg);
   }
@@ -118,7 +136,7 @@ export function sortPackagesByInternalDependencies(
 
 export function resolvePublishPackagesPlan(options: PublishPackagesOptions): PublishPackagesPlan {
   const version = normalizeVersion(options.version);
-  const rootDir = resolveRootDir(options.cwd);
+  const rootDir = path.resolve(options.cwd ?? process.cwd());
   const packages = discoverPackages(rootDir);
   const internalPackageNames = new Set(packages.map((pkg) => pkg.packageJson.name as string));
   const orderedPackages = selectPackages(
@@ -136,7 +154,11 @@ export function resolvePublishPackagesPlan(options: PublishPackagesOptions): Pub
     version,
     npmTag: options.npmTag ?? inferNpmTag(version),
     packageFiles: options.packageFiles ?? DEFAULT_PACKAGE_FILES,
+    includePackageFiles: options.includePackageFiles ?? [],
+    noDefaultPackageFiles: options.noDefaultPackageFiles ?? false,
     rootFiles: options.rootFiles ?? DEFAULT_ROOT_FILES,
+    includeRootFiles: options.includeRootFiles ?? [],
+    noDefaultRootFiles: options.noDefaultRootFiles ?? false,
     publishDir: options.publishDir ?? DEFAULT_PUBLISH_DIR,
     versionPlaceholder: options.versionPlaceholder ?? DEFAULT_VERSION_PLACEHOLDER,
     buildCommand: options.buildCommand ?? DEFAULT_BUILD_COMMAND,
@@ -168,7 +190,11 @@ export function publishPackages(options: PublishPackagesOptions): void {
       npmTag: plan.npmTag,
       dryRun: plan.dryRun,
       packageFiles: plan.packageFiles,
+      includePackageFiles: plan.includePackageFiles,
+      noDefaultPackageFiles: plan.noDefaultPackageFiles,
       rootFiles: plan.rootFiles,
+      includeRootFiles: plan.includeRootFiles,
+      noDefaultRootFiles: plan.noDefaultRootFiles,
       publishDir: plan.publishDir,
       versionPlaceholder: plan.versionPlaceholder,
       buildCommand: plan.buildCommand,
@@ -180,18 +206,6 @@ export function publishPackages(options: PublishPackagesOptions): void {
       internalPackageNames: plan.internalPackageNames,
     } satisfies PublishPackageOptions);
   }
-}
-
-function normalizeVersion(rawVersion: string): string {
-  if (!rawVersion) {
-    throw new Error('version not supplied');
-  }
-
-  return rawVersion.startsWith('v') ? rawVersion.slice(1) : rawVersion;
-}
-
-function resolveRootDir(cwd: string | undefined): string {
-  return path.resolve(cwd ?? process.cwd());
 }
 
 function readJson(filePath: string): PackageJson {
@@ -219,9 +233,9 @@ function discoverPackages(rootDir: string): PackageEntry[] {
 function getInternalDependencies(packageJson: PackageJson, internalPackageNames: Set<string>): Set<string> {
   const dependencyNames = new Set<string>();
 
-  for (const field of ['dependencies', 'peerDependencies', 'optionalDependencies']) {
+  for (const field of DEPENDENCY_FIELDS) {
     const dependencies = packageJson[field];
-    if (!dependencies || typeof dependencies !== 'object' || Array.isArray(dependencies)) {
+    if (!isPlainObject(dependencies)) {
       continue;
     }
 
@@ -262,12 +276,12 @@ function selectPackages(
   }
 
   if (from) {
-    const startIndex = selectedPackages.findIndex((pkg) => matchesSelector(pkg, from));
-    if (startIndex === -1) {
+    const fromIndex = selectedPackages.findIndex((pkg) => matchesSelector(pkg, from));
+    if (fromIndex === -1) {
       throw new Error(`No package matched --from ${from}`);
     }
 
-    selectedPackages = selectedPackages.slice(startIndex);
+    selectedPackages = selectedPackages.slice(fromIndex);
   }
 
   return selectedPackages;

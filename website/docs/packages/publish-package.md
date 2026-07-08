@@ -35,11 +35,16 @@ omit `--version`. If `package.json.version` still uses the placeholder, pass
 | `--root-dir <path>`               | Directory to source `rootFiles` from                                                                         | `cwd`                                       |
 | `--package-json <path>`           | Source package.json path                                                                                     | `package.json`                              |
 | `--version <version>`             | Target package version. A leading `v` is stripped.                                                           | `package.json.version`                      |
+| `--tag <version>`                 | Alias for `--version`                                                                                        | —                                           |
 | `--npm-tag <dist-tag>`            | npm dist-tag                                                                                                 | inferred from the prerelease `preid`        |
 | `--publish-dir <path>`            | Publish directory inside the package root.                                                                   | `dist`                                      |
 | `--version-placeholder <text>`    | Placeholder rewritten to the target version.                                                                 | `0.0.0-PLACEHOLDER`                         |
-| `--package-files <file>[,<file>]` | Files copied from the package root into the publish dir.                                                     | `['README.md', 'CHANGELOG.md', 'llms.txt']` |
-| `--root-files <file>[,<file>]`    | Files copied from `rootDir` into the publish dir.                                                            | `['LICENSE']`                               |
+| `--package-files <file>[,<file>]` | Files copied from the package root into the publish dir (replaces defaults). Subpaths are flattened.         | `['README.md', 'CHANGELOG.md', 'llms.txt']` |
+| `--include-package-file <path>`   | Additional file copied from the package root (repeatable, additive).                                         | —                                           |
+| `--no-default-package-files`      | Skip copying default package files.                                                                          | `false`                                     |
+| `--root-files <file>[,<file>]`    | Files copied from `rootDir` into the publish dir (replaces defaults).                                        | `['LICENSE']`                               |
+| `--include-root-file <path>`      | Additional file copied from `rootDir` (repeatable, additive).                                                | —                                           |
+| `--no-default-root-files`         | Skip copying default root files.                                                                             | `false`                                     |
 | `--build-command <command>`       | Command used to build the publish dir.                                                                       | `pnpm build`                                |
 | `--skip-build`                    | Skip the build step                                                                                          | `false`                                     |
 | `--access <level>`                | npm publish access level                                                                                     | `public`                                    |

@@ -1,9 +1,12 @@
 import { execFileSync } from 'node:child_process';
 import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import path from 'node:path';
+import { isAbsolute, resolve, relative as pathRelative, basename as pathBasename } from 'node:path';
+import { pathToFileURL } from 'node:url';
+import { readFile } from 'node:fs/promises';
 
 const PACKAGE_JSON = 'package.json';
-const DEPENDENCY_FIELDS = ['dependencies', 'peerDependencies', 'optionalDependencies'];
+export const DEPENDENCY_FIELDS = ['dependencies', 'peerDependencies', 'optionalDependencies'] as const;
+
 const OMITTED_FIELDS = new Set([
   'additionalNames',
   'devDependencies',
@@ -21,19 +24,28 @@ export const DEFAULT_PACKAGE_FILES = ['README.md', 'CHANGELOG.md', 'llms.txt'];
 export const DEFAULT_ROOT_FILES = ['LICENSE'];
 export const DEFAULT_BUILD_COMMAND = 'pnpm build';
 export const DEFAULT_ACCESS = 'public';
+export const DEFAULT_PUBLISH_FILES_FIELD = ['**/*', '!**/*.map'];
 
 export type PackageJson = Record<string, unknown>;
 
 export interface RootMetadata {
-  author?: unknown;
-  bugs?: unknown;
-  engines?: unknown;
-  license?: unknown;
-  repository?: unknown;
+  author?: Record<string, unknown> | string;
+  bugs?: Record<string, unknown> | string;
+  engines?: Record<string, string>;
+  license?: string;
+  repository?: Record<string, unknown> | string;
 }
 
 export interface PublishRewriteOptions {
   versionPlaceholder?: string;
+  publishDir?: string;
+}
+
+export interface CreatePublishPackageJsonOptions {
+  version: string;
+  internalPackageNames: Set<string>;
+  rootMetadata?: RootMetadata;
+  rewrite?: PublishRewriteOptions;
 }
 
 export interface PublishPackageOptions {
@@ -59,8 +71,16 @@ export interface PublishPackageOptions {
   provenance?: boolean;
   /** Files to copy from the package root into the publish directory. */
   packageFiles?: ReadonlyArray<string>;
+  /** Additional files to copy from the package root (appended to `packageFiles`). */
+  includePackageFiles?: ReadonlyArray<string>;
+  /** Skip copying default package files. */
+  noDefaultPackageFiles?: boolean;
   /** Files to copy from the rootDir into the publish directory. */
   rootFiles?: ReadonlyArray<string>;
+  /** Additional files to copy from the rootDir (appended to `rootFiles`). */
+  includeRootFiles?: ReadonlyArray<string>;
+  /** Skip copying default root files. */
+  noDefaultRootFiles?: boolean;
   /** Publish directory inside the package root. Defaults to `dist`. */
   publishDir?: string;
   /** Placeholder rewritten to the target version. Defaults to `0.0.0-PLACEHOLDER`. */
@@ -97,6 +117,65 @@ export interface PublishPackagePlan {
   internalPackageNames: Set<string>;
 }
 
+// ---------------------------------------------------------------------------
+// Shared CLI helpers (exported for reuse by publish-packages CLI)
+// ---------------------------------------------------------------------------
+
+export function readValue(argv: string[], index: number, flag: string): string {
+  const value = argv[index + 1];
+
+  if (!value || value.startsWith('-')) {
+    throw new Error(`Missing value for ${flag}.`);
+  }
+
+  return value;
+}
+
+export function splitListArg(value: string): string[] {
+  return value
+    .split(',')
+    .map((part) => part.trim())
+    .filter(Boolean);
+}
+
+export function resolveConfigPath(configPath: string, cwd?: string): string {
+  if (isAbsolute(configPath)) {
+    return configPath;
+  }
+
+  return resolve(cwd ?? process.cwd(), configPath);
+}
+
+export async function loadConfigFile<T>(configPath: string, cwd?: string): Promise<Partial<T>> {
+  const resolvedPath = resolveConfigPath(configPath, cwd);
+
+  if (resolvedPath.endsWith('.json')) {
+    const contents = await readFile(resolvedPath, 'utf8');
+    const parsed = JSON.parse(contents) as unknown;
+
+    if (!isPlainObject(parsed)) {
+      throw new Error(`Config file must export an object: ${resolvedPath}`);
+    }
+
+    return parsed as Partial<T>;
+  }
+
+  const loaded = (await import(pathToFileURL(resolvedPath).href)) as {
+    default?: unknown;
+  };
+  const config = loaded.default ?? loaded;
+
+  if (!isPlainObject(config)) {
+    throw new Error(`Config file must export an object: ${resolvedPath}`);
+  }
+
+  return config as Partial<T>;
+}
+
+// ---------------------------------------------------------------------------
+// Pure helpers
+// ---------------------------------------------------------------------------
+
 export function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
@@ -115,15 +194,22 @@ export function inferNpmTag(version: string): string | undefined {
   return preid || undefined;
 }
 
+export function normalizeVersion(rawVersion: string): string {
+  if (!rawVersion) {
+    throw new Error('version not supplied');
+  }
+
+  return rawVersion.startsWith('v') ? rawVersion.slice(1) : rawVersion;
+}
+
 export function createPublishPackageJson(
   packageJson: PackageJson,
-  version: string,
-  internalPackageNames: Set<string>,
-  rootMetadata: RootMetadata,
-  rewriteOptions: PublishRewriteOptions = {},
+  options: CreatePublishPackageJsonOptions,
 ): PackageJson {
+  const { version, internalPackageNames, rootMetadata = {}, rewrite = {} } = options;
+  const versionPlaceholder = rewrite.versionPlaceholder ?? DEFAULT_VERSION_PLACEHOLDER;
+  const publishDir = rewrite.publishDir ?? DEFAULT_PUBLISH_DIR;
   const publishPackageJson: PackageJson = {};
-  const versionPlaceholder = rewriteOptions.versionPlaceholder ?? DEFAULT_VERSION_PLACEHOLDER;
 
   for (const [key, value] of Object.entries(packageJson)) {
     if (OMITTED_FIELDS.has(key)) {
@@ -141,28 +227,32 @@ export function createPublishPackageJson(
       continue;
     }
 
-    if (DEPENDENCY_FIELDS.includes(key)) {
+    if ((DEPENDENCY_FIELDS as readonly string[]).includes(key)) {
       publishPackageJson[key] = rewriteDependencyMap(value, version, internalPackageNames, versionPlaceholder);
       continue;
     }
 
     if (key === 'main' || key === 'module' || key === 'types') {
-      publishPackageJson[key] = rewriteDistPath(value as string);
+      publishPackageJson[key] = rewriteDistPath(value as string, publishDir);
       continue;
     }
 
     if (key === 'bin') {
-      publishPackageJson.bin = rewriteBin(value);
+      publishPackageJson.bin = rewriteBin(value, publishDir);
       continue;
     }
 
     if (key === 'exports') {
-      publishPackageJson.exports = rewriteExports(value);
+      publishPackageJson.exports = rewriteExports(value, publishDir);
       continue;
     }
 
     publishPackageJson[key] = value;
   }
+
+  // Inject a `files` field so npm doesn't accidentally include stray files
+  // (e.g. .map files, temp artefacts) from the publish directory.
+  publishPackageJson.files = [...DEFAULT_PUBLISH_FILES_FIELD];
 
   if (rootMetadata.author !== undefined) {
     publishPackageJson.author = rootMetadata.author;
@@ -203,15 +293,25 @@ export function resolvePublishPackagePlan(options: PublishPackageOptions = {}): 
     rootDir,
     packageJsonPath,
     publishDir,
-    resolvedPublishDir: path.join(cwd, publishDir),
+    resolvedPublishDir: resolve(cwd, publishDir),
     sourcePackageJson,
     rootPackageJson,
     packageNames,
     version,
     npmTag: options.npmTag ?? inferNpmTag(version),
     versionPlaceholder,
-    packageFiles: options.packageFiles ?? DEFAULT_PACKAGE_FILES,
-    rootFiles: options.rootFiles ?? DEFAULT_ROOT_FILES,
+    packageFiles: resolveFileList(
+      options.packageFiles,
+      options.includePackageFiles,
+      options.noDefaultPackageFiles,
+      DEFAULT_PACKAGE_FILES,
+    ),
+    rootFiles: resolveFileList(
+      options.rootFiles,
+      options.includeRootFiles,
+      options.noDefaultRootFiles,
+      DEFAULT_ROOT_FILES,
+    ),
     buildCommand: options.buildCommand ?? DEFAULT_BUILD_COMMAND,
     skipBuild: options.skipBuild ?? false,
     access: options.access ?? DEFAULT_ACCESS,
@@ -243,23 +343,23 @@ export function publishPackage(options: PublishPackageOptions = {}): void {
   copyFilesFromDirectory(plan.cwd, plan.resolvedPublishDir, plan.packageFiles);
   copyFilesFromDirectory(plan.rootDir, plan.resolvedPublishDir, plan.rootFiles);
 
-  const publishPackageData = createPublishPackageJson(
-    plan.sourcePackageJson,
-    plan.version,
-    plan.internalPackageNames,
-    {
-      author: plan.rootPackageJson.author,
-      bugs: plan.rootPackageJson.bugs,
-      engines: plan.rootPackageJson.engines,
-      license: plan.rootPackageJson.license,
-      repository: mergeRepository(plan.rootPackageJson.repository, path.relative(plan.rootDir, plan.cwd)),
+  const publishPackageData = createPublishPackageJson(plan.sourcePackageJson, {
+    version: plan.version,
+    internalPackageNames: plan.internalPackageNames,
+    rootMetadata: {
+      author: plan.rootPackageJson.author as RootMetadata['author'],
+      bugs: plan.rootPackageJson.bugs as RootMetadata['bugs'],
+      engines: plan.rootPackageJson.engines as Record<string, string> | undefined,
+      license: plan.rootPackageJson.license as string | undefined,
+      repository: mergeRepository(plan.rootPackageJson.repository, pathRelative(plan.rootDir, plan.cwd)),
     },
-    {
+    rewrite: {
       versionPlaceholder: plan.versionPlaceholder,
+      publishDir: plan.publishDir,
     },
-  );
+  });
 
-  const targetPackageJson = path.join(plan.resolvedPublishDir, PACKAGE_JSON);
+  const targetPackageJson = resolve(plan.resolvedPublishDir, PACKAGE_JSON);
 
   for (const name of plan.packageNames) {
     writeJson(targetPackageJson, {
@@ -270,20 +370,35 @@ export function publishPackage(options: PublishPackageOptions = {}): void {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Private helpers
+// ---------------------------------------------------------------------------
+
+function resolveFileList(
+  explicit: ReadonlyArray<string> | undefined,
+  additional: ReadonlyArray<string> | undefined,
+  noDefaults: boolean | undefined,
+  defaults: ReadonlyArray<string>,
+): ReadonlyArray<string> {
+  const base = noDefaults ? (explicit ?? []) : (explicit ?? defaults);
+  const extra = additional ?? [];
+  return [...base, ...extra];
+}
+
 function resolveDirectory(input: string | undefined, fallback: string): string {
-  return path.resolve(input ?? fallback);
+  return resolve(input ?? fallback);
 }
 
 function resolveInputPath(baseDir: string, inputPath: string): string {
-  if (path.isAbsolute(inputPath)) {
+  if (isAbsolute(inputPath)) {
     return inputPath;
   }
 
-  return path.resolve(baseDir, inputPath);
+  return resolve(baseDir, inputPath);
 }
 
 function normalizePublishDir(publishDir: string): string {
-  if (path.isAbsolute(publishDir)) {
+  if (isAbsolute(publishDir)) {
     throw new Error(`publishDir must be relative: ${publishDir}`);
   }
 
@@ -314,14 +429,6 @@ function resolveVersion(
   }
 
   return normalizeVersion(packageJsonVersion);
-}
-
-function normalizeVersion(rawVersion: string): string {
-  if (!rawVersion) {
-    throw new Error('version not supplied');
-  }
-
-  return rawVersion.startsWith('v') ? rawVersion.slice(1) : rawVersion;
 }
 
 function resolvePackageNames(packageJson: PackageJson): string[] {
@@ -358,20 +465,27 @@ function writeJson(filePath: string, value: unknown): void {
 }
 
 function runShellCommand(command: string, cwd: string): void {
-  execFileSync('bash', ['-lc', command], {
+  execFileSync('bash', ['-c', command], {
     cwd,
     stdio: 'inherit',
   });
 }
 
+/**
+ * Copies files from `sourceDir` into `publishDir`.
+ *
+ * Subpaths are flattened: `--package-files docs/llms.txt` copies to
+ * `dist/llms.txt`, not `dist/docs/llms.txt`. This matches npm's publish
+ * directory semantics where the publish dir is the root of the tarball.
+ */
 function copyFilesFromDirectory(sourceDir: string, publishDir: string, fileNames: ReadonlyArray<string>): void {
   for (const fileName of fileNames) {
-    const sourcePath = path.join(sourceDir, fileName);
+    const sourcePath = resolve(sourceDir, fileName);
     if (!existsSync(sourcePath)) {
       continue;
     }
 
-    copyFileSync(sourcePath, path.join(publishDir, path.basename(fileName)));
+    copyFileSync(sourcePath, resolve(publishDir, pathBasename(fileName)));
   }
 }
 
@@ -405,32 +519,41 @@ function runNpmPublish(plan: PublishPackagePlan, packageName: string): void {
   });
 }
 
-function rewriteDistPath(value: string): string {
-  return value.replace(/^\.\/dist\//, './').replace(/^dist\//, './');
+/**
+ * Rewrites `dist/foo` → `./foo` (and `./dist/foo` → `./foo`) using the
+ * configured `publishDir` instead of a hardcoded `"dist"`.
+ */
+function rewriteDistPath(value: string, publishDir: string): string {
+  const escaped = publishDir.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return value.replace(new RegExp(`^\\.\\/${escaped}/`), './').replace(new RegExp(`^${escaped}/`), './');
 }
 
-function rewriteExports(exportsField: unknown): unknown {
+function rewriteExports(exportsField: unknown, publishDir: string): unknown {
   if (typeof exportsField === 'string') {
-    return rewriteDistPath(exportsField);
+    return rewriteDistPath(exportsField, publishDir);
   }
 
   if (!isPlainObject(exportsField)) {
     return exportsField;
   }
 
-  return Object.fromEntries(Object.entries(exportsField).map(([key, value]) => [key, rewriteExports(value)]));
+  return Object.fromEntries(
+    Object.entries(exportsField).map(([key, value]) => [key, rewriteExports(value, publishDir)]),
+  );
 }
 
-function rewriteBin(binField: unknown): unknown {
+function rewriteBin(binField: unknown, publishDir: string): unknown {
   if (typeof binField === 'string') {
-    return rewriteDistPath(binField);
+    return rewriteDistPath(binField, publishDir);
   }
 
   if (!isPlainObject(binField)) {
     return binField;
   }
 
-  return Object.fromEntries(Object.entries(binField).map(([key, value]) => [key, rewriteDistPath(value as string)]));
+  return Object.fromEntries(
+    Object.entries(binField).map(([key, value]) => [key, rewriteDistPath(value as string, publishDir)]),
+  );
 }
 
 function rewriteVersionValue(
@@ -480,7 +603,14 @@ function rewriteDependencyMap(
   return rewritten;
 }
 
-function mergeRepository(rootRepositoryValue: unknown, packageDirectory: string): Record<string, unknown> | undefined {
+function mergeRepository(
+  rootRepositoryValue: unknown,
+  packageDirectory: string,
+): Record<string, unknown> | string | undefined {
+  if (typeof rootRepositoryValue === 'string') {
+    return rootRepositoryValue;
+  }
+
   if (!isPlainObject(rootRepositoryValue)) {
     return undefined;
   }

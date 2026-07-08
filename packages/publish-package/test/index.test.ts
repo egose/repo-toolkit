@@ -28,11 +28,10 @@ describe('createPublishPackageJson', () => {
           '@repo-toolkit/publish-package': '__VERSION__',
         },
       },
-      '1.2.3',
-      internalNames,
-      {},
       {
-        versionPlaceholder: '__VERSION__',
+        version: '1.2.3',
+        internalPackageNames: internalNames,
+        rewrite: { versionPlaceholder: '__VERSION__' },
       },
     );
 
@@ -59,9 +58,10 @@ describe('createPublishPackageJson', () => {
           },
         },
       },
-      '1.2.3',
-      internalNames,
-      {},
+      {
+        version: '1.2.3',
+        internalPackageNames: internalNames,
+      },
     );
 
     expect(out.main).toBe('./index.js');
@@ -75,6 +75,64 @@ describe('createPublishPackageJson', () => {
         import: './index.js',
       },
     });
+  });
+
+  it('rewrites paths using a configurable publishDir', () => {
+    const out = createPublishPackageJson(
+      {
+        name: '@repo-toolkit/publish-package',
+        version: '0.0.0-PLACEHOLDER',
+        main: 'build/index.js',
+        types: 'build/index.d.ts',
+        bin: { cli: 'build/cli.js' },
+      },
+      {
+        version: '1.2.3',
+        internalPackageNames: internalNames,
+        rewrite: { publishDir: 'build' },
+      },
+    );
+
+    expect(out.main).toBe('./index.js');
+    expect(out.types).toBe('./index.d.ts');
+    expect(out.bin).toEqual({ cli: './cli.js' });
+  });
+
+  it('injects a files field that excludes sourcemaps', () => {
+    const out = createPublishPackageJson(
+      {
+        name: '@repo-toolkit/publish-package',
+        version: '0.0.0-PLACEHOLDER',
+      },
+      {
+        version: '1.2.3',
+        internalPackageNames: internalNames,
+      },
+    );
+
+    expect(out.files).toEqual(['**/*', '!**/*.map']);
+  });
+
+  it('merges root metadata fields', () => {
+    const out = createPublishPackageJson(
+      {
+        name: '@repo-toolkit/publish-package',
+        version: '0.0.0-PLACEHOLDER',
+      },
+      {
+        version: '1.2.3',
+        internalPackageNames: internalNames,
+        rootMetadata: {
+          author: 'Junmin Ahn',
+          license: 'Apache-2.0',
+          engines: { node: '>=20' },
+        },
+      },
+    );
+
+    expect(out.author).toBe('Junmin Ahn');
+    expect(out.license).toBe('Apache-2.0');
+    expect(out.engines).toEqual({ node: '>=20' });
   });
 });
 
@@ -121,10 +179,35 @@ describe('resolvePublishPackagePlan', () => {
     expect(plan.publishDir).toBe('build-artifacts');
     expect(plan.versionPlaceholder).toBe('__VERSION__');
   });
+
+  it('appends includePackageFiles to defaults', () => {
+    const cwd = process.cwd();
+
+    const plan = resolvePublishPackagePlan({
+      cwd,
+      version: '1.2.3',
+      includePackageFiles: ['llms.txt', 'extra.md'],
+    });
+
+    expect(plan.packageFiles).toEqual(['README.md', 'CHANGELOG.md', 'llms.txt', 'llms.txt', 'extra.md']);
+  });
+
+  it('replaces defaults when noDefaultPackageFiles is set', () => {
+    const cwd = process.cwd();
+
+    const plan = resolvePublishPackagePlan({
+      cwd,
+      version: '1.2.3',
+      noDefaultPackageFiles: true,
+      packageFiles: ['only-this.md'],
+    });
+
+    expect(plan.packageFiles).toEqual(['only-this.md']);
+  });
 });
 
 describe('publishPackage', () => {
-  it('writes a publish-ready package.json and copies files in dry-run mode', async () => {
+  it('writes a publish-ready package.json and copies files in dry-run mode (last additionalName wins)', async () => {
     const rootDir = await mkdtemp(join(tmpdir(), 'repo-toolkit-publish-package-'));
     const publishDir = join(rootDir, 'dist');
 
@@ -153,12 +236,16 @@ describe('publishPackage', () => {
       publishPackage({
         cwd: rootDir,
         version: '1.2.3',
+        skipBuild: true,
         dryRun: true,
       });
 
+      // The loop writes package.json N times (once per name); the last write
+      // wins, so the file on disk has the last additionalName.
       const publishPackageJson = JSON.parse(await readFile(join(publishDir, 'package.json'), 'utf8'));
       expect(publishPackageJson.name).toBe('@example/pkg-alt');
       expect(publishPackageJson.main).toBe('./index.js');
+      expect(publishPackageJson.files).toEqual(['**/*', '!**/*.map']);
       expect(existsSync(join(publishDir, 'README.md'))).toBe(true);
       expect(existsSync(join(publishDir, 'CHANGELOG.md'))).toBe(true);
       expect(existsSync(join(publishDir, 'LICENSE'))).toBe(true);
