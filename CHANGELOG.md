@@ -1,3 +1,9 @@
+## [0.4.1](https://github.com/egose/repo-toolkit/compare/v0.4.0...v0.4.1) (2026-07-08)
+
+### Bug Fixes
+
+* include package dependencies in publish scripts ([a7a755a](https://github.com/egose/repo-toolkit/commit/a7a755a998ecaa18285443f792092d1692628aca))
+
 ## [0.4.0](https://github.com/egose/repo-toolkit/compare/v0.3.0...v0.4.0) (2026-07-08)
 
 ### Features
