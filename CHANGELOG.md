@@ -1,3 +1,9 @@
+## [0.2.0](https://github.com/egose/repo-toolkit/compare/v0.1.0...v0.2.0) (2026-07-08)
+
+### Features
+
+* **publish-all:** rewrite bin paths in published package json ([821b41d](https://github.com/egose/repo-toolkit/commit/821b41db936c9c7aa0b7a1ec07daf7df40a0f107))
+
 ## [0.1.0](https://github.com/egose/repo-toolkit/compare/v0.0.1...v0.1.0) (2026-07-08)
 
 ### Features
