@@ -1,7 +1,7 @@
 "use strict";
-(globalThis["webpackChunkwebsite"] = globalThis["webpackChunkwebsite"] || []).push([[37],{
+(globalThis["webpackChunkwebsite"] = globalThis["webpackChunkwebsite"] || []).push([[652],{
 
-/***/ 6030
+/***/ 4764
 (__unused_webpack_module, __webpack_exports__, __webpack_require__) {
 
 // ESM COMPAT FLAG
@@ -13,12 +13,12 @@ __webpack_require__.d(__webpack_exports__, {
   contentTitle: () => (/* binding */ contentTitle),
   "default": () => (/* binding */ MDXContent),
   frontMatter: () => (/* binding */ frontMatter),
-  metadata: () => (/* reexport */ site_docs_packages_publish_all_md_0ed_namespaceObject),
+  metadata: () => (/* reexport */ site_docs_packages_publish_packages_md_5a4_namespaceObject),
   toc: () => (/* binding */ toc)
 });
 
-;// ./.docusaurus/docusaurus-plugin-content-docs/default/site-docs-packages-publish-all-md-0ed.json
-const site_docs_packages_publish_all_md_0ed_namespaceObject = /*#__PURE__*/JSON.parse('{"id":"packages/publish-all","title":"@repo-toolkit/publish-all","description":"Build, stage, and publish every package in a monorepo to npm in dependency order.","source":"@site/docs/packages/publish-all.md","sourceDirName":"packages","slug":"/packages/publish-all","permalink":"/docs/packages/publish-all","draft":false,"unlisted":false,"tags":[],"version":"current","sidebarPosition":2,"frontMatter":{"sidebar_label":"Publish All","sidebar_position":2},"sidebar":"packagesSidebar","previous":{"title":"Default Sections","permalink":"/docs/packages/changelog/default-sections"}}');
+;// ./.docusaurus/docusaurus-plugin-content-docs/default/site-docs-packages-publish-packages-md-5a4.json
+const site_docs_packages_publish_packages_md_5a4_namespaceObject = /*#__PURE__*/JSON.parse('{"id":"packages/publish-packages","title":"@repo-toolkit/publish-packages","description":"Build, stage, and publish every package in a monorepo to npm in dependency order.","source":"@site/docs/packages/publish-packages.md","sourceDirName":"packages","slug":"/packages/publish-packages","permalink":"/docs/packages/publish-packages","draft":false,"unlisted":false,"tags":[],"version":"current","sidebarPosition":3,"frontMatter":{"sidebar_label":"Publish Packages","sidebar_position":3},"sidebar":"packagesSidebar","previous":{"title":"Publish Package","permalink":"/docs/packages/publish-package"}}');
 // EXTERNAL MODULE: ./node_modules/.pnpm/react@19.2.6/node_modules/react/jsx-runtime.js
 var jsx_runtime = __webpack_require__(1325);
 // EXTERNAL MODULE: ./node_modules/.pnpm/@mdx-js+react@3.1.1_@types+react@19.2.14_react@19.2.6/node_modules/@mdx-js/react/lib/index.js
@@ -27,14 +27,14 @@ var lib = __webpack_require__(1982);
 var Tabs = __webpack_require__(5250);
 // EXTERNAL MODULE: ./node_modules/.pnpm/@docusaurus+theme-classic@3.10.1_@types+react@19.2.14_react-dom@19.2.6_react@19.2.6__react@19.2.6_typescript@6.0.3/node_modules/@docusaurus/theme-classic/lib/theme/TabItem/index.js + 1 modules
 var TabItem = __webpack_require__(6574);
-;// ./docs/packages/publish-all.md
+;// ./docs/packages/publish-packages.md
 
 
 const frontMatter = {
-	sidebar_label: 'Publish All',
-	sidebar_position: 2
+	sidebar_label: 'Publish Packages',
+	sidebar_position: 3
 };
-const contentTitle = '@repo-toolkit/publish-all';
+const contentTitle = '@repo-toolkit/publish-packages';
 
 const assets = {
 
@@ -68,19 +68,11 @@ const toc = [{
   "value": "Exports",
   "id": "exports",
   "level": 3
-}, {
-  "value": "Options",
-  "id": "options",
-  "level": 3
-}, {
-  "value": "Version Placeholders",
-  "id": "version-placeholders",
-  "level": 2
 }];
 function _createMdxContent(props) {
   const _components = {
+    a: "a",
     code: "code",
-    em: "em",
     h1: "h1",
     h2: "h2",
     h3: "h3",
@@ -101,13 +93,24 @@ function _createMdxContent(props) {
   return (0,jsx_runtime.jsxs)(jsx_runtime.Fragment, {
     children: [(0,jsx_runtime.jsx)(_components.header, {
       children: (0,jsx_runtime.jsx)(_components.h1, {
-        id: "repo-toolkitpublish-all",
+        id: "repo-toolkitpublish-packages",
         children: (0,jsx_runtime.jsx)(_components.code, {
-          children: "@repo-toolkit/publish-all"
+          children: "@repo-toolkit/publish-packages"
         })
       })
     }), "\n", (0,jsx_runtime.jsx)(_components.p, {
       children: "Build, stage, and publish every package in a monorepo to npm in dependency order."
+    }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
+      children: [(0,jsx_runtime.jsx)(_components.code, {
+        children: "publish-packages"
+      }), " is the workspace wrapper around\n", (0,jsx_runtime.jsx)(_components.a, {
+        href: "./publish-package",
+        children: (0,jsx_runtime.jsx)(_components.code, {
+          children: "@repo-toolkit/publish-package"
+        })
+      }), ". It discovers packages under\n", (0,jsx_runtime.jsx)(_components.code, {
+        children: "packages/*"
+      }), ", sorts them by internal dependency order, filters the selection,\nand then calls the single-package publish engine for each package."]
     }), "\n", (0,jsx_runtime.jsx)(_components.h2, {
       id: "install",
       children: "Install"
@@ -118,7 +121,7 @@ function _createMdxContent(props) {
         children: (0,jsx_runtime.jsx)(_components.pre, {
           children: (0,jsx_runtime.jsx)(_components.code, {
             className: "language-bash",
-            children: "npm install --save-dev @repo-toolkit/publish-all\n"
+            children: "npm install --save-dev @repo-toolkit/publish-packages\n"
           })
         })
       }), (0,jsx_runtime.jsx)(TabItem/* default */.A, {
@@ -127,7 +130,7 @@ function _createMdxContent(props) {
         children: (0,jsx_runtime.jsx)(_components.pre, {
           children: (0,jsx_runtime.jsx)(_components.code, {
             className: "language-bash",
-            children: "yarn add --dev @repo-toolkit/publish-all\n"
+            children: "yarn add --dev @repo-toolkit/publish-packages\n"
           })
         })
       }), (0,jsx_runtime.jsx)(TabItem/* default */.A, {
@@ -136,7 +139,7 @@ function _createMdxContent(props) {
         children: (0,jsx_runtime.jsx)(_components.pre, {
           children: (0,jsx_runtime.jsx)(_components.code, {
             className: "language-bash",
-            children: "pnpm add --save-dev @repo-toolkit/publish-all\n"
+            children: "pnpm add --save-dev @repo-toolkit/publish-packages\n"
           })
         })
       }), (0,jsx_runtime.jsx)(TabItem/* default */.A, {
@@ -145,7 +148,7 @@ function _createMdxContent(props) {
         children: (0,jsx_runtime.jsx)(_components.pre, {
           children: (0,jsx_runtime.jsx)(_components.code, {
             className: "language-bash",
-            children: "bun add --dev @repo-toolkit/publish-all\n"
+            children: "bun add --dev @repo-toolkit/publish-packages\n"
           })
         })
       })]
@@ -155,22 +158,14 @@ function _createMdxContent(props) {
     }), "\n", (0,jsx_runtime.jsx)(_components.pre, {
       children: (0,jsx_runtime.jsx)(_components.code, {
         className: "language-sh",
-        children: "repo-toolkit-publish-all --tag v1.2.3\n"
+        children: "repo-toolkit-publish-packages --version v1.2.3\n"
       })
     }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
-      children: ["Run the binary from the monorepo root. The tool locates the root ", (0,jsx_runtime.jsx)(_components.code, {
-        children: "package.json"
-      }), ",\nreads shared metadata (author, bugs, engines, license, repository), then\niterates over every package under ", (0,jsx_runtime.jsx)(_components.code, {
-        children: "packages/*"
-      }), ", builds it, copies\n", (0,jsx_runtime.jsx)(_components.code, {
-        children: "README.md"
-      }), " / ", (0,jsx_runtime.jsx)(_components.code, {
-        children: "llms.txt"
-      }), " from each package and the configured root files\n(default ", (0,jsx_runtime.jsx)(_components.code, {
-        children: "LICENSE"
-      }), ") into the publish directory, rewrites the package manifest\nfor publish, and runs ", (0,jsx_runtime.jsx)(_components.code, {
-        children: "npm publish"
-      }), "."]
+      children: [(0,jsx_runtime.jsx)(_components.code, {
+        children: "--tag"
+      }), " is still accepted as a compatibility alias, but ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "--version"
+      }), " is the\npreferred spelling."]
     }), "\n", (0,jsx_runtime.jsx)(_components.h3, {
       id: "flags",
       children: "Flags"
@@ -206,7 +201,7 @@ function _createMdxContent(props) {
               children: "--cwd <path>"
             })
           }), (0,jsx_runtime.jsx)(_components.td, {
-            children: "Monorepo root directory"
+            children: "Workspace root directory"
           }), (0,jsx_runtime.jsx)(_components.td, {
             children: (0,jsx_runtime.jsx)(_components.code, {
               children: "process.cwd()"
@@ -215,12 +210,24 @@ function _createMdxContent(props) {
         }), (0,jsx_runtime.jsxs)(_components.tr, {
           children: [(0,jsx_runtime.jsx)(_components.td, {
             children: (0,jsx_runtime.jsx)(_components.code, {
+              children: "--version <version>"
+            })
+          }), (0,jsx_runtime.jsxs)(_components.td, {
+            children: ["Target version for every selected package. A leading ", (0,jsx_runtime.jsx)(_components.code, {
+              children: "v"
+            }), " is stripped."]
+          }), (0,jsx_runtime.jsx)(_components.td, {
+            children: "—"
+          })]
+        }), (0,jsx_runtime.jsxs)(_components.tr, {
+          children: [(0,jsx_runtime.jsx)(_components.td, {
+            children: (0,jsx_runtime.jsx)(_components.code, {
               children: "--tag <version>"
             })
           }), (0,jsx_runtime.jsxs)(_components.td, {
-            children: ["Target version (required). A leading ", (0,jsx_runtime.jsx)(_components.code, {
-              children: "v"
-            }), " is stripped."]
+            children: ["Compatibility alias for ", (0,jsx_runtime.jsx)(_components.code, {
+              children: "--version"
+            })]
           }), (0,jsx_runtime.jsx)(_components.td, {
             children: "—"
           })]
@@ -263,10 +270,22 @@ function _createMdxContent(props) {
         }), (0,jsx_runtime.jsxs)(_components.tr, {
           children: [(0,jsx_runtime.jsx)(_components.td, {
             children: (0,jsx_runtime.jsx)(_components.code, {
+              children: "--package-files <file>[,<file>]"
+            })
+          }), (0,jsx_runtime.jsx)(_components.td, {
+            children: "Files copied from each package root into the publish dir."
+          }), (0,jsx_runtime.jsx)(_components.td, {
+            children: (0,jsx_runtime.jsx)(_components.code, {
+              children: "['README.md', 'CHANGELOG.md', 'llms.txt']"
+            })
+          })]
+        }), (0,jsx_runtime.jsxs)(_components.tr, {
+          children: [(0,jsx_runtime.jsx)(_components.td, {
+            children: (0,jsx_runtime.jsx)(_components.code, {
               children: "--root-files <file>[,<file>]"
             })
           }), (0,jsx_runtime.jsx)(_components.td, {
-            children: "Files to copy from the monorepo root into each publish dir. Missing files are skipped."
+            children: "Files copied from the workspace root into each publish dir."
           }), (0,jsx_runtime.jsx)(_components.td, {
             children: (0,jsx_runtime.jsx)(_components.code, {
               children: "['LICENSE']"
@@ -294,6 +313,74 @@ function _createMdxContent(props) {
           }), (0,jsx_runtime.jsx)(_components.td, {
             children: (0,jsx_runtime.jsx)(_components.code, {
               children: "0.0.0-PLACEHOLDER"
+            })
+          })]
+        }), (0,jsx_runtime.jsxs)(_components.tr, {
+          children: [(0,jsx_runtime.jsx)(_components.td, {
+            children: (0,jsx_runtime.jsx)(_components.code, {
+              children: "--build-command <command>"
+            })
+          }), (0,jsx_runtime.jsx)(_components.td, {
+            children: "Command used to build each publish dir."
+          }), (0,jsx_runtime.jsx)(_components.td, {
+            children: (0,jsx_runtime.jsx)(_components.code, {
+              children: "pnpm build"
+            })
+          })]
+        }), (0,jsx_runtime.jsxs)(_components.tr, {
+          children: [(0,jsx_runtime.jsx)(_components.td, {
+            children: (0,jsx_runtime.jsx)(_components.code, {
+              children: "--skip-build"
+            })
+          }), (0,jsx_runtime.jsx)(_components.td, {
+            children: "Skip the build step"
+          }), (0,jsx_runtime.jsx)(_components.td, {
+            children: (0,jsx_runtime.jsx)(_components.code, {
+              children: "false"
+            })
+          })]
+        }), (0,jsx_runtime.jsxs)(_components.tr, {
+          children: [(0,jsx_runtime.jsx)(_components.td, {
+            children: (0,jsx_runtime.jsx)(_components.code, {
+              children: "--access <level>"
+            })
+          }), (0,jsx_runtime.jsx)(_components.td, {
+            children: "npm publish access level"
+          }), (0,jsx_runtime.jsx)(_components.td, {
+            children: (0,jsx_runtime.jsx)(_components.code, {
+              children: "public"
+            })
+          })]
+        }), (0,jsx_runtime.jsxs)(_components.tr, {
+          children: [(0,jsx_runtime.jsx)(_components.td, {
+            children: (0,jsx_runtime.jsx)(_components.code, {
+              children: "--registry <url>"
+            })
+          }), (0,jsx_runtime.jsx)(_components.td, {
+            children: "npm registry URL"
+          }), (0,jsx_runtime.jsx)(_components.td, {
+            children: "—"
+          })]
+        }), (0,jsx_runtime.jsxs)(_components.tr, {
+          children: [(0,jsx_runtime.jsx)(_components.td, {
+            children: (0,jsx_runtime.jsx)(_components.code, {
+              children: "--otp <code>"
+            })
+          }), (0,jsx_runtime.jsx)(_components.td, {
+            children: "npm OTP code"
+          }), (0,jsx_runtime.jsx)(_components.td, {
+            children: "—"
+          })]
+        }), (0,jsx_runtime.jsxs)(_components.tr, {
+          children: [(0,jsx_runtime.jsx)(_components.td, {
+            children: (0,jsx_runtime.jsx)(_components.code, {
+              children: "--provenance"
+            })
+          }), (0,jsx_runtime.jsx)(_components.td, {
+            children: "Request npm provenance attestation"
+          }), (0,jsx_runtime.jsx)(_components.td, {
+            children: (0,jsx_runtime.jsx)(_components.code, {
+              children: "false"
             })
           })]
         }), (0,jsx_runtime.jsxs)(_components.tr, {
@@ -327,225 +414,52 @@ function _createMdxContent(props) {
     }), "\n", (0,jsx_runtime.jsx)(_components.h2, {
       id: "config-file",
       children: "Config File"
-    }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
-      children: ["Use ", (0,jsx_runtime.jsx)(_components.code, {
-        children: "--config"
-      }), " when you want repo-specific options without spelling them on the\ncommand line. JSON, ", (0,jsx_runtime.jsx)(_components.code, {
-        children: ".mjs"
-      }), ", and ", (0,jsx_runtime.jsx)(_components.code, {
-        children: ".cjs"
-      }), " (", (0,jsx_runtime.jsx)(_components.code, {
-        children: "module.exports"
-      }), ") configs are all\nsupported; use a JS file when you need non-JSON values."]
     }), "\n", (0,jsx_runtime.jsx)(_components.pre, {
       children: (0,jsx_runtime.jsx)(_components.code, {
         className: "language-js",
-        children: "/** @type {import('@repo-toolkit/publish-all').PublishAllOptions} */\nexport default {\n  tag: '1.2.3',\n  filters: ['changelog'],\n  rootFiles: ['LICENSE', 'NOTICE'],\n  publishDir: 'dist',\n  versionPlaceholder: '0.0.0-PLACEHOLDER',\n  dryRun: true,\n};\n"
+        children: "/** @type {import('@repo-toolkit/publish-packages').PublishPackagesOptions} */\nexport default {\n  version: '1.2.3',\n  filters: ['changelog'],\n  rootFiles: ['LICENSE', 'NOTICE'],\n  publishDir: 'dist',\n  versionPlaceholder: '0.0.0-PLACEHOLDER',\n  buildCommand: 'pnpm build',\n  dryRun: true,\n};\n"
       })
     }), "\n", (0,jsx_runtime.jsx)(_components.pre, {
       children: (0,jsx_runtime.jsx)(_components.code, {
         className: "language-sh",
-        children: "repo-toolkit-publish-all --config publish.config.mjs\n"
+        children: "repo-toolkit-publish-packages --config publish-packages.config.mjs\n"
       })
-    }), "\n", (0,jsx_runtime.jsx)(_components.p, {
-      children: "CLI flags override values from the config file."
     }), "\n", (0,jsx_runtime.jsx)(_components.h2, {
       id: "javascript-api",
       children: "JavaScript API"
     }), "\n", (0,jsx_runtime.jsx)(_components.pre, {
       children: (0,jsx_runtime.jsx)(_components.code, {
         className: "language-ts",
-        children: "import { publishAll } from '@repo-toolkit/publish-all';\n\npublishAll({\n  tag: '1.2.3',\n  cwd: '/path/to/monorepo',\n  filters: ['changelog'],\n  rootFiles: ['LICENSE', 'NOTICE'],\n  publishDir: 'dist',\n  versionPlaceholder: '0.0.0-PLACEHOLDER',\n  dryRun: true,\n});\n"
+        children: "import { publishPackages } from '@repo-toolkit/publish-packages';\n\npublishPackages({\n  version: '1.2.3',\n  cwd: '/path/to/monorepo',\n  filters: ['changelog'],\n  rootFiles: ['LICENSE', 'NOTICE'],\n  publishDir: 'dist',\n  versionPlaceholder: '0.0.0-PLACEHOLDER',\n  dryRun: true,\n});\n"
       })
     }), "\n", (0,jsx_runtime.jsx)(_components.h3, {
       id: "exports",
       children: "Exports"
-    }), "\n", (0,jsx_runtime.jsx)(_components.p, {
-      children: "Pure helpers (no filesystem or process side effects):"
     }), "\n", (0,jsx_runtime.jsxs)(_components.ul, {
       children: ["\n", (0,jsx_runtime.jsxs)(_components.li, {
-        children: [(0,jsx_runtime.jsx)(_components.code, {
-          children: "inferNpmTag(version)"
-        }), " — derive the npm dist-tag from a version string."]
-      }), "\n", (0,jsx_runtime.jsxs)(_components.li, {
-        children: [(0,jsx_runtime.jsx)(_components.code, {
-          children: "createPublishPackageJson(...)"
-        }), " — rewrite a package manifest for publish."]
-      }), "\n", (0,jsx_runtime.jsxs)(_components.li, {
         children: [(0,jsx_runtime.jsx)(_components.code, {
           children: "sortPackagesByInternalDependencies(...)"
         }), " — topologically sort internal packages (throws on cycles)."]
-      }), "\n"]
-    }), "\n", (0,jsx_runtime.jsx)(_components.p, {
-      children: "Pipeline (side-effectful):"
-    }), "\n", (0,jsx_runtime.jsxs)(_components.ul, {
-      children: ["\n", (0,jsx_runtime.jsxs)(_components.li, {
-        children: [(0,jsx_runtime.jsx)(_components.code, {
-          children: "resolvePublishPlan(options)"
-        }), " — resolve a publish plan (reads filesystem) without publishing. Useful for previewing which packages would be selected."]
       }), "\n", (0,jsx_runtime.jsxs)(_components.li, {
         children: [(0,jsx_runtime.jsx)(_components.code, {
-          children: "publishAll(options)"
-        }), " — run the full build + publish pipeline."]
+          children: "resolvePublishPackagesPlan(options)"
+        }), " — resolve the selected package list and shared publish options without publishing."]
+      }), "\n", (0,jsx_runtime.jsxs)(_components.li, {
+        children: [(0,jsx_runtime.jsx)(_components.code, {
+          children: "publishPackages(options)"
+        }), " — run the full workspace publish pipeline."]
+      }), "\n", (0,jsx_runtime.jsxs)(_components.li, {
+        children: [(0,jsx_runtime.jsx)(_components.code, {
+          children: "inferNpmTag(version)"
+        }), " — derive the npm dist-tag from a version string."]
       }), "\n"]
-    }), "\n", (0,jsx_runtime.jsx)(_components.h3, {
-      id: "options",
-      children: "Options"
-    }), "\n", (0,jsx_runtime.jsxs)(_components.table, {
-      children: [(0,jsx_runtime.jsx)(_components.thead, {
-        children: (0,jsx_runtime.jsxs)(_components.tr, {
-          children: [(0,jsx_runtime.jsx)(_components.th, {
-            children: "Option"
-          }), (0,jsx_runtime.jsx)(_components.th, {
-            children: "Type"
-          }), (0,jsx_runtime.jsx)(_components.th, {
-            children: "Description"
-          })]
+    }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
+      children: ["For generic single-package manifest rewriting and npm publish plumbing, use\n", (0,jsx_runtime.jsx)(_components.a, {
+        href: "./publish-package",
+        children: (0,jsx_runtime.jsx)(_components.code, {
+          children: "@repo-toolkit/publish-package"
         })
-      }), (0,jsx_runtime.jsxs)(_components.tbody, {
-        children: [(0,jsx_runtime.jsxs)(_components.tr, {
-          children: [(0,jsx_runtime.jsx)(_components.td, {
-            children: (0,jsx_runtime.jsx)(_components.code, {
-              children: "tag"
-            })
-          }), (0,jsx_runtime.jsxs)(_components.td, {
-            children: [(0,jsx_runtime.jsx)(_components.code, {
-              children: "string"
-            }), " ", (0,jsx_runtime.jsx)(_components.em, {
-              children: "(required)"
-            })]
-          }), (0,jsx_runtime.jsxs)(_components.td, {
-            children: ["Target version. A leading ", (0,jsx_runtime.jsx)(_components.code, {
-              children: "v"
-            }), " is stripped."]
-          })]
-        }), (0,jsx_runtime.jsxs)(_components.tr, {
-          children: [(0,jsx_runtime.jsx)(_components.td, {
-            children: (0,jsx_runtime.jsx)(_components.code, {
-              children: "cwd"
-            })
-          }), (0,jsx_runtime.jsx)(_components.td, {
-            children: (0,jsx_runtime.jsx)(_components.code, {
-              children: "string"
-            })
-          }), (0,jsx_runtime.jsxs)(_components.td, {
-            children: ["Monorepo root directory. Defaults to ", (0,jsx_runtime.jsx)(_components.code, {
-              children: "process.cwd()"
-            }), "."]
-          })]
-        }), (0,jsx_runtime.jsxs)(_components.tr, {
-          children: [(0,jsx_runtime.jsx)(_components.td, {
-            children: (0,jsx_runtime.jsx)(_components.code, {
-              children: "npmTag"
-            })
-          }), (0,jsx_runtime.jsx)(_components.td, {
-            children: (0,jsx_runtime.jsx)(_components.code, {
-              children: "string"
-            })
-          }), (0,jsx_runtime.jsxs)(_components.td, {
-            children: ["npm dist-tag. Defaults to the prerelease ", (0,jsx_runtime.jsx)(_components.code, {
-              children: "preid"
-            }), "."]
-          })]
-        }), (0,jsx_runtime.jsxs)(_components.tr, {
-          children: [(0,jsx_runtime.jsx)(_components.td, {
-            children: (0,jsx_runtime.jsx)(_components.code, {
-              children: "filters"
-            })
-          }), (0,jsx_runtime.jsx)(_components.td, {
-            children: (0,jsx_runtime.jsx)(_components.code, {
-              children: "string[]"
-            })
-          }), (0,jsx_runtime.jsx)(_components.td, {
-            children: "Only publish matching packages (by name or directory)."
-          })]
-        }), (0,jsx_runtime.jsxs)(_components.tr, {
-          children: [(0,jsx_runtime.jsx)(_components.td, {
-            children: (0,jsx_runtime.jsx)(_components.code, {
-              children: "from"
-            })
-          }), (0,jsx_runtime.jsx)(_components.td, {
-            children: (0,jsx_runtime.jsx)(_components.code, {
-              children: "string"
-            })
-          }), (0,jsx_runtime.jsx)(_components.td, {
-            children: "Start publishing from the first matching package."
-          })]
-        }), (0,jsx_runtime.jsxs)(_components.tr, {
-          children: [(0,jsx_runtime.jsx)(_components.td, {
-            children: (0,jsx_runtime.jsx)(_components.code, {
-              children: "rootFiles"
-            })
-          }), (0,jsx_runtime.jsx)(_components.td, {
-            children: (0,jsx_runtime.jsx)(_components.code, {
-              children: "string[]"
-            })
-          }), (0,jsx_runtime.jsxs)(_components.td, {
-            children: ["Files to copy from the monorepo root into each publish dir. Missing files are skipped. Default: ", (0,jsx_runtime.jsx)(_components.code, {
-              children: "['LICENSE']"
-            }), "."]
-          })]
-        }), (0,jsx_runtime.jsxs)(_components.tr, {
-          children: [(0,jsx_runtime.jsx)(_components.td, {
-            children: (0,jsx_runtime.jsx)(_components.code, {
-              children: "publishDir"
-            })
-          }), (0,jsx_runtime.jsx)(_components.td, {
-            children: (0,jsx_runtime.jsx)(_components.code, {
-              children: "string"
-            })
-          }), (0,jsx_runtime.jsxs)(_components.td, {
-            children: ["Publish directory inside each package. Default: ", (0,jsx_runtime.jsx)(_components.code, {
-              children: "dist"
-            }), "."]
-          })]
-        }), (0,jsx_runtime.jsxs)(_components.tr, {
-          children: [(0,jsx_runtime.jsx)(_components.td, {
-            children: (0,jsx_runtime.jsx)(_components.code, {
-              children: "versionPlaceholder"
-            })
-          }), (0,jsx_runtime.jsx)(_components.td, {
-            children: (0,jsx_runtime.jsx)(_components.code, {
-              children: "string"
-            })
-          }), (0,jsx_runtime.jsxs)(_components.td, {
-            children: ["Placeholder rewritten to the target version. Default: ", (0,jsx_runtime.jsx)(_components.code, {
-              children: "0.0.0-PLACEHOLDER"
-            }), "."]
-          })]
-        }), (0,jsx_runtime.jsxs)(_components.tr, {
-          children: [(0,jsx_runtime.jsx)(_components.td, {
-            children: (0,jsx_runtime.jsx)(_components.code, {
-              children: "dryRun"
-            })
-          }), (0,jsx_runtime.jsx)(_components.td, {
-            children: (0,jsx_runtime.jsx)(_components.code, {
-              children: "boolean"
-            })
-          }), (0,jsx_runtime.jsxs)(_components.td, {
-            children: ["Forward ", (0,jsx_runtime.jsx)(_components.code, {
-              children: "--dry-run"
-            }), " to ", (0,jsx_runtime.jsx)(_components.code, {
-              children: "npm publish"
-            }), "."]
-          })]
-        })]
-      })]
-    }), "\n", (0,jsx_runtime.jsx)(_components.h2, {
-      id: "version-placeholders",
-      children: "Version Placeholders"
-    }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
-      children: ["Dependency ranges set to ", (0,jsx_runtime.jsx)(_components.code, {
-        children: "0.0.0-PLACEHOLDER"
-      }), " are replaced with the target\nversion by default. Override this with ", (0,jsx_runtime.jsx)(_components.code, {
-        children: "versionPlaceholder"
-      }), " /\n", (0,jsx_runtime.jsx)(_components.code, {
-        children: "--version-placeholder"
-      }), " when your workspace uses a different sentinel value."]
-    }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
-      children: [(0,jsx_runtime.jsx)(_components.code, {
-        children: "workspace:"
-      }), " ranges on internal packages are resolved to the target version\n(or kept verbatim when pinned to an explicit version)."]
+      }), "."]
     })]
   });
 }

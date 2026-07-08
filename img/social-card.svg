@@ -28,6 +28,7 @@
 
   <g fill="#a44c00" font-family="Inter, Arial, sans-serif" font-size="32" font-weight="700">
     <text x="484" y="478">changelog</text>
-    <text x="700" y="478">publish-all</text>
+    <text x="670" y="478">publish-package</text>
+    <text x="484" y="524">publish-packages</text>
   </g>
 </svg>

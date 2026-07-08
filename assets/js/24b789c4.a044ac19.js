@@ -79,9 +79,16 @@ function _createMdxContent(props) {
         }), ": shared conventional changelog preset, generator, and CLI for repository releases."]
       }), "\n", (0,jsx_runtime.jsxs)(_components.li, {
         children: [(0,jsx_runtime.jsx)(_components.a, {
-          href: "./publish-all",
+          href: "./publish-package",
           children: (0,jsx_runtime.jsx)(_components.code, {
-            children: "@repo-toolkit/publish-all"
+            children: "@repo-toolkit/publish-package"
+          })
+        }), ": build, stage, and publish a single package to npm."]
+      }), "\n", (0,jsx_runtime.jsxs)(_components.li, {
+        children: [(0,jsx_runtime.jsx)(_components.a, {
+          href: "./publish-packages",
+          children: (0,jsx_runtime.jsx)(_components.code, {
+            children: "@repo-toolkit/publish-packages"
           })
         }), ": build, stage, and publish every package in a monorepo to npm in dependency order."]
       }), "\n"]

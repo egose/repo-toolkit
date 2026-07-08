@@ -3314,32 +3314,6 @@ html[data-announcement-bar-initially-dismissed='true'] .announcementBar_NRbR {
  * LICENSE file in the root directory of this source tree.
  */
 
-.tabList_Ardb {
-  margin-bottom: var(--ifm-leading);
-}
-
-.tabItem_astB {
-  margin-top: 0 !important;
-}
-
-/**
- * Copyright (c) Facebook, Inc. and its affiliates.
- *
- * This source code is licensed under the MIT license found in the
- * LICENSE file in the root directory of this source tree.
- */
-
-.tabItem_WPJy > *:last-child {
-  margin-bottom: 0;
-}
-
-/**
- * Copyright (c) Facebook, Inc. and its affiliates.
- *
- * This source code is licensed under the MIT license found in the
- * LICENSE file in the root directory of this source tree.
- */
-
 :root {
   --docusaurus-tag-list-border: var(--ifm-color-emphasis-300);
 }
@@ -3562,6 +3536,32 @@ html[data-announcement-bar-initially-dismissed='true'] .announcementBar_NRbR {
   .docItemContainer_hYHq {
     padding: 0 0.3rem;
   }
+}
+
+/**
+ * Copyright (c) Facebook, Inc. and its affiliates.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
+.tabList_Ardb {
+  margin-bottom: var(--ifm-leading);
+}
+
+.tabItem_astB {
+  margin-top: 0 !important;
+}
+
+/**
+ * Copyright (c) Facebook, Inc. and its affiliates.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
+.tabItem_WPJy > *:last-child {
+  margin-bottom: 0;
 }
 
 /**
