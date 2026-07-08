@@ -1,3 +1,9 @@
+## [0.3.0](https://github.com/egose/repo-toolkit/compare/v0.2.0...v0.3.0) (2026-07-08)
+
+### Features
+
+* split publish tooling into single-package and monorepo commands ([c5ce5db](https://github.com/egose/repo-toolkit/commit/c5ce5dbd82c20f9d56a1f421dba926ceafedddc3))
+
 ## [0.2.0](https://github.com/egose/repo-toolkit/compare/v0.1.0...v0.2.0) (2026-07-08)
 
 ### Features
