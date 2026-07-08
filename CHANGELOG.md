@@ -1,3 +1,9 @@
+## [0.4.0](https://github.com/egose/repo-toolkit/compare/v0.3.0...v0.4.0) (2026-07-08)
+
+### Features
+
+* extend publish file selection and config loading ([5377738](https://github.com/egose/repo-toolkit/commit/5377738f9b5267304a2de7a87f73994ca6ebf195))
+
 ## [0.3.0](https://github.com/egose/repo-toolkit/compare/v0.2.0...v0.3.0) (2026-07-08)
 
 ### Features
