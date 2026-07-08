@@ -24,12 +24,16 @@ Useful flags:
 - `--cwd <path>`
 - `--root-dir <path>`
 - `--package-json <path>`
-- `--version <version>`
+- `--version <version>` (alias: `--tag`)
 - `--npm-tag <dist-tag>`
 - `--publish-dir <path>`
 - `--version-placeholder <text>`
-- `--package-files <file>[,<file>]`
-- `--root-files <file>[,<file>]`
+- `--package-files <file>[,<file>]` (replaces defaults)
+- `--include-package-file <path>` (repeatable, additive)
+- `--no-default-package-files`
+- `--root-files <file>[,<file>]` (replaces defaults)
+- `--include-root-file <path>` (repeatable, additive)
+- `--no-default-root-files`
 - `--build-command <command>`
 - `--skip-build`
 - `--access <level>`
@@ -69,8 +73,12 @@ publishPackage({
 - `packageJsonPath` _(string)_ Source package.json path. Defaults to `package.json`.
 - `version` _(string)_ Target package version. Defaults to `package.json.version`. A leading `v` is stripped.
 - `npmTag` _(string)_ npm dist-tag. Defaults to the prerelease `preid`.
-- `packageFiles` _(string[])_ Files copied from the package root into the publish dir (default: `['README.md', 'CHANGELOG.md', 'llms.txt']`). Missing files are skipped.
+- `packageFiles` _(string[])_ Files copied from the package root into the publish dir (default: `['README.md', 'CHANGELOG.md', 'llms.txt']`). Missing files are skipped. Subpaths are flattened (`docs/llms.txt` → `dist/llms.txt`).
+- `includePackageFiles` _(string[])_ Additional files appended to `packageFiles`.
+- `noDefaultPackageFiles` _(boolean)_ Skip copying default package files.
 - `rootFiles` _(string[])_ Files copied from `rootDir` into the publish dir (default: `['LICENSE']`). Missing files are skipped.
+- `includeRootFiles` _(string[])_ Additional files appended to `rootFiles`.
+- `noDefaultRootFiles` _(boolean)_ Skip copying default root files.
 - `publishDir` _(string)_ Publish directory inside the package root (default: `dist`).
 - `versionPlaceholder` _(string)_ Placeholder rewritten to the target version (default: `0.0.0-PLACEHOLDER`).
 - `buildCommand` _(string)_ Command used to build the publish dir (default: `pnpm build`).
