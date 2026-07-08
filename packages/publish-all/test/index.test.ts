@@ -44,6 +44,29 @@ describe('createPublishPackageJson', () => {
     expect(out.name).toBe('@repo-toolkit/changelog');
   });
 
+  it('supports a custom versionPlaceholder override', () => {
+    const out = createPublishPackageJson(
+      {
+        name: '@repo-toolkit/changelog',
+        version: '__VERSION__',
+        dependencies: {
+          '@repo-toolkit/publish-all': '__VERSION__',
+        },
+      },
+      '1.2.3',
+      internalNames,
+      {},
+      {
+        versionPlaceholder: '__VERSION__',
+      },
+    );
+
+    expect(out.version).toBe('1.2.3');
+    expect(out.dependencies).toEqual({
+      '@repo-toolkit/publish-all': '1.2.3',
+    });
+  });
+
   it('rewrites workspace:* ranges on internal deps to the target version', () => {
     const out = createPublishPackageJson(
       {
@@ -263,8 +286,25 @@ describe('resolvePublishPlan', () => {
     expect(plan.packages).toHaveLength(1);
     expect(plan.packages[0].packageJson.name).toBe('@repo-toolkit/publish-all');
     expect([...plan.rootFiles]).toEqual(['LICENSE']);
+    expect(plan.publishDir).toBe('dist');
+    expect(plan.versionPlaceholder).toBe('0.0.0-PLACEHOLDER');
     expect(plan.version).toBe('1.2.3');
     expect(plan.npmTag).toBeUndefined();
+  });
+
+  it('resolves custom publishDir and versionPlaceholder values', () => {
+    const repoRoot = fileURLToPath(new URL('../../..', import.meta.url));
+
+    const plan = resolvePublishPlan({
+      tag: 'v1.2.3',
+      cwd: repoRoot,
+      filters: ['publish-all'],
+      publishDir: 'build-artifacts',
+      versionPlaceholder: '__VERSION__',
+    });
+
+    expect(plan.publishDir).toBe('build-artifacts');
+    expect(plan.versionPlaceholder).toBe('__VERSION__');
   });
 
   it('infers the npmTag from a prerelease version', () => {

@@ -28,6 +28,8 @@ Options:
   --filter <name>[,<name>]      Only publish matching packages (by name or directory)
   --from <name>                 Start publishing from the first matching package (applied after --filter)
   --root-files <file>[,<file>]  Files to copy from root into each publish dir (default: LICENSE)
+  --publish-dir <path>          Publish directory inside each package (default: dist)
+  --version-placeholder <text>  Placeholder rewritten to the target version (default: 0.0.0-PLACEHOLDER)
   --dry-run                     Forward --dry-run to npm publish
   -h, --help                    Show this help message
 `);
@@ -131,6 +133,28 @@ function parseArgs(argv: string[]): ParsedArgs | null {
 
     if (arg === '--dry-run') {
       options.dryRun = true;
+      continue;
+    }
+
+    if (arg === '--publish-dir') {
+      options.publishDir = readValue(argv, index, arg);
+      index += 1;
+      continue;
+    }
+
+    if (arg.startsWith('--publish-dir=')) {
+      options.publishDir = arg.slice('--publish-dir='.length);
+      continue;
+    }
+
+    if (arg === '--version-placeholder') {
+      options.versionPlaceholder = readValue(argv, index, arg);
+      index += 1;
+      continue;
+    }
+
+    if (arg.startsWith('--version-placeholder=')) {
+      options.versionPlaceholder = arg.slice('--version-placeholder='.length);
       continue;
     }
 
