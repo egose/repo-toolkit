@@ -1,4 +1,10 @@
-## 0.0.1 (2026-07-08)
+## [0.1.0](https://github.com/egose/repo-toolkit/compare/v0.0.1...v0.1.0) (2026-07-08)
+
+### Features
+
+* allow custom publish directory and version placeholder ([ce9a3ba](https://github.com/egose/repo-toolkit/commit/ce9a3ba6c079e40c86a7fd90979d57ab25e84a21))
+
+## [0.0.1](https://github.com/egose/repo-toolkit/compare/6dda93905e62783e559668e7ed4b5f8fe0caed8f...v0.0.1) (2026-07-08)
 
 ### Features
 
