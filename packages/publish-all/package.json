@@ -1,8 +1,9 @@
 {
   "name": "@repo-toolkit/publish-all",
   "description": "Build, stage, and publish every package in a monorepo to npm",
-  "version": "0.0.0",
-  "license": "Apache-2.0",
+  "version": "0.0.0-PLACEHOLDER",
+  "license": "PLACEHOLDER",
+  "repository": "PLACEHOLDER",
   "type": "module",
   "sideEffects": false,
   "keywords": [

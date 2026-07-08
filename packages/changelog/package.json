@@ -1,8 +1,9 @@
 {
   "name": "@repo-toolkit/changelog",
   "description": "Shared conventional changelog preset, generator, and CLI for repository releases",
-  "version": "0.0.0",
-  "license": "Apache-2.0",
+  "version": "0.0.0-PLACEHOLDER",
+  "license": "PLACEHOLDER",
+  "repository": "PLACEHOLDER",
   "type": "module",
   "sideEffects": false,
   "keywords": [
