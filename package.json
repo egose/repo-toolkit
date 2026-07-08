@@ -6,6 +6,13 @@
   "license": "Apache-2.0",
   "author": "Junmin Ahn",
   "packageManager": "pnpm@10.14.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/egose/web-ts-toolkit.git"
+  },
+  "bugs": {
+    "url": "https://github.com/egose/web-ts-toolkit/issues"
+  },
   "engines": {
     "node": ">=20"
   },
