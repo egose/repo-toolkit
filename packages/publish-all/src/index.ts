@@ -2,8 +2,8 @@ import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFi
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 
-const VER_PLACEHOLDER = '0.0.0-PLACEHOLDER';
-const PUBLISH_DIR = 'dist';
+const DEFAULT_VERSION_PLACEHOLDER = '0.0.0-PLACEHOLDER';
+const DEFAULT_PUBLISH_DIR = 'dist';
 const PACKAGE_JSON = 'package.json';
 const COPY_PACKAGE_FILES = ['README.md', 'llms.txt'];
 const DEFAULT_ROOT_FILES = ['LICENSE'];
@@ -53,6 +53,10 @@ export interface PublishAllOptions {
   from?: string;
   /** Files to copy from the monorepo root into each publish directory. Defaults to `['LICENSE']`. */
   rootFiles?: ReadonlyArray<string>;
+  /** Publish directory inside each package. Defaults to `dist`. */
+  publishDir?: string;
+  /** Version placeholder that should be replaced with the target version. Defaults to `0.0.0-PLACEHOLDER`. */
+  versionPlaceholder?: string;
 }
 
 export interface PublishPlan {
@@ -63,10 +67,18 @@ export interface PublishPlan {
   rootPackageJson: PackageJson;
   /** Resolved list of files to copy from root into each publish dir. */
   rootFiles: ReadonlyArray<string>;
+  /** Resolved publish directory inside each package. */
+  publishDir: string;
+  /** Resolved version placeholder to rewrite. */
+  versionPlaceholder: string;
   /** Names of every package discovered under `packages/*` (independent of filtering). */
   internalPackageNames: Set<string>;
   /** Packages selected for publish, in dependency order. */
   packages: PackageEntry[];
+}
+
+export interface PublishRewriteOptions {
+  versionPlaceholder?: string;
 }
 
 export function inferNpmTag(version: string): string | undefined {
@@ -129,8 +141,10 @@ export function createPublishPackageJson(
   version: string,
   internalPackageNames: Set<string>,
   rootMetadata: RootMetadata,
+  rewriteOptions: PublishRewriteOptions = {},
 ): PackageJson {
   const publishPackageJson: PackageJson = {};
+  const versionPlaceholder = rewriteOptions.versionPlaceholder ?? DEFAULT_VERSION_PLACEHOLDER;
 
   for (const [key, value] of Object.entries(packageJson)) {
     if (OMITTED_FIELDS.has(key)) {
@@ -138,12 +152,18 @@ export function createPublishPackageJson(
     }
 
     if (key === 'version') {
-      publishPackageJson.version = rewriteVersionValue(value as string, version, internalPackageNames, '');
+      publishPackageJson.version = rewriteVersionValue(
+        value as string,
+        version,
+        internalPackageNames,
+        '',
+        versionPlaceholder,
+      );
       continue;
     }
 
     if (DEPENDENCY_FIELDS.includes(key)) {
-      publishPackageJson[key] = rewriteDependencyMap(value, version, internalPackageNames);
+      publishPackageJson[key] = rewriteDependencyMap(value, version, internalPackageNames, versionPlaceholder);
       continue;
     }
 
@@ -205,6 +225,8 @@ export function resolvePublishPlan(options: PublishAllOptions): PublishPlan {
     npmTag: options.npmTag ?? inferNpmTag(version),
     rootPackageJson,
     rootFiles: options.rootFiles ?? DEFAULT_ROOT_FILES,
+    publishDir: options.publishDir ?? DEFAULT_PUBLISH_DIR,
+    versionPlaceholder: options.versionPlaceholder ?? DEFAULT_VERSION_PLACEHOLDER,
     internalPackageNames,
     packages: orderedPackages,
   };
@@ -212,7 +234,8 @@ export function resolvePublishPlan(options: PublishAllOptions): PublishPlan {
 
 export function publishAll(options: PublishAllOptions): void {
   const plan = resolvePublishPlan(options);
-  const { rootDir, version, npmTag, rootPackageJson, rootFiles, internalPackageNames } = plan;
+  const { rootDir, version, npmTag, rootPackageJson, rootFiles, internalPackageNames, publishDir, versionPlaceholder } =
+    plan;
 
   console.log(`target tag ${version}`);
   if (npmTag) {
@@ -223,27 +246,35 @@ export function publishAll(options: PublishAllOptions): void {
     console.log(`processing ${pkg.dir}`);
     runCommand('pnpm', ['build'], pkg.dir);
 
-    const publishDir = path.join(pkg.dir, PUBLISH_DIR);
-    if (!existsSync(publishDir)) {
-      throw new Error(`Missing publish directory: ${publishDir}`);
+    const resolvedPublishDir = path.join(pkg.dir, publishDir);
+    if (!existsSync(resolvedPublishDir)) {
+      throw new Error(`Missing publish directory: ${resolvedPublishDir}`);
     }
 
-    copyPackageFiles(pkg.dir, publishDir);
-    copyRootFiles(rootDir, publishDir, rootFiles);
+    copyPackageFiles(pkg.dir, resolvedPublishDir);
+    copyRootFiles(rootDir, resolvedPublishDir, rootFiles);
 
-    const publishPackageData = createPublishPackageJson(pkg.packageJson, version, internalPackageNames, {
-      author: rootPackageJson.author,
-      bugs: rootPackageJson.bugs,
-      engines: rootPackageJson.engines,
-      license: rootPackageJson.license,
-      repository: mergeRepository(rootPackageJson.repository, path.relative(rootDir, pkg.dir)),
-    });
+    const publishPackageData = createPublishPackageJson(
+      pkg.packageJson,
+      version,
+      internalPackageNames,
+      {
+        author: rootPackageJson.author,
+        bugs: rootPackageJson.bugs,
+        engines: rootPackageJson.engines,
+        license: rootPackageJson.license,
+        repository: mergeRepository(rootPackageJson.repository, path.relative(rootDir, pkg.dir)),
+      },
+      {
+        versionPlaceholder,
+      },
+    );
 
     const names = [
       publishPackageData.name,
       ...(Array.isArray(pkg.packageJson.additionalNames) ? (pkg.packageJson.additionalNames as string[]) : []),
     ];
-    const targetPackageJson = path.join(publishDir, PACKAGE_JSON);
+    const targetPackageJson = path.join(resolvedPublishDir, PACKAGE_JSON);
 
     for (const name of names) {
       const packageJson = {
@@ -262,7 +293,7 @@ export function publishAll(options: PublishAllOptions): void {
         publishArgs.push('--dry-run');
       }
 
-      runCommand('npm', publishArgs, publishDir);
+      runCommand('npm', publishArgs, resolvedPublishDir);
     }
   }
 }
@@ -339,8 +370,9 @@ function rewriteVersionValue(
   version: string,
   internalPackageNames: Set<string>,
   packageName: string,
+  versionPlaceholder: string,
 ): string {
-  if (value === VER_PLACEHOLDER) {
+  if (value === versionPlaceholder) {
     return version;
   }
 
@@ -365,6 +397,7 @@ function rewriteDependencyMap(
   dependencies: unknown,
   version: string,
   internalPackageNames: Set<string>,
+  versionPlaceholder: string,
 ): Record<string, string> | undefined {
   if (!isPlainObject(dependencies)) {
     return undefined;
@@ -373,7 +406,7 @@ function rewriteDependencyMap(
   const rewritten: Record<string, string> = {};
 
   for (const [name, range] of Object.entries(dependencies)) {
-    rewritten[name] = rewriteVersionValue(range as string, version, internalPackageNames, name);
+    rewritten[name] = rewriteVersionValue(range as string, version, internalPackageNames, name, versionPlaceholder);
   }
 
   return rewritten;

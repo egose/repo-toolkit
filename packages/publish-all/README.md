@@ -30,6 +30,8 @@ Useful flags:
 - `--filter <name>[,<name>]` Only publish matching packages (by name or directory). Applied before `--from`.
 - `--from <name>` Start publishing from the first package matching this selector, computed against the post-`--filter` list.
 - `--root-files <file>[,<file>]` Files to copy from the monorepo root into each publish dir (default: `['LICENSE']`). Missing files are skipped.
+- `--publish-dir <path>` Publish directory inside each package (default: `dist`).
+- `--version-placeholder <text>` Placeholder rewritten to the target version (default: `0.0.0-PLACEHOLDER`).
 - `--dry-run` Forward `--dry-run` to `npm publish`.
 
 ## Config File
@@ -44,6 +46,8 @@ export default {
   tag: '1.2.3',
   filters: ['changelog'],
   rootFiles: ['LICENSE', 'NOTICE'],
+  publishDir: 'dist',
+  versionPlaceholder: '0.0.0-PLACEHOLDER',
   dryRun: true,
 };
 ```
@@ -66,6 +70,8 @@ publishAll({
   cwd: '/path/to/monorepo',
   filters: ['changelog'],
   rootFiles: ['LICENSE', 'NOTICE'],
+  publishDir: 'dist',
+  versionPlaceholder: '0.0.0-PLACEHOLDER',
   dryRun: true,
 });
 ```
@@ -91,10 +97,15 @@ Pipeline (side-effectful):
 - `filters` _(string[])_ Only publish matching packages (by name or directory).
 - `from` _(string)_ Start publishing from the first matching package.
 - `rootFiles` _(string[])_ Files to copy from the monorepo root into each publish dir (default: `['LICENSE']`). Missing files are skipped.
+- `publishDir` _(string)_ Publish directory inside each package (default: `dist`).
+- `versionPlaceholder` _(string)_ Placeholder rewritten to the target version (default: `0.0.0-PLACEHOLDER`).
 - `dryRun` _(boolean)_ Forward `--dry-run` to `npm publish`.
 
 ## Version Placeholders
 
 Dependency ranges set to `0.0.0-PLACEHOLDER` are replaced with the target
-version. `workspace:` ranges on internal packages are resolved to the target
-version (or kept verbatim when pinned to an explicit version).
+version by default. Override this with `versionPlaceholder` /
+`--version-placeholder` when your workspace uses a different sentinel value.
+
+`workspace:` ranges on internal packages are resolved to the target version
+(or kept verbatim when pinned to an explicit version).
