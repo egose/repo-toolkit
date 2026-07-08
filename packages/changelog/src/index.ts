@@ -1,8 +1,37 @@
 import { createWriteStream } from 'node:fs';
 import { mkdir } from 'node:fs/promises';
 import { dirname, isAbsolute, resolve } from 'node:path';
-import { ConventionalChangelog } from 'conventional-changelog';
+import { ConventionalChangelog, type Options as ChangelogOptions } from 'conventional-changelog';
 import createConventionalCommitsPreset from 'conventional-changelog-conventionalcommits';
+
+const PIPELINE_OPTION_KEYS = [
+  'cwd',
+  'outputFile',
+  'append',
+  'releaseCount',
+  'skipUnstable',
+  'outputUnreleased',
+  'tagPrefix',
+  'firstRelease',
+] as const;
+
+type PipelineOptions = Pick<
+  GenerateChangelogOptions,
+  'append' | 'releaseCount' | 'skipUnstable' | 'outputUnreleased' | 'tagPrefix' | 'firstRelease'
+>;
+
+type ExtendedChangelogOptions = ChangelogOptions & PipelineOptions;
+
+function splitPresetOptions(options: GenerateChangelogOptions): CreatePresetOptions {
+  const presetOptions: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(options)) {
+    if ((PIPELINE_OPTION_KEYS as readonly string[]).includes(key)) {
+      continue;
+    }
+    presetOptions[key] = value;
+  }
+  return presetOptions as CreatePresetOptions;
+}
 
 export interface ChangelogType {
   type: string;
@@ -73,16 +102,32 @@ export const DEFAULT_TYPES: ReadonlyArray<ChangelogType> = [
     section: 'Bug Fixes',
   },
   {
+    type: 'revert',
+    section: 'Reverts',
+  },
+  {
     type: 'docs',
-    section: 'Docs',
+    section: 'Documentation',
   },
   {
     type: 'refactor',
-    section: 'Refactors',
+    section: 'Code Refactoring',
+  },
+  {
+    type: 'perf',
+    section: 'Performance Improvements',
+  },
+  {
+    type: 'build',
+    section: 'Build System',
   },
   {
     type: 'e2e',
     section: 'End-to-end Testing',
+  },
+  {
+    type: 'ci',
+    effect: 'hidden',
   },
   {
     type: 'chore',
@@ -93,11 +138,11 @@ export const DEFAULT_TYPES: ReadonlyArray<ChangelogType> = [
     effect: 'hidden',
   },
   {
-    type: 'perf',
+    type: 'test',
     effect: 'hidden',
   },
   {
-    type: 'test',
+    type: 'release',
     effect: 'hidden',
   },
 ];
@@ -156,37 +201,25 @@ export async function createPreset(options: CreatePresetOptions = {}) {
 }
 
 export async function createGenerator(options: GenerateChangelogOptions = {}) {
-  const {
-    cwd: _cwd,
-    outputFile: _outputFile,
-    append: _append,
-    releaseCount: _releaseCount,
-    skipUnstable: _skipUnstable,
-    outputUnreleased: _outputUnreleased,
-    tagPrefix: _tagPrefix,
-    firstRelease: _firstRelease,
-    ...presetOptions
-  } = options;
+  const presetOptions = splitPresetOptions(options);
   const preset = await createPreset(presetOptions);
   const generator = new ConventionalChangelog();
 
-  generator
-    .readPackage()
-    .loadPreset(preset)
-    .options({
-      append: options.append ?? false,
-      releaseCount: options.releaseCount ?? 0,
-      skipUnstable: options.skipUnstable ?? true,
-      outputUnreleased: options.outputUnreleased ?? true,
-      tagPrefix: options.tagPrefix ?? 'v',
-      firstRelease: options.firstRelease ?? false,
-    } as any)
-    .config({
-      tags: preset.tags,
-      commits: preset.commits,
-      parser: preset.parser,
-      writer: preset.writer,
-    });
+  const generatorOptions: ExtendedChangelogOptions = {
+    append: options.append ?? false,
+    releaseCount: options.releaseCount ?? 0,
+    skipUnstable: options.skipUnstable ?? true,
+    outputUnreleased: options.outputUnreleased ?? true,
+    tagPrefix: options.tagPrefix ?? 'v',
+    firstRelease: options.firstRelease ?? false,
+  };
+
+  generator.readPackage().loadPreset(preset).options(generatorOptions).config({
+    tags: preset.tags,
+    commits: preset.commits,
+    parser: preset.parser,
+    writer: preset.writer,
+  });
 
   return generator;
 }

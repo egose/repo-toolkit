@@ -10,6 +10,8 @@
     "node": ">=20"
   },
   "scripts": {
+    "lint": "eslint .",
+    "lint-fix": "eslint --fix .",
     "build": "pnpm -r --if-present build",
     "changelog": "pnpm --filter @repo-toolkit/changelog build && node packages/changelog/dist/cli.js",
     "publish-all": "pnpm --filter @repo-toolkit/publish-all build && node packages/publish-all/dist/cli.js",

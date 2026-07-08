@@ -89,16 +89,20 @@ await generateChangelog({
 
 - `feat` -> `Features`
 - `fix` -> `Bug Fixes`
-- `docs` -> `Docs`
-- `refactor` -> `Refactors`
+- `revert` -> `Reverts`
+- `docs` -> `Documentation`
+- `refactor` -> `Code Refactoring`
+- `perf` -> `Performance Improvements`
+- `build` -> `Build System`
 - `e2e` -> `End-to-end Testing`
 
 Hidden by default:
 
 - `fix(deps)`
+- `ci`
 - `chore`
 - `style`
-- `perf`
 - `test`
+- `release`
 
 `effect` is the preferred field for commit-type visibility. `hidden` is still accepted for compatibility with older upstream versions.

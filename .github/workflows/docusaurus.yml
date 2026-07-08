@@ -1,0 +1,37 @@
+name: Publish Docusaurus
+
+on:
+  push:
+    branches:
+    - main
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+    - uses: actions/checkout@0c366fd6a839edf440554fa01a7085ccba70ac98
+
+    - name: Setup Tools
+      uses: ./.github/actions/setup-tools
+
+    - name: Setup NPM Packages
+      uses: ./.github/actions/setup-npm
+
+    - name: Build the Docusaurus site
+      run: |
+        pnpm build
+      working-directory: website
+
+    - name: Deploy GitHub Pages
+      uses: JamesIves/github-pages-deploy-action@v4.8.0
+      with:
+        branch: cf-pages
+        folder: ./website/build
+        clean: true

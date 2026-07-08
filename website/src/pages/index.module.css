@@ -1,0 +1,32 @@
+.heroBanner {
+  padding: 4rem 0;
+  text-align: center;
+  position: relative;
+  overflow: hidden;
+}
+
+@media screen and (max-width: 996px) {
+  .heroBanner {
+    padding: 2rem;
+  }
+}
+
+@media screen and (max-width: 480px) {
+  .heroBanner {
+    padding: 1.5rem 1rem;
+  }
+
+  .heroBanner :global(.hero__title) {
+    font-size: 2rem;
+  }
+
+  .heroBanner :global(.hero__subtitle) {
+    font-size: 1.125rem;
+  }
+}
+
+.buttons {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}

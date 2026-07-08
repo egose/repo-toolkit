@@ -1,0 +1,36 @@
+name: Publish NPM Packages
+
+on:
+  push:
+    tags:
+    - v*.*.*
+
+jobs:
+  build-and-publish:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+
+    steps:
+    - uses: hmarr/debug-action@f7318c783045ac39ed9bb497e22ce835fdafbfe6
+    - uses: actions/checkout@ff7abcd0c3c05ccf6adc123a8cd1fd4fb30fb493
+
+    - name: Setup Tools
+      uses: ./.github/actions/setup-tools
+
+    - name: Setup NPM Packages
+      uses: ./.github/actions/setup-npm
+
+    - name: Publish Packages
+      run: |
+        cat >"/home/runner/.npmrc" <<EOF
+        //registry.npmjs.org/:_authToken=${{secrets.NPM_TOKEN}}
+        registry=https://registry.npmjs.org/
+        always-auth=true
+        EOF
+        pnpm publish-all -- --tag ${{github.ref_name}}
+
+    - name: Release
+      uses: softprops/action-gh-release@153bb8e04406b158c6c84fc1615b65b24149a1fe
+      with:
+        token: ${{ secrets.GITHUB_TOKEN }}

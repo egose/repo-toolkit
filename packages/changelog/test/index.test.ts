@@ -84,25 +84,29 @@ beforeEach(() => {
 });
 
 describe('DEFAULT_TYPES', () => {
-  it('includes the visible sections used by the README default-sections table', () => {
+  it('surfaces the visible sections in dependency-aware order', () => {
     const sections = DEFAULT_TYPES.filter((t) => t.section).map((t) => [t.type, t.section, t.scope]);
     expect(sections).toEqual([
       ['feat', 'Features', undefined],
       ['fix', 'Bug Fixes', undefined],
-      ['docs', 'Docs', undefined],
-      ['refactor', 'Refactors', undefined],
+      ['revert', 'Reverts', undefined],
+      ['docs', 'Documentation', undefined],
+      ['refactor', 'Code Refactoring', undefined],
+      ['perf', 'Performance Improvements', undefined],
+      ['build', 'Build System', undefined],
       ['e2e', 'End-to-end Testing', undefined],
     ]);
   });
 
-  it('hides fix(deps), chore, style, perf, and test by default', () => {
+  it('hides fix(deps), ci, chore, style, test, and release by default', () => {
     const hidden = DEFAULT_TYPES.filter((t) => t.effect === 'hidden').map((t) => [t.type, t.scope]);
     expect(hidden).toEqual([
       ['fix', 'deps'],
+      ['ci', undefined],
       ['chore', undefined],
       ['style', undefined],
-      ['perf', undefined],
       ['test', undefined],
+      ['release', undefined],
     ]);
   });
 });

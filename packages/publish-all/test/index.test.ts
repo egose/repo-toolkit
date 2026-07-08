@@ -190,7 +190,7 @@ describe('createPublishPackageJson', () => {
       {
         repository: {
           type: 'git',
-          url: 'https://github.com/anomalyco/repo-toolkit',
+          url: 'https://github.com/egose/repo-toolkit',
           directory: 'packages/publish-all',
         },
       },
@@ -198,7 +198,7 @@ describe('createPublishPackageJson', () => {
 
     expect(out.repository).toEqual({
       type: 'git',
-      url: 'https://github.com/anomalyco/repo-toolkit',
+      url: 'https://github.com/egose/repo-toolkit',
       directory: 'packages/publish-all',
     });
   });
