@@ -1,5 +1,5 @@
 {
-  "name": "@repo-toolkit/publish-all",
+  "name": "@repo-toolkit/publish-packages",
   "description": "Build, stage, and publish every package in a monorepo to npm",
   "version": "0.0.0-PLACEHOLDER",
   "license": "PLACEHOLDER",
@@ -16,7 +16,7 @@
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "bin": {
-    "repo-toolkit-publish-all": "dist/cli.js"
+    "repo-toolkit-publish-packages": "dist/cli.js"
   },
   "exports": {
     ".": {
@@ -27,8 +27,11 @@
   },
   "scripts": {
     "build": "tsup --config tsup.config.ts",
-    "test": "pnpm --filter @repo-toolkit/publish-all... build && vitest run --config vitest.config.ts",
-    "publish-all": "node dist/cli.js"
+    "test": "pnpm --filter @repo-toolkit/publish-packages... build && vitest run --config vitest.config.ts",
+    "publish-packages": "node dist/cli.js"
+  },
+  "dependencies": {
+    "@repo-toolkit/publish-package": "workspace:*"
   },
   "files": [
     "README.md",

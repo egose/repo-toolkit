@@ -4,8 +4,10 @@
     "paths": {
       "@repo-toolkit/changelog": ["packages/changelog/src/index.ts"],
       "@repo-toolkit/changelog/*": ["packages/changelog/src/*"],
-      "@repo-toolkit/publish-all": ["packages/publish-all/src/index.ts"],
-      "@repo-toolkit/publish-all/*": ["packages/publish-all/src/*"]
+      "@repo-toolkit/publish-package": ["packages/publish-package/src/index.ts"],
+      "@repo-toolkit/publish-package/*": ["packages/publish-package/src/*"],
+      "@repo-toolkit/publish-packages": ["packages/publish-packages/src/index.ts"],
+      "@repo-toolkit/publish-packages/*": ["packages/publish-packages/src/*"]
     }
   }
 }
