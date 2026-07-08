@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
+  <title id="title">Monorepo Publishing</title>
+  <desc id="desc">Stacked package boxes with an upward arrow representing publishing to a registry.</desc>
+  <defs>
+    <linearGradient id="bg" x1="80" y1="60" x2="432" y2="452" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#fff4ea" />
+      <stop offset="1" stop-color="#ffe2cc" />
+    </linearGradient>
+  </defs>
+  <rect x="48" y="48" width="416" height="416" rx="40" fill="url(#bg)" />
+  <path d="M256 104l120 56v120l-120 56-120-56V160Z" fill="#fff8f1" stroke="#c25800" stroke-width="6" stroke-linejoin="round" />
+  <line x1="136" y1="160" x2="256" y2="216" stroke="#e06800" stroke-width="6" stroke-linecap="round" />
+  <line x1="256" y1="216" x2="376" y2="160" stroke="#e06800" stroke-width="6" stroke-linecap="round" />
+  <path d="M256 216v120" stroke="#e06800" stroke-width="6" stroke-linecap="round" />
+  <path d="M176 340v32c0 13.255 10.745 24 24 24h112c13.255 0 24-10.745 24-24v-32" fill="none" stroke="#c25800" stroke-width="6" stroke-linecap="round" />
+  <path d="M232 372l24-24 24 24" fill="none" stroke="#c25800" stroke-width="6" stroke-linecap="round" stroke-linejoin="round" />
+  <line x1="256" y1="348" x2="256" y2="396" stroke="#c25800" stroke-width="0" />
+</svg>

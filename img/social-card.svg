@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" role="img" aria-labelledby="title desc">
+  <title id="title">repo-toolkit social card</title>
+  <desc id="desc">A branded social preview card for the repo-toolkit documentation site.</desc>
+  <defs>
+    <linearGradient id="bg" x1="120" y1="60" x2="1080" y2="570" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#fff4ea" />
+      <stop offset="1" stop-color="#ffe2cc" />
+    </linearGradient>
+    <linearGradient id="panel" x1="140" y1="120" x2="470" y2="470" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#ff9f66" />
+      <stop offset="1" stop-color="#c25800" />
+    </linearGradient>
+  </defs>
+
+  <rect width="1200" height="630" fill="url(#bg)" />
+  <rect x="72" y="72" width="1056" height="486" rx="36" fill="#fffaf5" stroke="#ffd1b3" stroke-width="2" />
+
+  <rect x="132" y="132" width="292" height="292" rx="56" fill="url(#panel)" />
+  <path d="M220 190h88l52 52v110c0 17.673-14.327 32-32 32H220c-17.673 0-32-14.327-32-32V222c0-17.673 14.327-32 32-32Z" fill="#fff8f1" />
+  <path d="M308 190v38c0 8.837 7.163 16 16 16h36Z" fill="#ffd1b3" />
+  <path d="M246 266l-28 18 28 18" fill="none" stroke="#c25800" stroke-linecap="round" stroke-linejoin="round" stroke-width="12" />
+  <path d="M302 266l28 18-28 18" fill="none" stroke="#c25800" stroke-linecap="round" stroke-linejoin="round" stroke-width="12" />
+  <path d="M232 336h84" fill="none" stroke="#e06800" stroke-linecap="round" stroke-width="12" />
+
+  <text x="484" y="232" fill="#8f3f00" font-family="Inter, Arial, sans-serif" font-size="36" font-weight="700" letter-spacing="4">DOCUMENTATION</text>
+  <text x="484" y="318" fill="#23160d" font-family="Inter, Arial, sans-serif" font-size="76" font-weight="800">repo-toolkit</text>
+  <text x="484" y="382" fill="#6d4b33" font-family="Inter, Arial, sans-serif" font-size="34" font-weight="500">Shared monorepo for repository tooling packages</text>
+
+  <g fill="#a44c00" font-family="Inter, Arial, sans-serif" font-size="32" font-weight="700">
+    <text x="484" y="478">changelog</text>
+    <text x="700" y="478">publish-all</text>
+  </g>
+</svg>

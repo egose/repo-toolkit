@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
+  <title id="title">Conventional Changelog</title>
+  <desc id="desc">A document with changelog entry lines and a version tag.</desc>
+  <defs>
+    <linearGradient id="bg" x1="80" y1="60" x2="432" y2="452" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#fff4ea" />
+      <stop offset="1" stop-color="#ffe2cc" />
+    </linearGradient>
+  </defs>
+  <rect x="48" y="48" width="416" height="416" rx="40" fill="url(#bg)" />
+  <path d="M180 112h120l64 64v176c0 17.673-14.327 32-32 32H180c-17.673 0-32-14.327-32-32V144c0-17.673 14.327-32 32-32Z" fill="#fffaf5" stroke="#c25800" stroke-width="6" stroke-linejoin="round" />
+  <path d="M300 112v56c0 8.837 7.163 16 16 16h48Z" fill="#ffd1b3" stroke="#c25800" stroke-width="6" stroke-linejoin="round" />
+  <line x1="180" y1="220" x2="312" y2="220" stroke="#e06800" stroke-width="8" stroke-linecap="round" />
+  <line x1="180" y1="260" x2="348" y2="260" stroke="#e06800" stroke-width="8" stroke-linecap="round" />
+  <line x1="180" y1="300" x2="300" y2="300" stroke="#e06800" stroke-width="8" stroke-linecap="round" />
+  <line x1="180" y1="340" x2="332" y2="340" stroke="#e06800" stroke-width="8" stroke-linecap="round" />
+  <rect x="316" y="96" width="88" height="36" rx="18" fill="#c25800" />
+  <text x="360" y="120" fill="#fff8f1" font-family="Inter, Arial, sans-serif" font-size="20" font-weight="700" text-anchor="middle">v1.2.3</text>
+</svg>
