@@ -1,6 +1,6 @@
 {
   "name": "repo-toolkit",
-  "version": "0.0.0",
+  "version": "0.0.1",
   "private": true,
   "description": "Shared monorepo for repository tooling packages",
   "license": "Apache-2.0",
