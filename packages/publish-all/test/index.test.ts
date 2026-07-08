@@ -143,13 +143,16 @@ describe('createPublishPackageJson', () => {
     expect(out.dependencies['some-external-pkg']).toBe('workspace:^1.0.0');
   });
 
-  it('rewrites dist/ paths in main/module/types/exports', () => {
+  it('rewrites dist/ paths in main/module/types/bin/exports', () => {
     const out = createPublishPackageJson(
       {
         name: '@repo-toolkit/publish-all',
         version: '0.0.0-PLACEHOLDER',
         main: 'dist/index.js',
         types: 'dist/index.d.ts',
+        bin: {
+          'repo-toolkit-publish-all': 'dist/cli.js',
+        },
         exports: {
           '.': {
             types: './dist/index.d.ts',
@@ -165,6 +168,9 @@ describe('createPublishPackageJson', () => {
 
     expect(out.main).toBe('./index.js');
     expect(out.types).toBe('./index.d.ts');
+    expect(out.bin).toEqual({
+      'repo-toolkit-publish-all': './cli.js',
+    });
     expect(out.exports).toEqual({
       '.': {
         types: './index.d.ts',
