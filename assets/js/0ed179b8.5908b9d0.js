@@ -275,6 +275,30 @@ function _createMdxContent(props) {
         }), (0,jsx_runtime.jsxs)(_components.tr, {
           children: [(0,jsx_runtime.jsx)(_components.td, {
             children: (0,jsx_runtime.jsx)(_components.code, {
+              children: "--publish-dir <path>"
+            })
+          }), (0,jsx_runtime.jsx)(_components.td, {
+            children: "Publish directory inside each package."
+          }), (0,jsx_runtime.jsx)(_components.td, {
+            children: (0,jsx_runtime.jsx)(_components.code, {
+              children: "dist"
+            })
+          })]
+        }), (0,jsx_runtime.jsxs)(_components.tr, {
+          children: [(0,jsx_runtime.jsx)(_components.td, {
+            children: (0,jsx_runtime.jsx)(_components.code, {
+              children: "--version-placeholder <text>"
+            })
+          }), (0,jsx_runtime.jsx)(_components.td, {
+            children: "Placeholder rewritten to the target version."
+          }), (0,jsx_runtime.jsx)(_components.td, {
+            children: (0,jsx_runtime.jsx)(_components.code, {
+              children: "0.0.0-PLACEHOLDER"
+            })
+          })]
+        }), (0,jsx_runtime.jsxs)(_components.tr, {
+          children: [(0,jsx_runtime.jsx)(_components.td, {
+            children: (0,jsx_runtime.jsx)(_components.code, {
               children: "--dry-run"
             })
           }), (0,jsx_runtime.jsxs)(_components.td, {
@@ -316,7 +340,7 @@ function _createMdxContent(props) {
     }), "\n", (0,jsx_runtime.jsx)(_components.pre, {
       children: (0,jsx_runtime.jsx)(_components.code, {
         className: "language-js",
-        children: "/** @type {import('@repo-toolkit/publish-all').PublishAllOptions} */\nexport default {\n  tag: '1.2.3',\n  filters: ['changelog'],\n  rootFiles: ['LICENSE', 'NOTICE'],\n  dryRun: true,\n};\n"
+        children: "/** @type {import('@repo-toolkit/publish-all').PublishAllOptions} */\nexport default {\n  tag: '1.2.3',\n  filters: ['changelog'],\n  rootFiles: ['LICENSE', 'NOTICE'],\n  publishDir: 'dist',\n  versionPlaceholder: '0.0.0-PLACEHOLDER',\n  dryRun: true,\n};\n"
       })
     }), "\n", (0,jsx_runtime.jsx)(_components.pre, {
       children: (0,jsx_runtime.jsx)(_components.code, {
@@ -331,7 +355,7 @@ function _createMdxContent(props) {
     }), "\n", (0,jsx_runtime.jsx)(_components.pre, {
       children: (0,jsx_runtime.jsx)(_components.code, {
         className: "language-ts",
-        children: "import { publishAll } from '@repo-toolkit/publish-all';\n\npublishAll({\n  tag: '1.2.3',\n  cwd: '/path/to/monorepo',\n  filters: ['changelog'],\n  rootFiles: ['LICENSE', 'NOTICE'],\n  dryRun: true,\n});\n"
+        children: "import { publishAll } from '@repo-toolkit/publish-all';\n\npublishAll({\n  tag: '1.2.3',\n  cwd: '/path/to/monorepo',\n  filters: ['changelog'],\n  rootFiles: ['LICENSE', 'NOTICE'],\n  publishDir: 'dist',\n  versionPlaceholder: '0.0.0-PLACEHOLDER',\n  dryRun: true,\n});\n"
       })
     }), "\n", (0,jsx_runtime.jsx)(_components.h3, {
       id: "exports",
@@ -464,6 +488,34 @@ function _createMdxContent(props) {
         }), (0,jsx_runtime.jsxs)(_components.tr, {
           children: [(0,jsx_runtime.jsx)(_components.td, {
             children: (0,jsx_runtime.jsx)(_components.code, {
+              children: "publishDir"
+            })
+          }), (0,jsx_runtime.jsx)(_components.td, {
+            children: (0,jsx_runtime.jsx)(_components.code, {
+              children: "string"
+            })
+          }), (0,jsx_runtime.jsxs)(_components.td, {
+            children: ["Publish directory inside each package. Default: ", (0,jsx_runtime.jsx)(_components.code, {
+              children: "dist"
+            }), "."]
+          })]
+        }), (0,jsx_runtime.jsxs)(_components.tr, {
+          children: [(0,jsx_runtime.jsx)(_components.td, {
+            children: (0,jsx_runtime.jsx)(_components.code, {
+              children: "versionPlaceholder"
+            })
+          }), (0,jsx_runtime.jsx)(_components.td, {
+            children: (0,jsx_runtime.jsx)(_components.code, {
+              children: "string"
+            })
+          }), (0,jsx_runtime.jsxs)(_components.td, {
+            children: ["Placeholder rewritten to the target version. Default: ", (0,jsx_runtime.jsx)(_components.code, {
+              children: "0.0.0-PLACEHOLDER"
+            }), "."]
+          })]
+        }), (0,jsx_runtime.jsxs)(_components.tr, {
+          children: [(0,jsx_runtime.jsx)(_components.td, {
+            children: (0,jsx_runtime.jsx)(_components.code, {
               children: "dryRun"
             })
           }), (0,jsx_runtime.jsx)(_components.td, {
@@ -485,9 +537,15 @@ function _createMdxContent(props) {
     }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
       children: ["Dependency ranges set to ", (0,jsx_runtime.jsx)(_components.code, {
         children: "0.0.0-PLACEHOLDER"
-      }), " are replaced with the target\nversion. ", (0,jsx_runtime.jsx)(_components.code, {
+      }), " are replaced with the target\nversion by default. Override this with ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "versionPlaceholder"
+      }), " /\n", (0,jsx_runtime.jsx)(_components.code, {
+        children: "--version-placeholder"
+      }), " when your workspace uses a different sentinel value."]
+    }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
+      children: [(0,jsx_runtime.jsx)(_components.code, {
         children: "workspace:"
-      }), " ranges on internal packages are resolved to the target\nversion (or kept verbatim when pinned to an explicit version)."]
+      }), " ranges on internal packages are resolved to the target version\n(or kept verbatim when pinned to an explicit version)."]
     })]
   });
 }
