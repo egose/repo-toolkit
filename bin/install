@@ -1,0 +1,68 @@
+#!/usr/bin/env bash
+set -eo pipefail
+
+tool_name="repo-toolkit"
+install_type="$ASDF_INSTALL_TYPE"
+version="$ASDF_INSTALL_VERSION"
+install_path="$ASDF_INSTALL_PATH"
+download_path="$ASDF_DOWNLOAD_PATH"
+manifest_path="$install_path/artifact-manifest.json"
+
+if [ "$install_type" != "version" ]; then
+  echo "asdf-${tool_name} supports install type 'version' only (got: ${install_type})" >&2
+  exit 1
+fi
+
+if ! command -v node >/dev/null 2>&1; then
+  echo "Error: node is required to run ${tool_name}. Install a supported node runtime first." >&2
+  exit 1
+fi
+
+shopt -s nullglob
+archives=("${download_path}"/*.tar.gz)
+
+if [ "${#archives[@]}" -ne 1 ]; then
+  echo "Expected exactly one release archive in ${download_path}, found ${#archives[@]}." >&2
+  exit 1
+fi
+
+echo "Installing ${tool_name} v${version} from $(basename "${archives[0]}") ..."
+
+mkdir -p "$install_path"
+tar -xzf "${archives[0]}" -C "$install_path" --strip-components=1
+
+if [ ! -f "$manifest_path" ]; then
+  echo "Error: release archive is missing artifact-manifest.json." >&2
+  exit 1
+fi
+
+mapfile -t required_paths < <(
+  node - "$manifest_path" <<'EOF'
+const fs = require('node:fs');
+const manifestPath = process.argv[2];
+const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+
+if (!Array.isArray(manifest.commands) || manifest.commands.length === 0) {
+  throw new Error('artifact-manifest.json must contain at least one command');
+}
+
+if (!Array.isArray(manifest.requiredFiles)) {
+  throw new Error('artifact-manifest.json must contain requiredFiles');
+}
+
+for (const requiredFile of manifest.requiredFiles) {
+  process.stdout.write(`${requiredFile}\n`);
+}
+EOF
+)
+
+for relative_path in "${required_paths[@]}"; do
+  if [ ! -f "$install_path/$relative_path" ]; then
+    echo "Error: release archive is missing $relative_path." >&2
+    exit 1
+  fi
+done
+
+chmod +x "$install_path/bin"/* 2>/dev/null || true
+
+echo "${tool_name} v${version} installed successfully."

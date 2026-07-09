@@ -37,6 +37,34 @@ Useful root scripts:
 - `pnpm publish-packages -- --version v1.2.3`
 - `pnpm release`
 
+## asdf Plugin
+
+Use this repository directly as an asdf plugin:
+
+```sh
+asdf plugin add repo-toolkit https://github.com/egose/repo-toolkit.git
+asdf plugin add nodejs https://github.com/asdf-vm/asdf-nodejs.git
+asdf install nodejs <node-version>
+asdf install repo-toolkit <repo-toolkit-version>
+asdf global repo-toolkit <repo-toolkit-version>
+```
+
+Available commands after install:
+
+- `repo-toolkit-changelog`
+- `repo-toolkit-publish-package`
+- `repo-toolkit-publish-packages`
+
+Useful asdf commands:
+
+- `asdf list all repo-toolkit`
+- `asdf install repo-toolkit latest`
+- `asdf local repo-toolkit <repo-toolkit-version>`
+
+`repo-toolkit` runs on Node.js, so install a compatible `nodejs` version in asdf before invoking the commands.
+
+The release artifact discovers workspace packages from `packages/*` and automatically exposes any package with a `bin` entry.
+
 ## Documentation Site
 
 The package docs live in `website/`.

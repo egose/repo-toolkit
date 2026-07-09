@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+set -eo pipefail
+
+# asdf repo-toolkit: download the release artifact for a version tag.
+#
+# The release workflow publishes a prebuilt archive named
+# repo-toolkit-<version>.tar.gz to the GitHub release for v<version>.
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_TOOLKIT_HELPERS="${SCRIPT_DIR}/lib/repo-toolkit.sh"
+# shellcheck source=bin/lib/repo-toolkit.sh
+. "$REPO_TOOLKIT_HELPERS"
+
+tool_name="repo-toolkit"
+version="$ASDF_INSTALL_VERSION"
+download_path="$ASDF_DOWNLOAD_PATH"
+
+github_coordinates="${REPO_TOOLKIT_GITHUB_REPOSITORY:-$(repo_toolkit_resolve_github_coordinates "$SCRIPT_DIR")}"
+
+filename="${tool_name}-${version}.tar.gz"
+download_url="https://github.com/${github_coordinates}/releases/download/v${version}/${filename}"
+outfile="${download_path}/${filename}"
+
+mkdir -p "$download_path"
+
+echo "Downloading $tool_name v$version from $download_url ..."
+
+if curl -L --fail --connect-timeout 10 --retry 3 "${download_url}" -o "${outfile}"; then
+  echo "Download successful: $outfile"
+  exit 0
+fi
+
+echo "Error: failed to download ${tool_name} v${version} from ${download_url}" >&2
+exit 1
