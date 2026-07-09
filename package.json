@@ -32,7 +32,7 @@
     "@commitlint/format": "^20.5.0",
     "@eslint/js": "^10.0.1",
     "@release-it/bumper": "^7.0.6",
-    "@types/node": "^25.9.4",
+    "@types/node": "^25.9.5",
     "eslint": "10.3.0",
     "globals": "^17.7.0",
     "prettier": "4.0.0-alpha.13",
