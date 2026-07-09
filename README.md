@@ -57,7 +57,7 @@ Available commands after install:
 
 Useful asdf commands:
 
-- `asdf list all repo-toolkit`
+- `asdf list all repo-toolkit` (shows only versions with published install archives)
 - `asdf install repo-toolkit latest`
 - `asdf local repo-toolkit <repo-toolkit-version>`
 
