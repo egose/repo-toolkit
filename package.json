@@ -8,10 +8,10 @@
   "packageManager": "pnpm@10.14.0",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/egose/web-ts-toolkit.git"
+    "url": "git+https://github.com/egose/repo-toolkit.git"
   },
   "bugs": {
-    "url": "https://github.com/egose/web-ts-toolkit/issues"
+    "url": "https://github.com/egose/repo-toolkit/issues"
   },
   "engines": {
     "node": ">=20"
