@@ -1,10 +1,30 @@
-import { accessSync, constants, existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { accessSync, constants, existsSync, mkdtempSync, readFileSync, readdirSync, readlinkSync, rmSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
 function fail(message) {
   throw new Error(message);
+}
+
+function verifySymlinks(rootPath, currentPath = rootPath) {
+  for (const entry of readdirSync(currentPath, { withFileTypes: true })) {
+    const entryPath = join(currentPath, entry.name);
+
+    if (entry.isSymbolicLink()) {
+      const targetPath = readlinkSync(entryPath);
+
+      if (targetPath.startsWith('/')) {
+        fail(`Release artifact contains an absolute symlink: ${entryPath} -> ${targetPath}`);
+      }
+
+      continue;
+    }
+
+    if (entry.isDirectory()) {
+      verifySymlinks(rootPath, entryPath);
+    }
+  }
 }
 
 const version = process.argv[2];
@@ -52,7 +72,10 @@ try {
     const wrapperPath = join(installRoot, 'bin', command.name);
     accessSync(wrapperPath, constants.X_OK);
     execFileSync('bash', ['-n', wrapperPath], { stdio: 'inherit' });
+    execFileSync(wrapperPath, ['--help'], { stdio: 'ignore' });
   }
+
+  verifySymlinks(installRoot);
 } finally {
   rmSync(extractRoot, { recursive: true, force: true });
 }

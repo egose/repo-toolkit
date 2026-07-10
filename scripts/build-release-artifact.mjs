@@ -2,6 +2,8 @@ import { chmodSync, cpSync, mkdirSync, readdirSync, readFileSync, rmSync, writeF
 import { basename, join, resolve } from 'node:path';
 import { execFileSync } from 'node:child_process';
 
+const recursiveCopyOptions = { recursive: true, verbatimSymlinks: true };
+
 function fail(message) {
   throw new Error(message);
 }
@@ -58,7 +60,7 @@ mkdirSync(join(artifactRoot, 'bin'), { recursive: true });
 mkdirSync(join(artifactRoot, 'packages'), { recursive: true });
 
 cpSync(resolve(repoRoot, 'VERSION'), join(artifactRoot, 'VERSION'));
-cpSync(resolve(repoRoot, 'node_modules'), join(artifactRoot, 'node_modules'), { recursive: true });
+cpSync(resolve(repoRoot, 'node_modules'), join(artifactRoot, 'node_modules'), recursiveCopyOptions);
 
 const commands = [];
 
@@ -66,7 +68,7 @@ for (const packageDir of packageDirs) {
   const packageDirName = basename(packageDir);
   const packageJson = readPackageJson(packageDir);
 
-  cpSync(packageDir, join(artifactRoot, 'packages', packageDirName), { recursive: true });
+  cpSync(packageDir, join(artifactRoot, 'packages', packageDirName), recursiveCopyOptions);
 
   for (const [commandName, entry] of toBinEntries(packageJson)) {
     commands.push({ name: commandName, packageDir: packageDirName, entry });
