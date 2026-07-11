@@ -1,7 +1,7 @@
 "use strict";
-(globalThis["webpackChunkwebsite"] = globalThis["webpackChunkwebsite"] || []).push([[652],{
+(globalThis["webpackChunkwebsite"] = globalThis["webpackChunkwebsite"] || []).push([[932],{
 
-/***/ 4764
+/***/ 8943
 (__unused_webpack_module, __webpack_exports__, __webpack_require__) {
 
 // ESM COMPAT FLAG
@@ -13,12 +13,12 @@ __webpack_require__.d(__webpack_exports__, {
   contentTitle: () => (/* binding */ contentTitle),
   "default": () => (/* binding */ MDXContent),
   frontMatter: () => (/* binding */ frontMatter),
-  metadata: () => (/* reexport */ site_docs_packages_publish_packages_md_5a4_namespaceObject),
+  metadata: () => (/* reexport */ site_docs_packages_release_artifact_md_e26_namespaceObject),
   toc: () => (/* binding */ toc)
 });
 
-;// ./.docusaurus/docusaurus-plugin-content-docs/default/site-docs-packages-publish-packages-md-5a4.json
-const site_docs_packages_publish_packages_md_5a4_namespaceObject = /*#__PURE__*/JSON.parse('{"id":"packages/publish-packages","title":"@repo-toolkit/publish-packages","description":"Build, stage, and publish every package in a monorepo to npm in dependency order.","source":"@site/docs/packages/publish-packages.md","sourceDirName":"packages","slug":"/packages/publish-packages","permalink":"/docs/packages/publish-packages","draft":false,"unlisted":false,"tags":[],"version":"current","sidebarPosition":3,"frontMatter":{"sidebar_label":"Publish Packages","sidebar_position":3},"sidebar":"packagesSidebar","previous":{"title":"Publish Package","permalink":"/docs/packages/publish-package"}}');
+;// ./.docusaurus/docusaurus-plugin-content-docs/default/site-docs-packages-release-artifact-md-e26.json
+const site_docs_packages_release_artifact_md_e26_namespaceObject = /*#__PURE__*/JSON.parse('{"id":"packages/release-artifact","title":"@repo-toolkit/release-artifact","description":"Assemble, verify, and distribute a self-contained CLI release artifact (tarball)","source":"@site/docs/packages/release-artifact.md","sourceDirName":"packages","slug":"/packages/release-artifact","permalink":"/docs/packages/release-artifact","draft":false,"unlisted":false,"tags":[],"version":"current","sidebarPosition":4,"frontMatter":{"sidebar_label":"Release Artifact","sidebar_position":4},"sidebar":"packagesSidebar","previous":{"title":"Publish Packages","permalink":"/docs/packages/publish-packages"}}');
 // EXTERNAL MODULE: ./node_modules/.pnpm/react@19.2.6/node_modules/react/jsx-runtime.js
 var jsx_runtime = __webpack_require__(1325);
 // EXTERNAL MODULE: ./node_modules/.pnpm/@mdx-js+react@3.1.1_@types+react@19.2.14_react@19.2.6/node_modules/@mdx-js/react/lib/index.js
@@ -27,14 +27,14 @@ var lib = __webpack_require__(1982);
 var Tabs = __webpack_require__(5250);
 // EXTERNAL MODULE: ./node_modules/.pnpm/@docusaurus+theme-classic@3.10.1_@types+react@19.2.14_react-dom@19.2.6_react@19.2.6__react@19.2.6_typescript@6.0.3/node_modules/@docusaurus/theme-classic/lib/theme/TabItem/index.js + 1 modules
 var TabItem = __webpack_require__(6574);
-;// ./docs/packages/publish-packages.md
+;// ./docs/packages/release-artifact.md
 
 
 const frontMatter = {
-	sidebar_label: 'Publish Packages',
-	sidebar_position: 3
+	sidebar_label: 'Release Artifact',
+	sidebar_position: 4
 };
-const contentTitle = '@repo-toolkit/publish-packages';
+const contentTitle = '@repo-toolkit/release-artifact';
 
 const assets = {
 
@@ -53,29 +53,58 @@ const toc = [{
   "id": "cli",
   "level": 2
 }, {
+  "value": "Build",
+  "id": "build",
+  "level": 3
+}, {
+  "value": "Verify",
+  "id": "verify",
+  "level": 3
+}, {
   "value": "Flags",
   "id": "flags",
   "level": 3
-}, {
-  "value": "Config File",
-  "id": "config-file",
-  "level": 2
 }, {
   "value": "JavaScript API",
   "id": "javascript-api",
   "level": 2
 }, {
+  "value": "Build",
+  "id": "build-1",
+  "level": 3
+}, {
+  "value": "Verify",
+  "id": "verify-1",
+  "level": 3
+}, {
   "value": "Exports",
   "id": "exports",
   "level": 3
+}, {
+  "value": "Options",
+  "id": "options",
+  "level": 3
+}, {
+  "value": "<code>BuildArtifactOptions</code>",
+  "id": "buildartifactoptions",
+  "level": 4
+}, {
+  "value": "<code>VerifyArtifactOptions</code>",
+  "id": "verifyartifactoptions",
+  "level": 4
+}, {
+  "value": "Security note",
+  "id": "security-note",
+  "level": 2
 }];
 function _createMdxContent(props) {
   const _components = {
-    a: "a",
     code: "code",
+    em: "em",
     h1: "h1",
     h2: "h2",
     h3: "h3",
+    h4: "h4",
     header: "header",
     li: "li",
     p: "p",
@@ -93,24 +122,31 @@ function _createMdxContent(props) {
   return (0,jsx_runtime.jsxs)(jsx_runtime.Fragment, {
     children: [(0,jsx_runtime.jsx)(_components.header, {
       children: (0,jsx_runtime.jsx)(_components.h1, {
-        id: "repo-toolkitpublish-packages",
+        id: "repo-toolkitrelease-artifact",
         children: (0,jsx_runtime.jsx)(_components.code, {
-          children: "@repo-toolkit/publish-packages"
+          children: "@repo-toolkit/release-artifact"
         })
       })
     }), "\n", (0,jsx_runtime.jsx)(_components.p, {
-      children: "Build, stage, and publish every package in a monorepo to npm in dependency order."
+      children: "Assemble, verify, and distribute a self-contained CLI release artifact (tarball)\nfrom a monorepo."
     }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
       children: [(0,jsx_runtime.jsx)(_components.code, {
-        children: "publish-packages"
-      }), " is the workspace wrapper around\n", (0,jsx_runtime.jsx)(_components.a, {
-        href: "./publish-package",
-        children: (0,jsx_runtime.jsx)(_components.code, {
-          children: "@repo-toolkit/publish-package"
-        })
-      }), ". It discovers packages under\n", (0,jsx_runtime.jsx)(_components.code, {
+        children: "release-artifact"
+      }), " discovers packages under ", (0,jsx_runtime.jsx)(_components.code, {
         children: "packages/*"
-      }), ", sorts them by internal dependency order, filters the selection,\nand then calls the single-package publish engine for each package."]
+      }), ", generates bash wrappers\nfor each ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "bin"
+      }), " entry, copies the workspace ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "node_modules"
+      }), " (optional), writes an\n", (0,jsx_runtime.jsx)(_components.code, {
+        children: "artifact-manifest.json"
+      }), ", and packages everything into a ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "<toolName>-<version>.tar.gz"
+      }), ".\nVerification re-extracts the tarball and checks required files, symlink safety,\nand that each wrapper boots (", (0,jsx_runtime.jsx)(_components.code, {
+        children: "<wrapper> --help"
+      }), ")."]
+    }), "\n", (0,jsx_runtime.jsx)(_components.p, {
+      children: "The asdf plugin in this repo consumes the resulting tarball directly, but the\npackage is generic: any monorepo that wants to ship a bundled CLI artifact can\nuse it."
     }), "\n", (0,jsx_runtime.jsx)(_components.h2, {
       id: "install",
       children: "Install"
@@ -121,7 +157,7 @@ function _createMdxContent(props) {
         children: (0,jsx_runtime.jsx)(_components.pre, {
           children: (0,jsx_runtime.jsx)(_components.code, {
             className: "language-bash",
-            children: "npm install --save-dev @repo-toolkit/publish-packages\n"
+            children: "npm install --save-dev @repo-toolkit/release-artifact\n"
           })
         })
       }), (0,jsx_runtime.jsx)(TabItem/* default */.A, {
@@ -130,7 +166,7 @@ function _createMdxContent(props) {
         children: (0,jsx_runtime.jsx)(_components.pre, {
           children: (0,jsx_runtime.jsx)(_components.code, {
             className: "language-bash",
-            children: "yarn add --dev @repo-toolkit/publish-packages\n"
+            children: "yarn add --dev @repo-toolkit/release-artifact\n"
           })
         })
       }), (0,jsx_runtime.jsx)(TabItem/* default */.A, {
@@ -139,7 +175,7 @@ function _createMdxContent(props) {
         children: (0,jsx_runtime.jsx)(_components.pre, {
           children: (0,jsx_runtime.jsx)(_components.code, {
             className: "language-bash",
-            children: "pnpm add --save-dev @repo-toolkit/publish-packages\n"
+            children: "pnpm add --save-dev @repo-toolkit/release-artifact\n"
           })
         })
       }), (0,jsx_runtime.jsx)(TabItem/* default */.A, {
@@ -148,24 +184,29 @@ function _createMdxContent(props) {
         children: (0,jsx_runtime.jsx)(_components.pre, {
           children: (0,jsx_runtime.jsx)(_components.code, {
             className: "language-bash",
-            children: "bun add --dev @repo-toolkit/publish-packages\n"
+            children: "bun add --dev @repo-toolkit/release-artifact\n"
           })
         })
       })]
     }), "\n", (0,jsx_runtime.jsx)(_components.h2, {
       id: "cli",
       children: "CLI"
+    }), "\n", (0,jsx_runtime.jsx)(_components.h3, {
+      id: "build",
+      children: "Build"
     }), "\n", (0,jsx_runtime.jsx)(_components.pre, {
       children: (0,jsx_runtime.jsx)(_components.code, {
         className: "language-sh",
-        children: "repo-toolkit-publish-packages --version v1.2.3\n"
+        children: "repo-toolkit-build-artifact --version v1.2.3\n"
       })
-    }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
-      children: [(0,jsx_runtime.jsx)(_components.code, {
-        children: "--tag"
-      }), " is still accepted as a compatibility alias, but ", (0,jsx_runtime.jsx)(_components.code, {
-        children: "--version"
-      }), " is the\npreferred spelling."]
+    }), "\n", (0,jsx_runtime.jsx)(_components.h3, {
+      id: "verify",
+      children: "Verify"
+    }), "\n", (0,jsx_runtime.jsx)(_components.pre, {
+      children: (0,jsx_runtime.jsx)(_components.code, {
+        className: "language-sh",
+        children: "repo-toolkit-verify-artifact --version v1.2.3\n"
+      })
     }), "\n", (0,jsx_runtime.jsx)(_components.h3, {
       id: "flags",
       children: "Flags"
@@ -187,11 +228,11 @@ function _createMdxContent(props) {
               children: "--config <path>"
             })
           }), (0,jsx_runtime.jsxs)(_components.td, {
-            children: ["Config file with publish options (JSON, ", (0,jsx_runtime.jsx)(_components.code, {
+            children: ["Config file (JSON, ", (0,jsx_runtime.jsx)(_components.code, {
               children: ".mjs"
             }), ", or ", (0,jsx_runtime.jsx)(_components.code, {
               children: ".cjs"
-            }), " default export). CLI flags override config values."]
+            }), " default export). CLI flags override config."]
           }), (0,jsx_runtime.jsx)(_components.td, {
             children: "—"
           })]
@@ -213,7 +254,7 @@ function _createMdxContent(props) {
               children: "--version <version>"
             })
           }), (0,jsx_runtime.jsxs)(_components.td, {
-            children: ["Target version for every selected package. A leading ", (0,jsx_runtime.jsx)(_components.code, {
+            children: ["Target version. A leading ", (0,jsx_runtime.jsx)(_components.code, {
               children: "v"
             }), " is stripped."]
           }), (0,jsx_runtime.jsx)(_components.td, {
@@ -225,7 +266,7 @@ function _createMdxContent(props) {
               children: "--tag <version>"
             })
           }), (0,jsx_runtime.jsxs)(_components.td, {
-            children: ["Compatibility alias for ", (0,jsx_runtime.jsx)(_components.code, {
+            children: ["Alias for ", (0,jsx_runtime.jsx)(_components.code, {
               children: "--version"
             })]
           }), (0,jsx_runtime.jsx)(_components.td, {
@@ -234,114 +275,34 @@ function _createMdxContent(props) {
         }), (0,jsx_runtime.jsxs)(_components.tr, {
           children: [(0,jsx_runtime.jsx)(_components.td, {
             children: (0,jsx_runtime.jsx)(_components.code, {
-              children: "--npm-tag <dist-tag>"
+              children: "--tool-name <name>"
             })
           }), (0,jsx_runtime.jsx)(_components.td, {
-            children: "npm dist-tag"
-          }), (0,jsx_runtime.jsxs)(_components.td, {
-            children: ["inferred from the prerelease ", (0,jsx_runtime.jsx)(_components.code, {
-              children: "preid"
-            })]
-          })]
-        }), (0,jsx_runtime.jsxs)(_components.tr, {
-          children: [(0,jsx_runtime.jsx)(_components.td, {
-            children: (0,jsx_runtime.jsx)(_components.code, {
-              children: "--filter <name>[,<name>]"
-            })
-          }), (0,jsx_runtime.jsxs)(_components.td, {
-            children: ["Only publish matching packages (by name or directory). Applied before ", (0,jsx_runtime.jsx)(_components.code, {
-              children: "--from"
-            }), "."]
-          }), (0,jsx_runtime.jsx)(_components.td, {
-            children: "—"
-          })]
-        }), (0,jsx_runtime.jsxs)(_components.tr, {
-          children: [(0,jsx_runtime.jsx)(_components.td, {
-            children: (0,jsx_runtime.jsx)(_components.code, {
-              children: "--from <name>"
-            })
-          }), (0,jsx_runtime.jsxs)(_components.td, {
-            children: ["Start publishing from the first package matching this selector, computed against the post-", (0,jsx_runtime.jsx)(_components.code, {
-              children: "--filter"
-            }), " list."]
-          }), (0,jsx_runtime.jsx)(_components.td, {
-            children: "—"
-          })]
-        }), (0,jsx_runtime.jsxs)(_components.tr, {
-          children: [(0,jsx_runtime.jsx)(_components.td, {
-            children: (0,jsx_runtime.jsx)(_components.code, {
-              children: "--package-files <file>[,<file>]"
-            })
-          }), (0,jsx_runtime.jsx)(_components.td, {
-            children: "Files copied from each package root into the publish dir (replaces defaults)."
+            children: "Tool name used in artifact filenames"
           }), (0,jsx_runtime.jsx)(_components.td, {
             children: (0,jsx_runtime.jsx)(_components.code, {
-              children: "['README.md', 'CHANGELOG.md', 'llms.txt']"
+              children: "repo-toolkit"
             })
           })]
         }), (0,jsx_runtime.jsxs)(_components.tr, {
           children: [(0,jsx_runtime.jsx)(_components.td, {
             children: (0,jsx_runtime.jsx)(_components.code, {
-              children: "--include-package-file <path>"
+              children: "--packages-dir <path>"
             })
           }), (0,jsx_runtime.jsx)(_components.td, {
-            children: "Additional file copied from each package root (repeatable, additive)."
-          }), (0,jsx_runtime.jsx)(_components.td, {
-            children: "—"
-          })]
-        }), (0,jsx_runtime.jsxs)(_components.tr, {
-          children: [(0,jsx_runtime.jsx)(_components.td, {
-            children: (0,jsx_runtime.jsx)(_components.code, {
-              children: "--no-default-package-files"
-            })
-          }), (0,jsx_runtime.jsx)(_components.td, {
-            children: "Skip copying default package files."
+            children: "Directory under workspace root holding packages (build only)"
           }), (0,jsx_runtime.jsx)(_components.td, {
             children: (0,jsx_runtime.jsx)(_components.code, {
-              children: "false"
+              children: "packages"
             })
           })]
         }), (0,jsx_runtime.jsxs)(_components.tr, {
           children: [(0,jsx_runtime.jsx)(_components.td, {
             children: (0,jsx_runtime.jsx)(_components.code, {
-              children: "--root-files <file>[,<file>]"
+              children: "--dist-dir <path>"
             })
           }), (0,jsx_runtime.jsx)(_components.td, {
-            children: "Files copied from the workspace root into each publish dir (replaces defaults)."
-          }), (0,jsx_runtime.jsx)(_components.td, {
-            children: (0,jsx_runtime.jsx)(_components.code, {
-              children: "['LICENSE']"
-            })
-          })]
-        }), (0,jsx_runtime.jsxs)(_components.tr, {
-          children: [(0,jsx_runtime.jsx)(_components.td, {
-            children: (0,jsx_runtime.jsx)(_components.code, {
-              children: "--include-root-file <path>"
-            })
-          }), (0,jsx_runtime.jsx)(_components.td, {
-            children: "Additional file copied from the workspace root (repeatable, additive)."
-          }), (0,jsx_runtime.jsx)(_components.td, {
-            children: "—"
-          })]
-        }), (0,jsx_runtime.jsxs)(_components.tr, {
-          children: [(0,jsx_runtime.jsx)(_components.td, {
-            children: (0,jsx_runtime.jsx)(_components.code, {
-              children: "--no-default-root-files"
-            })
-          }), (0,jsx_runtime.jsx)(_components.td, {
-            children: "Skip copying default root files."
-          }), (0,jsx_runtime.jsx)(_components.td, {
-            children: (0,jsx_runtime.jsx)(_components.code, {
-              children: "false"
-            })
-          })]
-        }), (0,jsx_runtime.jsxs)(_components.tr, {
-          children: [(0,jsx_runtime.jsx)(_components.td, {
-            children: (0,jsx_runtime.jsx)(_components.code, {
-              children: "--publish-dir <path>"
-            })
-          }), (0,jsx_runtime.jsx)(_components.td, {
-            children: "Publish directory inside each package."
+            children: "Directory under workspace root where the tarball is written / located"
           }), (0,jsx_runtime.jsx)(_components.td, {
             children: (0,jsx_runtime.jsx)(_components.code, {
               children: "dist"
@@ -350,97 +311,71 @@ function _createMdxContent(props) {
         }), (0,jsx_runtime.jsxs)(_components.tr, {
           children: [(0,jsx_runtime.jsx)(_components.td, {
             children: (0,jsx_runtime.jsx)(_components.code, {
-              children: "--version-placeholder <text>"
+              children: "--version-files <f>[,<f>]"
             })
           }), (0,jsx_runtime.jsx)(_components.td, {
-            children: "Placeholder rewritten to the target version."
+            children: "Root file(s) copied into artifact root (build only)"
           }), (0,jsx_runtime.jsx)(_components.td, {
             children: (0,jsx_runtime.jsx)(_components.code, {
-              children: "0.0.0-PLACEHOLDER"
+              children: "['VERSION']"
             })
           })]
         }), (0,jsx_runtime.jsxs)(_components.tr, {
           children: [(0,jsx_runtime.jsx)(_components.td, {
             children: (0,jsx_runtime.jsx)(_components.code, {
-              children: "--build-command <command>"
+              children: "--root-files <f>[,<f>]"
             })
           }), (0,jsx_runtime.jsx)(_components.td, {
-            children: "Command used to build each publish dir."
-          }), (0,jsx_runtime.jsx)(_components.td, {
-            children: (0,jsx_runtime.jsx)(_components.code, {
-              children: "pnpm build"
-            })
-          })]
-        }), (0,jsx_runtime.jsxs)(_components.tr, {
-          children: [(0,jsx_runtime.jsx)(_components.td, {
-            children: (0,jsx_runtime.jsx)(_components.code, {
-              children: "--skip-build"
-            })
-          }), (0,jsx_runtime.jsx)(_components.td, {
-            children: "Skip the build step"
-          }), (0,jsx_runtime.jsx)(_components.td, {
-            children: (0,jsx_runtime.jsx)(_components.code, {
-              children: "false"
-            })
-          })]
-        }), (0,jsx_runtime.jsxs)(_components.tr, {
-          children: [(0,jsx_runtime.jsx)(_components.td, {
-            children: (0,jsx_runtime.jsx)(_components.code, {
-              children: "--access <level>"
-            })
-          }), (0,jsx_runtime.jsx)(_components.td, {
-            children: "npm publish access level"
-          }), (0,jsx_runtime.jsx)(_components.td, {
-            children: (0,jsx_runtime.jsx)(_components.code, {
-              children: "public"
-            })
-          })]
-        }), (0,jsx_runtime.jsxs)(_components.tr, {
-          children: [(0,jsx_runtime.jsx)(_components.td, {
-            children: (0,jsx_runtime.jsx)(_components.code, {
-              children: "--registry <url>"
-            })
-          }), (0,jsx_runtime.jsx)(_components.td, {
-            children: "npm registry URL"
+            children: "Additional root files copied into artifact root (build only)"
           }), (0,jsx_runtime.jsx)(_components.td, {
             children: "—"
           })]
         }), (0,jsx_runtime.jsxs)(_components.tr, {
           children: [(0,jsx_runtime.jsx)(_components.td, {
             children: (0,jsx_runtime.jsx)(_components.code, {
-              children: "--otp <code>"
-            })
-          }), (0,jsx_runtime.jsx)(_components.td, {
-            children: "npm OTP code"
-          }), (0,jsx_runtime.jsx)(_components.td, {
-            children: "—"
-          })]
-        }), (0,jsx_runtime.jsxs)(_components.tr, {
-          children: [(0,jsx_runtime.jsx)(_components.td, {
-            children: (0,jsx_runtime.jsx)(_components.code, {
-              children: "--provenance"
-            })
-          }), (0,jsx_runtime.jsx)(_components.td, {
-            children: "Request npm provenance attestation"
-          }), (0,jsx_runtime.jsx)(_components.td, {
-            children: (0,jsx_runtime.jsx)(_components.code, {
-              children: "false"
-            })
-          })]
-        }), (0,jsx_runtime.jsxs)(_components.tr, {
-          children: [(0,jsx_runtime.jsx)(_components.td, {
-            children: (0,jsx_runtime.jsx)(_components.code, {
-              children: "--dry-run"
+              children: "--skip-node-modules"
             })
           }), (0,jsx_runtime.jsxs)(_components.td, {
-            children: ["Forward ", (0,jsx_runtime.jsx)(_components.code, {
-              children: "--dry-run"
-            }), " to ", (0,jsx_runtime.jsx)(_components.code, {
-              children: "npm publish"
-            }), "."]
+            children: ["Do not copy ", (0,jsx_runtime.jsx)(_components.code, {
+              children: "node_modules"
+            }), " into the artifact (build only)"]
           }), (0,jsx_runtime.jsx)(_components.td, {
             children: (0,jsx_runtime.jsx)(_components.code, {
               children: "false"
+            })
+          })]
+        }), (0,jsx_runtime.jsxs)(_components.tr, {
+          children: [(0,jsx_runtime.jsx)(_components.td, {
+            children: (0,jsx_runtime.jsx)(_components.code, {
+              children: "--node-command <name>"
+            })
+          }), (0,jsx_runtime.jsx)(_components.td, {
+            children: "Node interpreter used in bash wrappers (build only)"
+          }), (0,jsx_runtime.jsx)(_components.td, {
+            children: (0,jsx_runtime.jsx)(_components.code, {
+              children: "node"
+            })
+          })]
+        }), (0,jsx_runtime.jsxs)(_components.tr, {
+          children: [(0,jsx_runtime.jsx)(_components.td, {
+            children: (0,jsx_runtime.jsx)(_components.code, {
+              children: "--artifact-path <path>"
+            })
+          }), (0,jsx_runtime.jsx)(_components.td, {
+            children: "Explicit tarball path; overrides cwd/tool-name/dist-dir (verify only)"
+          }), (0,jsx_runtime.jsx)(_components.td, {
+            children: "—"
+          })]
+        }), (0,jsx_runtime.jsxs)(_components.tr, {
+          children: [(0,jsx_runtime.jsx)(_components.td, {
+            children: (0,jsx_runtime.jsx)(_components.code, {
+              children: "--help-flag <flag>"
+            })
+          }), (0,jsx_runtime.jsx)(_components.td, {
+            children: "Flag passed to each wrapper to confirm it boots (verify only)"
+          }), (0,jsx_runtime.jsx)(_components.td, {
+            children: (0,jsx_runtime.jsx)(_components.code, {
+              children: "--help"
             })
           })]
         }), (0,jsx_runtime.jsxs)(_components.tr, {
@@ -456,25 +391,23 @@ function _createMdxContent(props) {
         })]
       })]
     }), "\n", (0,jsx_runtime.jsx)(_components.h2, {
-      id: "config-file",
-      children: "Config File"
-    }), "\n", (0,jsx_runtime.jsx)(_components.pre, {
-      children: (0,jsx_runtime.jsx)(_components.code, {
-        className: "language-js",
-        children: "/** @type {import('@repo-toolkit/publish-packages').PublishPackagesOptions} */\nexport default {\n  version: '1.2.3',\n  filters: ['changelog'],\n  rootFiles: ['LICENSE', 'NOTICE'],\n  publishDir: 'dist',\n  versionPlaceholder: '0.0.0-PLACEHOLDER',\n  buildCommand: 'pnpm build',\n  dryRun: true,\n};\n"
-      })
-    }), "\n", (0,jsx_runtime.jsx)(_components.pre, {
-      children: (0,jsx_runtime.jsx)(_components.code, {
-        className: "language-sh",
-        children: "repo-toolkit-publish-packages --config publish-packages.config.mjs\n"
-      })
-    }), "\n", (0,jsx_runtime.jsx)(_components.h2, {
       id: "javascript-api",
       children: "JavaScript API"
+    }), "\n", (0,jsx_runtime.jsx)(_components.h3, {
+      id: "build-1",
+      children: "Build"
     }), "\n", (0,jsx_runtime.jsx)(_components.pre, {
       children: (0,jsx_runtime.jsx)(_components.code, {
         className: "language-ts",
-        children: "import { publishPackages } from '@repo-toolkit/publish-packages';\n\npublishPackages({\n  version: '1.2.3',\n  cwd: '/path/to/monorepo',\n  filters: ['changelog'],\n  rootFiles: ['LICENSE', 'NOTICE'],\n  publishDir: 'dist',\n  versionPlaceholder: '0.0.0-PLACEHOLDER',\n  dryRun: true,\n});\n"
+        children: "import { buildReleaseArtifact } from '@repo-toolkit/release-artifact';\n\nconst plan = buildReleaseArtifact({\n  version: '1.2.3',\n  cwd: '/path/to/monorepo',\n  toolName: 'repo-toolkit',\n  includeNodeModules: true,\n  rootFiles: ['LICENSE'],\n});\n\nconsole.log(plan.artifactPath);\n"
+      })
+    }), "\n", (0,jsx_runtime.jsx)(_components.h3, {
+      id: "verify-1",
+      children: "Verify"
+    }), "\n", (0,jsx_runtime.jsx)(_components.pre, {
+      children: (0,jsx_runtime.jsx)(_components.code, {
+        className: "language-ts",
+        children: "import { verifyReleaseArtifact } from '@repo-toolkit/release-artifact';\n\nverifyReleaseArtifact({\n  version: '1.2.3',\n  cwd: '/path/to/monorepo',\n  toolName: 'repo-toolkit',\n});\n"
       })
     }), "\n", (0,jsx_runtime.jsx)(_components.h3, {
       id: "exports",
@@ -482,28 +415,207 @@ function _createMdxContent(props) {
     }), "\n", (0,jsx_runtime.jsxs)(_components.ul, {
       children: ["\n", (0,jsx_runtime.jsxs)(_components.li, {
         children: [(0,jsx_runtime.jsx)(_components.code, {
-          children: "sortPackagesByInternalDependencies(...)"
-        }), " — topologically sort internal packages (throws on cycles)."]
+          children: "buildReleaseArtifact(options)"
+        }), " — assemble the artifact and write the tarball; returns the resolved plan."]
       }), "\n", (0,jsx_runtime.jsxs)(_components.li, {
         children: [(0,jsx_runtime.jsx)(_components.code, {
-          children: "resolvePublishPackagesPlan(options)"
-        }), " — resolve the selected package list and shared publish options without publishing."]
+          children: "verifyReleaseArtifact(options)"
+        }), " — extract the tarball and validate manifest, required files, symlink safety, and each wrapper's ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "--help"
+        }), "."]
       }), "\n", (0,jsx_runtime.jsxs)(_components.li, {
         children: [(0,jsx_runtime.jsx)(_components.code, {
-          children: "publishPackages(options)"
-        }), " — run the full workspace publish pipeline."]
+          children: "resolveBuildArtifactPlan(options)"
+        }), " — resolve the build plan without writing."]
       }), "\n", (0,jsx_runtime.jsxs)(_components.li, {
         children: [(0,jsx_runtime.jsx)(_components.code, {
-          children: "inferNpmTag(version)"
-        }), " — derive the npm dist-tag from a version string."]
+          children: "resolveArtifactPath(options)"
+        }), " — resolve the expected tarball path for a version."]
+      }), "\n", (0,jsx_runtime.jsxs)(_components.li, {
+        children: [(0,jsx_runtime.jsx)(_components.code, {
+          children: "buildWrapperScript(targetPath, nodeCommand?)"
+        }), " — generate a bash wrapper that ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "exec"
+        }), "s the node interpreter."]
+      }), "\n", (0,jsx_runtime.jsxs)(_components.li, {
+        children: [(0,jsx_runtime.jsx)(_components.code, {
+          children: "toBinEntries(binField, packageName)"
+        }), " — normalize a ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "package.json#bin"
+        }), " field into ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "[name, entry]"
+        }), " pairs."]
+      }), "\n", (0,jsx_runtime.jsxs)(_components.li, {
+        children: [(0,jsx_runtime.jsx)(_components.code, {
+          children: "collectCommands(packagesRoot, packageDirNames)"
+        }), " — read ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "bin"
+        }), " entries across packages."]
+      }), "\n", (0,jsx_runtime.jsxs)(_components.li, {
+        children: [(0,jsx_runtime.jsx)(_components.code, {
+          children: "buildRequiredFiles(commands, versionFiles)"
+        }), " — compute the manifest's ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "requiredFiles"
+        }), " list."]
+      }), "\n", (0,jsx_runtime.jsxs)(_components.li, {
+        children: [(0,jsx_runtime.jsx)(_components.code, {
+          children: "createArtifactManifest(version, commands, requiredFiles)"
+        }), " — assemble the manifest (commands sorted)."]
+      }), "\n", (0,jsx_runtime.jsxs)(_components.li, {
+        children: [(0,jsx_runtime.jsx)(_components.code, {
+          children: "verifySymlinks(rootPath, currentPath?)"
+        }), " — throw on any absolute symlink."]
       }), "\n"]
+    }), "\n", (0,jsx_runtime.jsx)(_components.h3, {
+      id: "options",
+      children: "Options"
+    }), "\n", (0,jsx_runtime.jsx)(_components.h4, {
+      id: "buildartifactoptions",
+      children: (0,jsx_runtime.jsx)(_components.code, {
+        children: "BuildArtifactOptions"
+      })
+    }), "\n", (0,jsx_runtime.jsxs)(_components.ul, {
+      children: ["\n", (0,jsx_runtime.jsxs)(_components.li, {
+        children: [(0,jsx_runtime.jsx)(_components.code, {
+          children: "version"
+        }), " ", (0,jsx_runtime.jsx)(_components.em, {
+          children: "(string, required)"
+        }), " Target version. A leading ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "v"
+        }), " is stripped."]
+      }), "\n", (0,jsx_runtime.jsxs)(_components.li, {
+        children: [(0,jsx_runtime.jsx)(_components.code, {
+          children: "cwd"
+        }), " ", (0,jsx_runtime.jsx)(_components.em, {
+          children: "(string)"
+        }), " Workspace root directory. Defaults to ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "process.cwd()"
+        }), "."]
+      }), "\n", (0,jsx_runtime.jsxs)(_components.li, {
+        children: [(0,jsx_runtime.jsx)(_components.code, {
+          children: "toolName"
+        }), " ", (0,jsx_runtime.jsx)(_components.em, {
+          children: "(string)"
+        }), " Tool name used in artifact directory and tarball filenames (default: ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "repo-toolkit"
+        }), ")."]
+      }), "\n", (0,jsx_runtime.jsxs)(_components.li, {
+        children: [(0,jsx_runtime.jsx)(_components.code, {
+          children: "versionFiles"
+        }), " ", (0,jsx_runtime.jsx)(_components.em, {
+          children: "(string[])"
+        }), " Root file(s) copied into artifact root (default: ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "['VERSION']"
+        }), "). Missing files are skipped."]
+      }), "\n", (0,jsx_runtime.jsxs)(_components.li, {
+        children: [(0,jsx_runtime.jsx)(_components.code, {
+          children: "rootFiles"
+        }), " ", (0,jsx_runtime.jsx)(_components.em, {
+          children: "(string[])"
+        }), " Additional root files copied into artifact root. Missing files are skipped."]
+      }), "\n", (0,jsx_runtime.jsxs)(_components.li, {
+        children: [(0,jsx_runtime.jsx)(_components.code, {
+          children: "packagesDir"
+        }), " ", (0,jsx_runtime.jsx)(_components.em, {
+          children: "(string)"
+        }), " Directory under workspace root holding packages (default: ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "packages"
+        }), ")."]
+      }), "\n", (0,jsx_runtime.jsxs)(_components.li, {
+        children: [(0,jsx_runtime.jsx)(_components.code, {
+          children: "distDir"
+        }), " ", (0,jsx_runtime.jsx)(_components.em, {
+          children: "(string)"
+        }), " Directory under workspace root where the tarball is written (default: ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "dist"
+        }), ")."]
+      }), "\n", (0,jsx_runtime.jsxs)(_components.li, {
+        children: [(0,jsx_runtime.jsx)(_components.code, {
+          children: "includeNodeModules"
+        }), " ", (0,jsx_runtime.jsx)(_components.em, {
+          children: "(boolean)"
+        }), " Copy ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "node_modules"
+        }), " into the artifact so commands run without an install (default: ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "true"
+        }), ")."]
+      }), "\n", (0,jsx_runtime.jsxs)(_components.li, {
+        children: [(0,jsx_runtime.jsx)(_components.code, {
+          children: "nodeCommand"
+        }), " ", (0,jsx_runtime.jsx)(_components.em, {
+          children: "(string)"
+        }), " Node interpreter used in generated bash wrappers (default: ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "node"
+        }), ")."]
+      }), "\n"]
+    }), "\n", (0,jsx_runtime.jsx)(_components.h4, {
+      id: "verifyartifactoptions",
+      children: (0,jsx_runtime.jsx)(_components.code, {
+        children: "VerifyArtifactOptions"
+      })
+    }), "\n", (0,jsx_runtime.jsxs)(_components.ul, {
+      children: ["\n", (0,jsx_runtime.jsxs)(_components.li, {
+        children: [(0,jsx_runtime.jsx)(_components.code, {
+          children: "version"
+        }), " ", (0,jsx_runtime.jsxs)(_components.em, {
+          children: ["(string, required unless ", (0,jsx_runtime.jsx)(_components.code, {
+            children: "artifactPath"
+          }), " is set)"]
+        }), " Target version used to locate the tarball."]
+      }), "\n", (0,jsx_runtime.jsxs)(_components.li, {
+        children: [(0,jsx_runtime.jsx)(_components.code, {
+          children: "cwd"
+        }), " ", (0,jsx_runtime.jsx)(_components.em, {
+          children: "(string)"
+        }), " Workspace root directory. Defaults to ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "process.cwd()"
+        }), "."]
+      }), "\n", (0,jsx_runtime.jsxs)(_components.li, {
+        children: [(0,jsx_runtime.jsx)(_components.code, {
+          children: "toolName"
+        }), " ", (0,jsx_runtime.jsx)(_components.em, {
+          children: "(string)"
+        }), " Tool name used to locate the tarball (default: ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "repo-toolkit"
+        }), ")."]
+      }), "\n", (0,jsx_runtime.jsxs)(_components.li, {
+        children: [(0,jsx_runtime.jsx)(_components.code, {
+          children: "distDir"
+        }), " ", (0,jsx_runtime.jsx)(_components.em, {
+          children: "(string)"
+        }), " Directory under workspace root holding the tarball (default: ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "dist"
+        }), ")."]
+      }), "\n", (0,jsx_runtime.jsxs)(_components.li, {
+        children: [(0,jsx_runtime.jsx)(_components.code, {
+          children: "artifactPath"
+        }), " ", (0,jsx_runtime.jsx)(_components.em, {
+          children: "(string)"
+        }), " Explicit tarball path; overrides ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "cwd"
+        }), "/", (0,jsx_runtime.jsx)(_components.code, {
+          children: "toolName"
+        }), "/", (0,jsx_runtime.jsx)(_components.code, {
+          children: "distDir"
+        }), " resolution."]
+      }), "\n", (0,jsx_runtime.jsxs)(_components.li, {
+        children: [(0,jsx_runtime.jsx)(_components.code, {
+          children: "helpFlag"
+        }), " ", (0,jsx_runtime.jsx)(_components.em, {
+          children: "(string)"
+        }), " Flag passed to each wrapper to confirm the command boots (default: ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "--help"
+        }), ")."]
+      }), "\n"]
+    }), "\n", (0,jsx_runtime.jsx)(_components.h2, {
+      id: "security-note",
+      children: "Security note"
     }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
-      children: ["For generic single-package manifest rewriting and npm publish plumbing, use\n", (0,jsx_runtime.jsx)(_components.a, {
-        href: "./publish-package",
-        children: (0,jsx_runtime.jsx)(_components.code, {
-          children: "@repo-toolkit/publish-package"
-        })
-      }), "."]
+      children: [(0,jsx_runtime.jsx)(_components.code, {
+        children: "verifyReleaseArtifact"
+      }), " executes the artifact's bash wrappers, which in turn\n", (0,jsx_runtime.jsx)(_components.code, {
+        children: "exec"
+      }), " the node interpreter against the artifact's own entry files. Only verify\nartifacts you trust — verification is an integrity check, not a sandbox."]
     })]
   });
 }

@@ -91,6 +91,13 @@ function _createMdxContent(props) {
             children: "@repo-toolkit/publish-packages"
           })
         }), ": build, stage, and publish every package in a monorepo to npm in dependency order."]
+      }), "\n", (0,jsx_runtime.jsxs)(_components.li, {
+        children: [(0,jsx_runtime.jsx)(_components.a, {
+          href: "./release-artifact",
+          children: (0,jsx_runtime.jsx)(_components.code, {
+            children: "@repo-toolkit/release-artifact"
+          })
+        }), ": assemble, verify, and distribute a self-contained CLI release artifact (tarball) from a monorepo."]
       }), "\n"]
     }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
       children: ["Package-local ", (0,jsx_runtime.jsx)(_components.code, {
