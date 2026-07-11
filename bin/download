@@ -30,14 +30,14 @@ if curl -L --fail --connect-timeout 10 --retry 3 "${download_url}" -o "${outfile
   exit 0
 fi
 
-assets_url=$(repo_toolkit_release_assets_url "$github_coordinates" "$version" || true)
+releases_json=$(repo_toolkit_fetch_releases "$github_coordinates")
 
-if [ -z "$assets_url" ]; then
+if ! repo_toolkit_release_exists "$releases_json" "$version"; then
   echo "Error: release v${version} was not found in ${github_coordinates}." >&2
   exit 1
 fi
 
-if ! repo_toolkit_release_has_asset "$assets_url" "$filename"; then
+if ! repo_toolkit_release_has_asset "$releases_json" "$version" "$filename"; then
   echo "Error: release v${version} exists, but it does not include ${filename}." >&2
   echo "Install one of the versions from 'asdf list all ${tool_name}', or publish the missing release artifact for v${version}." >&2
   exit 1

@@ -1,0 +1,45 @@
+{
+  "name": "@repo-toolkit/release-artifact",
+  "description": "Assemble, verify, and distribute a self-contained CLI release artifact from a monorepo",
+  "version": "0.0.0-PLACEHOLDER",
+  "license": "PLACEHOLDER",
+  "repository": "PLACEHOLDER",
+  "type": "module",
+  "sideEffects": false,
+  "keywords": [
+    "release",
+    "artifact",
+    "tarball",
+    "asdf",
+    "tooling"
+  ],
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "bin": {
+    "repo-toolkit-build-artifact": "dist/cli-build.js",
+    "repo-toolkit-verify-artifact": "dist/cli-verify.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsup --config tsup.config.ts",
+    "test": "pnpm --filter @repo-toolkit/release-artifact... build && vitest run --config vitest.config.ts",
+    "build-artifact": "node dist/cli-build.js",
+    "verify-artifact": "node dist/cli-verify.js"
+  },
+  "dependencies": {
+    "@repo-toolkit/publish-package": "workspace:*"
+  },
+  "files": [
+    "README.md",
+    "dist"
+  ],
+  "engines": {
+    "node": ">=20"
+  }
+}

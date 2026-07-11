@@ -19,10 +19,13 @@
   "scripts": {
     "lint": "eslint .",
     "lint-fix": "eslint --fix .",
+    "typecheck": "pnpm -r exec tsc --noEmit",
     "build": "pnpm -r --if-present build",
     "changelog": "pnpm --filter @repo-toolkit/changelog build && node packages/changelog/dist/cli.js",
     "publish-package": "pnpm --filter @repo-toolkit/publish-package... build && node packages/publish-package/dist/cli.js",
     "publish-packages": "pnpm --filter @repo-toolkit/publish-packages... build && node packages/publish-packages/dist/cli.js",
+    "build-artifact": "pnpm --filter @repo-toolkit/release-artifact... build && node packages/release-artifact/dist/cli-build.js",
+    "verify-artifact": "pnpm --filter @repo-toolkit/release-artifact... build && node packages/release-artifact/dist/cli-verify.js",
     "release": "release-it",
     "test": "pnpm -r --if-present test"
   },

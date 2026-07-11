@@ -1,9 +1,29 @@
-import { loadConfigFile, publishPackage, readValue, splitListArg, type PublishPackageOptions } from './index';
+import { loadConfigFile, parseFlags, type FlagSpec } from './index';
+import { publishPackage, type PublishPackageOptions } from './index';
 
-interface ParsedArgs {
-  configPath?: string;
-  options: Partial<PublishPackageOptions>;
-}
+const SPECS: FlagSpec[] = [
+  { name: 'config' },
+  { name: 'cwd' },
+  { name: 'root-dir' },
+  { name: 'package-json' },
+  { name: 'version', aliases: ['tag'] },
+  { name: 'npm-tag' },
+  { name: 'publish-dir' },
+  { name: 'version-placeholder' },
+  { name: 'package-files', list: true },
+  { name: 'include-package-file', repeatable: true },
+  { name: 'no-default-package-files', boolean: true },
+  { name: 'root-files', list: true },
+  { name: 'include-root-file', repeatable: true },
+  { name: 'no-default-root-files', boolean: true },
+  { name: 'build-command' },
+  { name: 'skip-build', boolean: true },
+  { name: 'access' },
+  { name: 'registry' },
+  { name: 'otp' },
+  { name: 'provenance', boolean: true },
+  { name: 'dry-run', boolean: true },
+];
 
 function printHelp(): void {
   console.log(`repo-toolkit-publish-package
@@ -38,250 +58,53 @@ Options:
 `);
 }
 
-function parseArgs(argv: string[]): ParsedArgs | null {
+function buildOptions(result: ReturnType<typeof parseFlags>): Partial<PublishPackageOptions> {
+  if (!result) {
+    return {};
+  }
+
+  const { values, repeat } = result;
   const options: Partial<PublishPackageOptions> = {};
-  let configPath: string | undefined;
-  const packageFiles: string[] = [];
-  const rootFiles: string[] = [];
-  const includePackageFiles: string[] = [];
-  const includeRootFiles: string[] = [];
 
-  for (let index = 0; index < argv.length; index += 1) {
-    const arg = argv[index];
+  if (values.cwd) options.cwd = values.cwd;
+  if (values['root-dir']) options.rootDir = values['root-dir'];
+  if (values['package-json']) options.packageJsonPath = values['package-json'];
+  if (values.version) options.version = values.version;
+  if (values['npm-tag']) options.npmTag = values['npm-tag'];
+  if (values['publish-dir']) options.publishDir = values['publish-dir'];
+  if (values['version-placeholder']) options.versionPlaceholder = values['version-placeholder'];
+  if (values['build-command']) options.buildCommand = values['build-command'];
+  if (values['no-default-package-files'] !== undefined) options.noDefaultPackageFiles = true;
+  if (values['no-default-root-files'] !== undefined) options.noDefaultRootFiles = true;
+  if (values['skip-build'] !== undefined) options.skipBuild = true;
+  if (values.access) options.access = values.access;
+  if (values.registry) options.registry = values.registry;
+  if (values.otp) options.otp = values.otp;
+  if (values.provenance !== undefined) options.provenance = true;
+  if (values['dry-run'] !== undefined) options.dryRun = true;
 
-    if (arg === '--') {
-      continue;
-    }
+  if (repeat['package-files']) options.packageFiles = repeat['package-files'];
+  if (repeat['include-package-file']) options.includePackageFiles = repeat['include-package-file'];
+  if (repeat['root-files']) options.rootFiles = repeat['root-files'];
+  if (repeat['include-root-file']) options.includeRootFiles = repeat['include-root-file'];
 
-    if (arg === '-h' || arg === '--help') {
-      printHelp();
-      return null;
-    }
-
-    if (arg === '--config') {
-      configPath = readValue(argv, index, arg);
-      index += 1;
-      continue;
-    }
-    if (arg.startsWith('--config=')) {
-      configPath = arg.slice('--config='.length);
-      continue;
-    }
-
-    if (arg === '--cwd') {
-      options.cwd = readValue(argv, index, arg);
-      index += 1;
-      continue;
-    }
-    if (arg.startsWith('--cwd=')) {
-      options.cwd = arg.slice('--cwd='.length);
-      continue;
-    }
-
-    if (arg === '--root-dir') {
-      options.rootDir = readValue(argv, index, arg);
-      index += 1;
-      continue;
-    }
-    if (arg.startsWith('--root-dir=')) {
-      options.rootDir = arg.slice('--root-dir='.length);
-      continue;
-    }
-
-    if (arg === '--package-json') {
-      options.packageJsonPath = readValue(argv, index, arg);
-      index += 1;
-      continue;
-    }
-    if (arg.startsWith('--package-json=')) {
-      options.packageJsonPath = arg.slice('--package-json='.length);
-      continue;
-    }
-
-    if (arg === '--version' || arg === '--tag') {
-      options.version = readValue(argv, index, arg);
-      index += 1;
-      continue;
-    }
-    if (arg.startsWith('--version=')) {
-      options.version = arg.slice('--version='.length);
-      continue;
-    }
-    if (arg.startsWith('--tag=')) {
-      options.version = arg.slice('--tag='.length);
-      continue;
-    }
-
-    if (arg === '--npm-tag') {
-      options.npmTag = readValue(argv, index, arg);
-      index += 1;
-      continue;
-    }
-    if (arg.startsWith('--npm-tag=')) {
-      options.npmTag = arg.slice('--npm-tag='.length);
-      continue;
-    }
-
-    if (arg === '--publish-dir') {
-      options.publishDir = readValue(argv, index, arg);
-      index += 1;
-      continue;
-    }
-    if (arg.startsWith('--publish-dir=')) {
-      options.publishDir = arg.slice('--publish-dir='.length);
-      continue;
-    }
-
-    if (arg === '--version-placeholder') {
-      options.versionPlaceholder = readValue(argv, index, arg);
-      index += 1;
-      continue;
-    }
-    if (arg.startsWith('--version-placeholder=')) {
-      options.versionPlaceholder = arg.slice('--version-placeholder='.length);
-      continue;
-    }
-
-    if (arg === '--package-files') {
-      packageFiles.push(...splitListArg(readValue(argv, index, arg)));
-      index += 1;
-      continue;
-    }
-    if (arg.startsWith('--package-files=')) {
-      packageFiles.push(...splitListArg(arg.slice('--package-files='.length)));
-      continue;
-    }
-
-    if (arg === '--include-package-file') {
-      includePackageFiles.push(readValue(argv, index, arg));
-      index += 1;
-      continue;
-    }
-    if (arg.startsWith('--include-package-file=')) {
-      includePackageFiles.push(arg.slice('--include-package-file='.length));
-      continue;
-    }
-
-    if (arg === '--no-default-package-files') {
-      options.noDefaultPackageFiles = true;
-      continue;
-    }
-
-    if (arg === '--root-files') {
-      rootFiles.push(...splitListArg(readValue(argv, index, arg)));
-      index += 1;
-      continue;
-    }
-    if (arg.startsWith('--root-files=')) {
-      rootFiles.push(...splitListArg(arg.slice('--root-files='.length)));
-      continue;
-    }
-
-    if (arg === '--include-root-file') {
-      includeRootFiles.push(readValue(argv, index, arg));
-      index += 1;
-      continue;
-    }
-    if (arg.startsWith('--include-root-file=')) {
-      includeRootFiles.push(arg.slice('--include-root-file='.length));
-      continue;
-    }
-
-    if (arg === '--no-default-root-files') {
-      options.noDefaultRootFiles = true;
-      continue;
-    }
-
-    if (arg === '--build-command') {
-      options.buildCommand = readValue(argv, index, arg);
-      index += 1;
-      continue;
-    }
-    if (arg.startsWith('--build-command=')) {
-      options.buildCommand = arg.slice('--build-command='.length);
-      continue;
-    }
-
-    if (arg === '--skip-build') {
-      options.skipBuild = true;
-      continue;
-    }
-
-    if (arg === '--access') {
-      options.access = readValue(argv, index, arg);
-      index += 1;
-      continue;
-    }
-    if (arg.startsWith('--access=')) {
-      options.access = arg.slice('--access='.length);
-      continue;
-    }
-
-    if (arg === '--registry') {
-      options.registry = readValue(argv, index, arg);
-      index += 1;
-      continue;
-    }
-    if (arg.startsWith('--registry=')) {
-      options.registry = arg.slice('--registry='.length);
-      continue;
-    }
-
-    if (arg === '--otp') {
-      options.otp = readValue(argv, index, arg);
-      index += 1;
-      continue;
-    }
-    if (arg.startsWith('--otp=')) {
-      options.otp = arg.slice('--otp='.length);
-      continue;
-    }
-
-    if (arg === '--provenance') {
-      options.provenance = true;
-      continue;
-    }
-
-    if (arg === '--dry-run') {
-      options.dryRun = true;
-      continue;
-    }
-
-    throw new Error(`Unknown argument: ${arg}`);
-  }
-
-  if (packageFiles.length > 0) {
-    options.packageFiles = packageFiles;
-  }
-  if (includePackageFiles.length > 0) {
-    options.includePackageFiles = includePackageFiles;
-  }
-  if (rootFiles.length > 0) {
-    options.rootFiles = rootFiles;
-  }
-  if (includeRootFiles.length > 0) {
-    options.includeRootFiles = includeRootFiles;
-  }
-
-  return { configPath, options };
+  return options;
 }
 
 async function main(): Promise<void> {
-  const parsedArgs = parseArgs(process.argv.slice(2));
+  const result = parseFlags(process.argv.slice(2), SPECS);
 
-  if (!parsedArgs) {
+  if (!result) {
+    printHelp();
     return;
   }
 
-  const config = parsedArgs.configPath
-    ? await loadConfigFile<PublishPackageOptions>(parsedArgs.configPath, parsedArgs.options.cwd)
-    : {};
-  const options = {
-    ...config,
-    ...parsedArgs.options,
-  } as PublishPackageOptions;
+  const configPath = result.values.config;
+  const options = buildOptions(result);
 
-  publishPackage(options);
+  const config = configPath ? await loadConfigFile<PublishPackageOptions>(configPath, options.cwd) : {};
+
+  publishPackage({ ...config, ...options } as PublishPackageOptions);
 }
 
 main().catch((error: unknown) => {

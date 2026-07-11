@@ -1,12 +1,17 @@
-import { readFile } from 'node:fs/promises';
-import { isAbsolute, resolve } from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { loadConfigFile, parseFlags, type FlagSpec } from '@repo-toolkit/publish-package';
 import { generateChangelog, type GenerateChangelogOptions } from './index';
 
-interface ParsedArgs {
-  configPath?: string;
-  options: GenerateChangelogOptions;
-}
+const SPECS: FlagSpec[] = [
+  { name: 'config' },
+  { name: 'cwd' },
+  { name: 'output' },
+  { name: 'tag-prefix' },
+  { name: 'release-count' },
+  { name: 'append', boolean: true, negatable: true },
+  { name: 'first-release', boolean: true, negatable: true },
+  { name: 'skip-unstable', boolean: true, negatable: true },
+  { name: 'output-unreleased', boolean: true, negatable: true },
+];
 
 function printHelp() {
   console.log(`repo-toolkit-changelog
@@ -28,17 +33,7 @@ Options:
 `);
 }
 
-function readValue(argv: string[], index: number, flag: string) {
-  const value = argv[index + 1];
-
-  if (!value || value.startsWith('-')) {
-    throw new Error(`Missing value for ${flag}.`);
-  }
-
-  return value;
-}
-
-function parseNumber(value: string, flag: string) {
+function parseNumber(value: string, flag: string): number {
   const parsed = Number.parseInt(value, 10);
 
   if (Number.isNaN(parsed)) {
@@ -48,176 +43,37 @@ function parseNumber(value: string, flag: string) {
   return parsed;
 }
 
-function resolveConfigPath(configPath: string, cwd?: string) {
-  if (isAbsolute(configPath)) {
-    return configPath;
-  }
+function buildOptions(values: Record<string, string>): GenerateChangelogOptions {
+  const options: GenerateChangelogOptions = {};
 
-  return resolve(cwd ?? process.cwd(), configPath);
-}
+  if (values.cwd) options.cwd = values.cwd;
+  if (values.output) options.outputFile = values.output;
+  if (values['tag-prefix']) options.tagPrefix = values['tag-prefix'];
+  if (values['release-count'] !== undefined)
+    options.releaseCount = parseNumber(values['release-count'], '--release-count');
+  if (values.append !== undefined) options.append = values.append === 'true';
+  if (values['first-release'] !== undefined) options.firstRelease = values['first-release'] === 'true';
+  if (values['skip-unstable'] !== undefined) options.skipUnstable = values['skip-unstable'] === 'true';
+  if (values['output-unreleased'] !== undefined) options.outputUnreleased = values['output-unreleased'] === 'true';
 
-function isObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-async function loadConfig(configPath: string, cwd?: string): Promise<GenerateChangelogOptions> {
-  const resolvedPath = resolveConfigPath(configPath, cwd);
-
-  if (resolvedPath.endsWith('.json')) {
-    const contents = await readFile(resolvedPath, 'utf8');
-    const parsed = JSON.parse(contents) as unknown;
-
-    if (!isObject(parsed)) {
-      throw new Error(`Config file must export an object: ${resolvedPath}`);
-    }
-
-    return parsed as GenerateChangelogOptions;
-  }
-
-  const loaded = (await import(pathToFileURL(resolvedPath).href)) as {
-    default?: unknown;
-  };
-  const config = loaded.default ?? loaded;
-
-  if (!isObject(config)) {
-    throw new Error(`Config file must export an object: ${resolvedPath}`);
-  }
-
-  return config as GenerateChangelogOptions;
-}
-
-function parseArgs(argv: string[]) {
-  const parsedArgs: ParsedArgs = {
-    options: {},
-  };
-
-  for (let index = 0; index < argv.length; index += 1) {
-    const arg = argv[index];
-
-    if (arg === '--') {
-      continue;
-    }
-
-    if (arg === '-h' || arg === '--help') {
-      printHelp();
-      return null;
-    }
-
-    if (arg === '--config') {
-      parsedArgs.configPath = readValue(argv, index, arg);
-      index += 1;
-      continue;
-    }
-
-    if (arg.startsWith('--config=')) {
-      parsedArgs.configPath = arg.slice('--config='.length);
-      continue;
-    }
-
-    if (arg === '--cwd') {
-      parsedArgs.options.cwd = readValue(argv, index, arg);
-      index += 1;
-      continue;
-    }
-
-    if (arg.startsWith('--cwd=')) {
-      parsedArgs.options.cwd = arg.slice('--cwd='.length);
-      continue;
-    }
-
-    if (arg === '--output') {
-      parsedArgs.options.outputFile = readValue(argv, index, arg);
-      index += 1;
-      continue;
-    }
-
-    if (arg.startsWith('--output=')) {
-      parsedArgs.options.outputFile = arg.slice('--output='.length);
-      continue;
-    }
-
-    if (arg === '--tag-prefix') {
-      parsedArgs.options.tagPrefix = readValue(argv, index, arg);
-      index += 1;
-      continue;
-    }
-
-    if (arg.startsWith('--tag-prefix=')) {
-      parsedArgs.options.tagPrefix = arg.slice('--tag-prefix='.length);
-      continue;
-    }
-
-    if (arg === '--release-count') {
-      parsedArgs.options.releaseCount = parseNumber(readValue(argv, index, arg), arg);
-      index += 1;
-      continue;
-    }
-
-    if (arg.startsWith('--release-count=')) {
-      parsedArgs.options.releaseCount = parseNumber(arg.slice('--release-count='.length), '--release-count');
-      continue;
-    }
-
-    if (arg === '--append') {
-      parsedArgs.options.append = true;
-      continue;
-    }
-
-    if (arg === '--no-append') {
-      parsedArgs.options.append = false;
-      continue;
-    }
-
-    if (arg === '--first-release') {
-      parsedArgs.options.firstRelease = true;
-      continue;
-    }
-
-    if (arg === '--no-first-release') {
-      parsedArgs.options.firstRelease = false;
-      continue;
-    }
-
-    if (arg === '--skip-unstable') {
-      parsedArgs.options.skipUnstable = true;
-      continue;
-    }
-
-    if (arg === '--no-skip-unstable') {
-      parsedArgs.options.skipUnstable = false;
-      continue;
-    }
-
-    if (arg === '--output-unreleased') {
-      parsedArgs.options.outputUnreleased = true;
-      continue;
-    }
-
-    if (arg === '--no-output-unreleased') {
-      parsedArgs.options.outputUnreleased = false;
-      continue;
-    }
-
-    throw new Error(`Unknown argument: ${arg}`);
-  }
-
-  return parsedArgs;
+  return options;
 }
 
 async function main() {
-  const parsedArgs = parseArgs(process.argv.slice(2));
+  const result = parseFlags(process.argv.slice(2), SPECS);
 
-  if (!parsedArgs) {
+  if (!result) {
+    printHelp();
     return;
   }
 
-  const config = parsedArgs.configPath ? await loadConfig(parsedArgs.configPath, parsedArgs.options.cwd) : {};
-  const options = {
-    ...config,
-    ...parsedArgs.options,
-  };
+  const configPath = result.values.config;
+  const options = buildOptions(result.values);
 
-  const outputPath = await generateChangelog(options);
+  const config = configPath ? await loadConfigFile<GenerateChangelogOptions>(configPath, options.cwd) : {};
+  const merged = { ...config, ...options } as GenerateChangelogOptions;
+
+  const outputPath = await generateChangelog(merged);
   console.log(`Changelog generated at ${outputPath}.`);
 }
 

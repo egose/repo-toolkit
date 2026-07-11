@@ -4,7 +4,13 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
-import { createPublishPackageJson, inferNpmTag, publishPackage, resolvePublishPackagePlan } from '../src/index';
+import {
+  createPublishPackageJson,
+  inferNpmTag,
+  parseFlags,
+  publishPackage,
+  resolvePublishPackagePlan,
+} from '../src/index';
 
 const internalNames = new Set(['@repo-toolkit/changelog', '@repo-toolkit/publish-package']);
 
@@ -15,6 +21,89 @@ describe('inferNpmTag', () => {
 
   it('returns undefined for stable versions', () => {
     expect(inferNpmTag('1.2.3')).toBeUndefined();
+  });
+});
+
+describe('parseFlags', () => {
+  const specs = [
+    { name: 'cwd' },
+    { name: 'version', aliases: ['tag'] },
+    { name: 'dry-run', boolean: true },
+    { name: 'append', boolean: true, negatable: true },
+    { name: 'filter', list: true },
+    { name: 'include', repeatable: true },
+  ];
+
+  it('returns null for -h', () => {
+    expect(parseFlags(['-h'], specs)).toBeNull();
+  });
+
+  it('returns null for --help', () => {
+    expect(parseFlags(['--help'], specs)).toBeNull();
+  });
+
+  it('parses --flag value and --flag=value forms', () => {
+    const a = parseFlags(['--cwd', '/a'], specs);
+    expect(a?.values.cwd).toBe('/a');
+
+    const b = parseFlags(['--cwd=/b'], specs);
+    expect(b?.values.cwd).toBe('/b');
+  });
+
+  it('resolves aliases to the canonical name', () => {
+    const result = parseFlags(['--tag', '1.2.3'], specs);
+    expect(result?.values.version).toBe('1.2.3');
+  });
+
+  it('stores boolean flags as "true"', () => {
+    const result = parseFlags(['--dry-run'], specs);
+    expect(result?.values['dry-run']).toBe('true');
+  });
+
+  it('negates negatable boolean flags via --no-<name>', () => {
+    const result = parseFlags(['--no-append'], specs);
+    expect(result?.values.append).toBe('false');
+  });
+
+  it('accumulates list flags across occurrences with comma splitting', () => {
+    const result = parseFlags(['--filter', 'a,b', '--filter', 'c'], specs);
+    expect(result?.repeat.filter).toEqual(['a', 'b', 'c']);
+  });
+
+  it('accumulates repeatable flags without comma splitting', () => {
+    const result = parseFlags(['--include', 'x', '--include', 'y,z'], specs);
+    expect(result?.repeat.include).toEqual(['x', 'y,z']);
+  });
+
+  it('throws on a missing value', () => {
+    expect(() => parseFlags(['--cwd'], specs)).toThrowError(/Missing value for --cwd/);
+  });
+
+  it('throws when a value starts with "-"', () => {
+    expect(() => parseFlags(['--cwd', '--version'], specs)).toThrowError(/Missing value for --cwd/);
+  });
+
+  it('accepts a value starting with "-" in the --flag=value form', () => {
+    const result = parseFlags(['--cwd=-1'], specs);
+    expect(result?.values.cwd).toBe('-1');
+  });
+
+  it('throws on unknown arguments in strict mode (default)', () => {
+    expect(() => parseFlags(['--bogus'], specs)).toThrowError(/Unknown argument: --bogus/);
+  });
+
+  it('collects unknown arguments when strict is false', () => {
+    const result = parseFlags(['--bogus'], specs, { strict: false });
+    expect(result?.unknown).toEqual(['--bogus']);
+  });
+
+  it('rejects --flag=value on a boolean flag', () => {
+    expect(() => parseFlags(['--dry-run=yes'], specs)).toThrowError(/Boolean flag --dry-run does not take a value/);
+  });
+
+  it('treats -- as a separator and parses subsequent flags normally', () => {
+    const result = parseFlags(['--', '--cwd', '/x'], specs);
+    expect(result?.values.cwd).toBe('/x');
   });
 });
 

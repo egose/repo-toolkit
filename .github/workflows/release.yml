@@ -23,10 +23,10 @@ jobs:
     - name: Build
       run: |
         pnpm build
-        node scripts/build-release-artifact.mjs "${GITHUB_REF_NAME#v}"
+        pnpm build-artifact -- --version "${GITHUB_REF_NAME#v}"
 
     - name: Verify Build Artifact
-      run: node scripts/verify-release-artifact.mjs "${GITHUB_REF_NAME#v}"
+      run: pnpm verify-artifact -- --version "${GITHUB_REF_NAME#v}"
 
     - name: Upload Build Artifact
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
