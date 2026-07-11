@@ -1,22 +1,22 @@
-## [0.6.0](https://github.com/egose/web-ts-toolkit/compare/v0.5.0...v0.6.0) (2026-07-10)
+## [Unreleased](https://github.com/egose/repo-toolkit/compare/v0.4.1...4fb0b597b21bab7edc13e77411d825bcefab71d2) (2026-07-11)
 
 ### Features
 
-* enable committing pre-commit fixes on push ([18da7a4](https://github.com/egose/web-ts-toolkit/commit/18da7a4aab4b6a1fdc8d58a8d57f1e971427b022))
+* add asdf plugin configuration ([8c2eee2](https://github.com/egose/repo-toolkit/commit/8c2eee2a2e3606432f87bc8e536e341c205c8567))
+* add release artifact package and streamline CLI parsing ([4fb0b59](https://github.com/egose/repo-toolkit/commit/4fb0b597b21bab7edc13e77411d825bcefab71d2))
+* enable committing pre-commit fixes on push ([18da7a4](https://github.com/egose/repo-toolkit/commit/18da7a4aab4b6a1fdc8d58a8d57f1e971427b022))
+* filter published releases in version listing and downloads ([69c6afb](https://github.com/egose/repo-toolkit/commit/69c6afb569ff82e7d635b2dd91a511828d36261d))
 
 ### Bug Fixes
 
-* make installer executable ([50db5eb](https://github.com/egose/web-ts-toolkit/commit/50db5eb3709b0438c7b5f9e673d544bf2a2270e5))
-* preserve symlinks in release artifacts and verify them ([aacb037](https://github.com/egose/web-ts-toolkit/commit/aacb037aa1c973f6ad139c2bc49e90e20f42d87d))
+* make installer executable ([50db5eb](https://github.com/egose/repo-toolkit/commit/50db5eb3709b0438c7b5f9e673d544bf2a2270e5))
+* preserve symlinks in release artifacts and verify them ([aacb037](https://github.com/egose/repo-toolkit/commit/aacb037aa1c973f6ad139c2bc49e90e20f42d87d))
 
-## [0.5.0](https://github.com/egose/web-ts-toolkit/compare/v0.4.1...v0.5.0) (2026-07-09)
+### Documentation
 
-### Features
+* update repository metadata urls ([90adfb6](https://github.com/egose/repo-toolkit/commit/90adfb6e23549fe051bdd619ff49a70dc41e0a3c))
 
-* add asdf plugin configuration ([8c2eee2](https://github.com/egose/web-ts-toolkit/commit/8c2eee2a2e3606432f87bc8e536e341c205c8567))
-* filter published releases in version listing and downloads ([69c6afb](https://github.com/egose/web-ts-toolkit/commit/69c6afb569ff82e7d635b2dd91a511828d36261d))
-
-## [0.4.1](https://github.com/egose/web-ts-toolkit/compare/v0.4.0...v0.4.1) (2026-07-08)
+## [0.4.1](https://github.com/egose/repo-toolkit/compare/v0.4.0...v0.4.1) (2026-07-08)
 
 ### Bug Fixes
 
