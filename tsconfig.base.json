@@ -7,7 +7,9 @@
       "@repo-toolkit/publish-package": ["packages/publish-package/src/index.ts"],
       "@repo-toolkit/publish-package/*": ["packages/publish-package/src/*"],
       "@repo-toolkit/publish-packages": ["packages/publish-packages/src/index.ts"],
-      "@repo-toolkit/publish-packages/*": ["packages/publish-packages/src/*"]
+      "@repo-toolkit/publish-packages/*": ["packages/publish-packages/src/*"],
+      "@repo-toolkit/release-artifact": ["packages/release-artifact/src/index.ts"],
+      "@repo-toolkit/release-artifact/*": ["packages/release-artifact/src/*"]
     }
   }
 }

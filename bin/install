@@ -36,8 +36,10 @@ if [ ! -f "$manifest_path" ]; then
   exit 1
 fi
 
-mapfile -t required_paths < <(
-  node - "$manifest_path" <<'EOF'
+required_paths_file=$(mktemp)
+trap 'rm -f "$required_paths_file"' EXIT
+
+node - "$manifest_path" >"$required_paths_file" <<'EOF' || exit_code=$?
 const fs = require('node:fs');
 const manifestPath = process.argv[2];
 const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
@@ -54,7 +56,14 @@ for (const requiredFile of manifest.requiredFiles) {
   process.stdout.write(`${requiredFile}\n`);
 }
 EOF
-)
+exit_code=${exit_code:-0}
+
+if [ "$exit_code" -ne 0 ]; then
+  echo "Error: failed to read required files from manifest." >&2
+  exit "$exit_code"
+fi
+
+mapfile -t required_paths < "$required_paths_file"
 
 for relative_path in "${required_paths[@]}"; do
   if [ ! -f "$install_path/$relative_path" ]; then

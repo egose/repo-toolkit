@@ -7,12 +7,14 @@ Shared monorepo for repository tooling packages.
 - `@repo-toolkit/changelog`: shared conventional changelog preset, generator, and CLI for repository releases
 - `@repo-toolkit/publish-package`: build, stage, and publish a single package to npm
 - `@repo-toolkit/publish-packages`: build, stage, and publish every package in a monorepo to npm in dependency order
+- `@repo-toolkit/release-artifact`: assemble, verify, and distribute a self-contained CLI release artifact (tarball) from a monorepo
 
 ## Workspace Layout
 
 - `packages/changelog`: changelog preset, JavaScript API, and `repo-toolkit-changelog` CLI
 - `packages/publish-package`: single-package publish pipeline and `repo-toolkit-publish-package` CLI
 - `packages/publish-packages`: monorepo publish pipeline and `repo-toolkit-publish-packages` CLI
+- `packages/release-artifact`: release artifact builder/verifier and `repo-toolkit-build-artifact` / `repo-toolkit-verify-artifact` CLIs
 - `website/`: standalone Docusaurus docs site for the workspace packages
 
 ## Development
@@ -35,6 +37,8 @@ Useful root scripts:
 - `pnpm changelog`
 - `pnpm publish-package -- --version v1.2.3`
 - `pnpm publish-packages -- --version v1.2.3`
+- `pnpm build-artifact -- --version v1.2.3`
+- `pnpm verify-artifact -- --version v1.2.3`
 - `pnpm release`
 
 ## asdf Plugin
@@ -54,6 +58,8 @@ Available commands after install:
 - `repo-toolkit-changelog`
 - `repo-toolkit-publish-package`
 - `repo-toolkit-publish-packages`
+- `repo-toolkit-build-artifact`
+- `repo-toolkit-verify-artifact`
 
 Useful asdf commands:
 

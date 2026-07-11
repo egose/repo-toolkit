@@ -53,6 +53,9 @@ importers:
 
   packages/changelog:
     dependencies:
+      '@repo-toolkit/publish-package':
+        specifier: workspace:*
+        version: link:../publish-package
       conventional-changelog:
         specifier: ^7.2.1
         version: 7.2.1(conventional-commits-filter@5.0.0)
@@ -63,6 +66,12 @@ importers:
   packages/publish-package: {}
 
   packages/publish-packages:
+    dependencies:
+      '@repo-toolkit/publish-package':
+        specifier: workspace:*
+        version: link:../publish-package
+
+  packages/release-artifact:
     dependencies:
       '@repo-toolkit/publish-package':
         specifier: workspace:*
