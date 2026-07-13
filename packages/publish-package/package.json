@@ -36,5 +36,8 @@
   ],
   "engines": {
     "node": ">=20"
+  },
+  "dependencies": {
+    "@clack/prompts": "^1.7.0"
   }
 }

@@ -3,6 +3,7 @@ import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from
 import { isAbsolute, resolve, relative as pathRelative, basename as pathBasename } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { readFile } from 'node:fs/promises';
+import { text as clackText, isCancel as clackIsCancel } from '@clack/prompts';
 
 const PACKAGE_JSON = 'package.json';
 export const DEPENDENCY_FIELDS = ['dependencies', 'peerDependencies', 'optionalDependencies'] as const;
@@ -171,7 +172,7 @@ export function parseFlags(
   const unknown: string[] = [];
 
   for (let index = 0; index < argv.length; index += 1) {
-    const arg = argv[index];
+    let arg = argv[index];
 
     if (arg === '--') {
       continue;
@@ -179,6 +180,17 @@ export function parseFlags(
 
     if (arg === '-h' || arg === '--help') {
       return null;
+    }
+
+    if (arg.startsWith('-') && !arg.startsWith('--') && arg !== '-') {
+      const shortBody = arg.slice(1);
+      const eqIdx = shortBody.indexOf('=');
+      const shortKey = eqIdx >= 0 ? shortBody.slice(0, eqIdx) : shortBody;
+      const shortSpec = byKey[shortKey];
+
+      if (shortSpec) {
+        arg = eqIdx >= 0 ? `--${shortSpec.name}=${shortBody.slice(eqIdx + 1)}` : `--${shortSpec.name}`;
+      }
     }
 
     if (!arg.startsWith('--')) {
@@ -294,6 +306,36 @@ export async function loadConfigFile<T>(configPath: string, cwd?: string): Promi
   }
 
   return config as Partial<T>;
+}
+
+// ---------------------------------------------------------------------------
+// Interactive prompt helpers (exported for reuse by all package CLIs)
+// ---------------------------------------------------------------------------
+
+export const INTERACTIVE_FLAG: FlagSpec = { name: 'interactive', aliases: ['i'], boolean: true };
+
+export function canPrompt(): boolean {
+  return process.stdin.isTTY === true && process.stdout.isTTY === true;
+}
+
+export interface PromptTextOptions {
+  message: string;
+  placeholder?: string;
+  validate?: (value: string) => string | undefined;
+}
+
+export async function promptText(opts: PromptTextOptions): Promise<string> {
+  const value = await clackText({
+    message: opts.message,
+    placeholder: opts.placeholder,
+    validate: opts.validate ? (v) => opts.validate!(v ?? '') : undefined,
+  });
+
+  if (clackIsCancel(value)) {
+    throw new Error('Operation cancelled.');
+  }
+
+  return value as string;
 }
 
 // ---------------------------------------------------------------------------
