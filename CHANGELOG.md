@@ -1,3 +1,9 @@
+## [0.7.2](https://github.com/egose/repo-toolkit/compare/v0.7.1...v0.7.2) (2026-07-13)
+
+### Bug Fixes
+
+* **release-artifact:** anchor leading-slash glob patterns to the copy root ([6d40eb0](https://github.com/egose/repo-toolkit/commit/6d40eb09c15d2b6fef0add8db4986c0dcce7887a))
+
 ## [0.7.1](https://github.com/egose/repo-toolkit/compare/v0.7.0...v0.7.1) (2026-07-12)
 
 ## [0.7.0](https://github.com/egose/repo-toolkit/compare/v0.6.0...v0.7.0) (2026-07-11)
