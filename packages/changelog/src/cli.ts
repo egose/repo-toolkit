@@ -1,4 +1,4 @@
-import { loadConfigFile, parseFlags, type FlagSpec } from '@repo-toolkit/publish-package';
+import { loadConfigFile, parseFlags, type FlagSpec, INTERACTIVE_FLAG } from '@repo-toolkit/publish-package';
 import { generateChangelog, type GenerateChangelogOptions } from './index';
 
 const SPECS: FlagSpec[] = [
@@ -11,6 +11,7 @@ const SPECS: FlagSpec[] = [
   { name: 'first-release', boolean: true, negatable: true },
   { name: 'skip-unstable', boolean: true, negatable: true },
   { name: 'output-unreleased', boolean: true, negatable: true },
+  INTERACTIVE_FLAG,
 ];
 
 function printHelp() {
@@ -29,6 +30,7 @@ Options:
   --first-release               Include all commits when no prior release tag exists
   --no-skip-unstable            Include unstable releases
   --no-output-unreleased        Omit the unreleased section
+  -i, --interactive             Prompt for missing required values interactively
   -h, --help                    Show this help message
 `);
 }

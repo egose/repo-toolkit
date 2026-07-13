@@ -10,6 +10,8 @@ import {
   parseFlags,
   publishPackage,
   resolvePublishPackagePlan,
+  canPrompt,
+  INTERACTIVE_FLAG,
 } from '../src/index';
 
 const internalNames = new Set(['@repo-toolkit/changelog', '@repo-toolkit/publish-package']);
@@ -32,6 +34,8 @@ describe('parseFlags', () => {
     { name: 'append', boolean: true, negatable: true },
     { name: 'filter', list: true },
     { name: 'include', repeatable: true },
+    INTERACTIVE_FLAG,
+    { name: 'out', aliases: ['o'] },
   ];
 
   it('returns null for -h', () => {
@@ -104,6 +108,53 @@ describe('parseFlags', () => {
   it('treats -- as a separator and parses subsequent flags normally', () => {
     const result = parseFlags(['--', '--cwd', '/x'], specs);
     expect(result?.values.cwd).toBe('/x');
+  });
+
+  it('resolves a short boolean alias (-i) to the canonical name', () => {
+    const result = parseFlags(['-i'], specs);
+    expect(result?.values.interactive).toBe('true');
+  });
+
+  it('resolves a short value alias (-o) and consumes the next arg', () => {
+    const result = parseFlags(['-o', '/out'], specs);
+    expect(result?.values.out).toBe('/out');
+  });
+
+  it('accepts -alias=value form', () => {
+    const result = parseFlags(['-o=/out'], specs);
+    expect(result?.values.out).toBe('/out');
+  });
+
+  it('throws on unknown short flags', () => {
+    expect(() => parseFlags(['-x'], specs)).toThrowError(/Unknown argument: -x/);
+  });
+});
+
+describe('canPrompt', () => {
+  it('returns false when stdin is not a TTY', () => {
+    const origStdin = process.stdin.isTTY;
+    const origStdout = process.stdout.isTTY;
+    Object.defineProperty(process.stdin, 'isTTY', { value: false, configurable: true });
+    Object.defineProperty(process.stdout, 'isTTY', { value: true, configurable: true });
+    try {
+      expect(canPrompt()).toBe(false);
+    } finally {
+      Object.defineProperty(process.stdin, 'isTTY', { value: origStdin, configurable: true });
+      Object.defineProperty(process.stdout, 'isTTY', { value: origStdout, configurable: true });
+    }
+  });
+
+  it('returns false when stdout is not a TTY', () => {
+    const origStdin = process.stdin.isTTY;
+    const origStdout = process.stdout.isTTY;
+    Object.defineProperty(process.stdin, 'isTTY', { value: true, configurable: true });
+    Object.defineProperty(process.stdout, 'isTTY', { value: false, configurable: true });
+    try {
+      expect(canPrompt()).toBe(false);
+    } finally {
+      Object.defineProperty(process.stdin, 'isTTY', { value: origStdin, configurable: true });
+      Object.defineProperty(process.stdout, 'isTTY', { value: origStdout, configurable: true });
+    }
   });
 });
 
