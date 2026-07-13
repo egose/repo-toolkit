@@ -30,8 +30,8 @@ const DEFAULT_HELP_FLAG = '--help';
  * not sources/tests/sourcemaps/transient build metadata.
  */
 const DEFAULT_PACKAGE_EXCLUDES: ReadonlyArray<string> = [
-  'src',
-  'test',
+  '/src',
+  '/test',
   'node_modules',
   '**/*.test.ts',
   '**/*.test.tsx',
@@ -236,6 +236,18 @@ export function createArtifactManifest(
 export function globToRegex(pattern: string): RegExp {
   if (pattern === '**') {
     return new RegExp('^.*$');
+  }
+
+  // A leading slash anchors the pattern to the copy root (e.g. `/src`
+  // matches only a top-level `src` directory, not nested `src` segments).
+  if (pattern.startsWith('/')) {
+    const body = pattern
+      .slice(1)
+      .replace(/[.+^${}()|[\]\\]/g, '\\$&')
+      .replace(/\*\*/g, '__DBLSTAR__')
+      .replace(/\*/g, '[^/]*')
+      .replace(/__DBLSTAR__/g, '.*');
+    return new RegExp(`^${body}$`);
   }
 
   const escaped = pattern

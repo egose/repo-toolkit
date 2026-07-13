@@ -225,6 +225,15 @@ describe('globToRegex / matchesAnyGlob', () => {
     expect(matchesAnyGlob('dist/cli.js.map', ['**/*.map'])).toBe(true);
     expect(matchesAnyGlob('dist/cli.js', ['**/*.map'])).toBe(false);
   });
+
+  it('anchors a leading-slash pattern to the copy root only', () => {
+    expect(matchesAnyGlob('src', ['/src'])).toBe(true);
+    expect(matchesAnyGlob('src/index.ts', ['/src'])).toBe(false);
+    expect(matchesAnyGlob('nested/src', ['/src'])).toBe(false);
+    expect(matchesAnyGlob('nested/src/index.ts', ['/src'])).toBe(false);
+    expect(matchesAnyGlob('test', ['/test'])).toBe(true);
+    expect(matchesAnyGlob('src/foo/test', ['/test'])).toBe(false);
+  });
 });
 
 describe('resolveArtifactPath', () => {
