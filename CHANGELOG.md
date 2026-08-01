@@ -1,3 +1,14 @@
+## [0.8.0](https://github.com/egose/repo-toolkit/compare/v0.7.2...v0.8.0) (2026-08-01)
+
+### Features
+
+* add confluence docs sync package ([4e480d1](https://github.com/egose/repo-toolkit/commit/4e480d16d74941c4e80653c5d24d30e54d46b094))
+* add interactive prompts to publish and release CLIs ([8390b80](https://github.com/egose/repo-toolkit/commit/8390b8090fdd71f5101198f9347247fb5bb77e3f))
+
+### Bug Fixes
+
+* **confluence:** allow dry-run syncs without credentials ([3661063](https://github.com/egose/repo-toolkit/commit/3661063172d0b846ffde4d67b738313b1d39cd00))
+
 ## [0.7.2](https://github.com/egose/repo-toolkit/compare/v0.7.1...v0.7.2) (2026-07-13)
 
 ### Bug Fixes
