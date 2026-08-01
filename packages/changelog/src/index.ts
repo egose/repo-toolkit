@@ -201,9 +201,10 @@ export async function createPreset(options: CreatePresetOptions = {}) {
 }
 
 export async function createGenerator(options: GenerateChangelogOptions = {}) {
+  const cwd = resolve(options.cwd ?? process.cwd());
   const presetOptions = splitPresetOptions(options);
   const preset = await createPreset(presetOptions);
-  const generator = new ConventionalChangelog();
+  const generator = new ConventionalChangelog(cwd);
 
   const generatorOptions: ExtendedChangelogOptions = {
     append: options.append ?? false,
@@ -214,7 +215,7 @@ export async function createGenerator(options: GenerateChangelogOptions = {}) {
     firstRelease: options.firstRelease ?? false,
   };
 
-  generator.readPackage().loadPreset(preset).options(generatorOptions).config({
+  generator.readPackage(resolve(cwd, 'package.json')).loadPreset(preset).options(generatorOptions).config({
     tags: preset.tags,
     commits: preset.commits,
     parser: preset.parser,
@@ -225,22 +226,11 @@ export async function createGenerator(options: GenerateChangelogOptions = {}) {
 }
 
 export async function generateChangelog(options: GenerateChangelogOptions = {}) {
-  const initialCwd = process.cwd();
-  const cwd = resolve(options.cwd ?? initialCwd);
+  const cwd = resolve(options.cwd ?? process.cwd());
   const outputPath = resolveOutputPath(cwd, options.outputFile ?? 'CHANGELOG.md');
 
   await mkdir(dirname(outputPath), { recursive: true });
 
-  if (cwd !== initialCwd) {
-    process.chdir(cwd);
-  }
-
-  try {
-    const generator = await createGenerator(options);
-    return await pipeGeneratorToFile(generator, outputPath);
-  } finally {
-    if (cwd !== initialCwd) {
-      process.chdir(initialCwd);
-    }
-  }
+  const generator = await createGenerator({ ...options, cwd });
+  return await pipeGeneratorToFile(generator, outputPath);
 }

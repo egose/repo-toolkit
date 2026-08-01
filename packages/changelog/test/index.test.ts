@@ -167,6 +167,12 @@ describe('createGenerator', () => {
     expect(generator).toBeTypeOf('object');
   });
 
+  it('constructs ConventionalChangelog with the resolved cwd', async () => {
+    await createGenerator({ cwd: '/repo' });
+
+    expect(stubs.ConventionalChangelog).toHaveBeenCalledWith('/repo');
+  });
+
   it('applies default pipeline options', async () => {
     await createGenerator();
 

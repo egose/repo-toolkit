@@ -1,4 +1,15 @@
-import { loadConfigFile, parseFlags, type FlagSpec } from './index';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+
+import {
+  parseFlags,
+  type FlagSpec,
+  INTERACTIVE_FLAG,
+  canPrompt,
+  DEFAULT_VERSION_PLACEHOLDER,
+  promptForRequiredValue,
+  resolveCliOptions,
+} from './index';
 import { publishPackage, type PublishPackageOptions } from './index';
 
 const SPECS: FlagSpec[] = [
@@ -23,6 +34,7 @@ const SPECS: FlagSpec[] = [
   { name: 'otp' },
   { name: 'provenance', boolean: true },
   { name: 'dry-run', boolean: true },
+  INTERACTIVE_FLAG,
 ];
 
 function printHelp(): void {
@@ -54,6 +66,7 @@ Options:
   --otp <code>                   npm OTP code
   --provenance                   Request npm provenance attestation
   --dry-run                      Forward --dry-run to npm publish
+  -i, --interactive              Prompt for missing required values interactively
   -h, --help                     Show this help message
 `);
 }
@@ -91,6 +104,21 @@ function buildOptions(result: ReturnType<typeof parseFlags>): Partial<PublishPac
   return options;
 }
 
+function sourceVersionNeedsPrompt(merged: PublishPackageOptions): boolean {
+  const cwd = merged.cwd ?? process.cwd();
+  const packageJsonPath = resolve(cwd, merged.packageJsonPath ?? 'package.json');
+  const versionPlaceholder = merged.versionPlaceholder ?? DEFAULT_VERSION_PLACEHOLDER;
+
+  try {
+    const pkg = JSON.parse(readFileSync(packageJsonPath, 'utf8')) as Record<string, unknown>;
+    const pkgVersion = pkg.version;
+
+    return typeof pkgVersion !== 'string' || pkgVersion.length === 0 || pkgVersion === versionPlaceholder;
+  } catch {
+    return false;
+  }
+}
+
 async function main(): Promise<void> {
   const result = parseFlags(process.argv.slice(2), SPECS);
 
@@ -99,12 +127,24 @@ async function main(): Promise<void> {
     return;
   }
 
-  const configPath = result.values.config;
-  const options = buildOptions(result);
+  const interactive = result.values.interactive === 'true';
+  const merged = await resolveCliOptions<PublishPackageOptions>({
+    result,
+    buildOptions,
+  });
 
-  const config = configPath ? await loadConfigFile<PublishPackageOptions>(configPath, options.cwd) : {};
+  if (interactive && !merged.version && sourceVersionNeedsPrompt(merged)) {
+    merged.version = await promptForRequiredValue({
+      message: 'Target version:',
+      value: merged.version,
+      interactive,
+      canPromptNow: canPrompt(),
+      missingMessage: 'version is required. Pass --version <version> or set version in the config file.',
+      validate: (v) => (v.length === 0 ? 'Version is required' : undefined),
+    });
+  }
 
-  publishPackage({ ...config, ...options } as PublishPackageOptions);
+  publishPackage(merged);
 }
 
 main().catch((error: unknown) => {

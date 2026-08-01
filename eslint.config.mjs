@@ -10,6 +10,11 @@ export default tseslint.config(
     ignores: ['website/**'],
   },
   {
+    // The pre-rewrite docs-as-code-confluence action lives here for reference;
+    // the rewrite is the `@repo-toolkit/confluence` package under packages/.
+    ignores: ['.docs-as-code-confluence/**'],
+  },
+  {
     files: ['**/*.{js,mjs,cjs,ts,mts,cts}'],
     languageOptions: {
       ecmaVersion: 'latest',

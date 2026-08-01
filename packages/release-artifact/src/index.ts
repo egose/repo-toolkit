@@ -133,17 +133,22 @@ export interface VerifyArtifactOptions {
  * those environment variables.
  */
 export function buildWrapperScript(targetPath: string, nodeCommand: string = DEFAULT_NODE_COMMAND): string {
+  const defaultNode = shellSingleQuote(nodeCommand);
+  const quotedTargetPath = shellSingleQuote(targetPath);
+
   return [
     '#!/usr/bin/env bash',
     'set -eo pipefail',
     'script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"',
+    `default_node=${defaultNode}`,
+    `target_path=${quotedTargetPath}`,
     'node_bin="${REPO_TOOLKIT_NODE_BIN:-${ASDF_NODEJS_BIN:-}}"',
     'if [ -n "$node_bin" ]; then',
-    '  [ -d "$node_bin" ] && node_bin="${node_bin}/' + nodeCommand + '"',
+    '  [ -d "$node_bin" ] && node_bin="${node_bin}/${default_node}"',
     'else',
-    `  node_bin="${nodeCommand}"`,
+    '  node_bin="$default_node"',
     'fi',
-    'exec "$node_bin" "${script_dir}/../' + targetPath + '" "$@"',
+    'exec "$node_bin" "${script_dir}/../${target_path}" "$@"',
     '',
   ].join('\n');
 }
@@ -460,10 +465,10 @@ export function verifyReleaseArtifact(options: VerifyArtifactOptions): void {
   try {
     execFileSync('tar', ['-xzf', artifactPath, '-C', extractRoot], { stdio: 'inherit' });
 
-    const normalizedVersion = normalizeVersion(options.version);
-    const toolName = options.toolName ?? DEFAULT_TOOL_NAME;
-    const installRoot = join(extractRoot, `${toolName}-${normalizedVersion}`);
+    const installRoot = resolveInstallRoot(extractRoot, options);
     const manifestPath = join(installRoot, 'artifact-manifest.json');
+
+    verifySymlinks(installRoot);
 
     if (!existsSync(manifestPath)) {
       throw new Error('Release artifact is missing artifact-manifest.json.');
@@ -493,8 +498,6 @@ export function verifyReleaseArtifact(options: VerifyArtifactOptions): void {
         execFileSync(wrapperPath, [helpFlag], { stdio: 'ignore' });
       }
     }
-
-    verifySymlinks(installRoot);
   } finally {
     rmIfExists(extractRoot);
   }
@@ -510,6 +513,32 @@ function rmIfExists(targetPath: string): void {
   }
 }
 
+function shellSingleQuote(value: string): string {
+  return `'${value.replace(/'/g, `'\\''`)}'`;
+}
+
+function resolveInstallRoot(extractRoot: string, options: VerifyArtifactOptions): string {
+  const directories = readdirSync(extractRoot, { withFileTypes: true }).filter((entry) => entry.isDirectory());
+
+  if (directories.length !== 1) {
+    throw new Error(`Release artifact must extract to a single top-level directory (found ${directories.length}).`);
+  }
+
+  const installDirName = directories[0].name;
+
+  if (options.version) {
+    const expectedDirName = `${options.toolName ?? DEFAULT_TOOL_NAME}-${normalizeVersion(options.version)}`;
+
+    if (installDirName !== expectedDirName) {
+      throw new Error(
+        `Release artifact extracted to unexpected directory: ${installDirName} (expected ${expectedDirName})`,
+      );
+    }
+  }
+
+  return join(extractRoot, installDirName);
+}
+
 function readJson(filePath: string): PackageJson {
   return JSON.parse(readFileSync(filePath, 'utf8'));
 }
@@ -520,6 +549,8 @@ function readJson(filePath: string): PackageJson {
  * directories are pruned wholesale (their children are never traversed).
  */
 function copyTree(sourceRoot: string, destinationRoot: string, excludes: ReadonlyArray<string>): void {
+  const excludeMatchers = excludes.map((pattern) => globToRegex(pattern));
+
   cpSync(sourceRoot, destinationRoot, {
     recursive: true,
     verbatimSymlinks: true,
@@ -528,7 +559,7 @@ function copyTree(sourceRoot: string, destinationRoot: string, excludes: Readonl
       if (relPath === '') {
         return true;
       }
-      return !matchesAnyGlob(relPath, excludes);
+      return !excludeMatchers.some((matcher) => matcher.test(relPath));
     },
   });
 }

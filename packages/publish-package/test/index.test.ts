@@ -10,6 +10,10 @@ import {
   parseFlags,
   publishPackage,
   resolvePublishPackagePlan,
+  resolveCliOptions,
+  promptForRequiredValue,
+  canPrompt,
+  INTERACTIVE_FLAG,
 } from '../src/index';
 
 const internalNames = new Set(['@repo-toolkit/changelog', '@repo-toolkit/publish-package']);
@@ -32,6 +36,8 @@ describe('parseFlags', () => {
     { name: 'append', boolean: true, negatable: true },
     { name: 'filter', list: true },
     { name: 'include', repeatable: true },
+    INTERACTIVE_FLAG,
+    { name: 'out', aliases: ['o'] },
   ];
 
   it('returns null for -h', () => {
@@ -104,6 +110,109 @@ describe('parseFlags', () => {
   it('treats -- as a separator and parses subsequent flags normally', () => {
     const result = parseFlags(['--', '--cwd', '/x'], specs);
     expect(result?.values.cwd).toBe('/x');
+  });
+
+  it('resolves a short boolean alias (-i) to the canonical name', () => {
+    const result = parseFlags(['-i'], specs);
+    expect(result?.values.interactive).toBe('true');
+  });
+
+  it('resolves a short value alias (-o) and consumes the next arg', () => {
+    const result = parseFlags(['-o', '/out'], specs);
+    expect(result?.values.out).toBe('/out');
+  });
+
+  it('accepts -alias=value form', () => {
+    const result = parseFlags(['-o=/out'], specs);
+    expect(result?.values.out).toBe('/out');
+  });
+
+  it('throws on unknown short flags', () => {
+    expect(() => parseFlags(['-x'], specs)).toThrowError(/Unknown argument: -x/);
+  });
+});
+
+describe('canPrompt', () => {
+  it('returns false when stdin is not a TTY', () => {
+    const origStdin = process.stdin.isTTY;
+    const origStdout = process.stdout.isTTY;
+    Object.defineProperty(process.stdin, 'isTTY', { value: false, configurable: true });
+    Object.defineProperty(process.stdout, 'isTTY', { value: true, configurable: true });
+    try {
+      expect(canPrompt()).toBe(false);
+    } finally {
+      Object.defineProperty(process.stdin, 'isTTY', { value: origStdin, configurable: true });
+      Object.defineProperty(process.stdout, 'isTTY', { value: origStdout, configurable: true });
+    }
+  });
+
+  it('returns false when stdout is not a TTY', () => {
+    const origStdin = process.stdin.isTTY;
+    const origStdout = process.stdout.isTTY;
+    Object.defineProperty(process.stdin, 'isTTY', { value: true, configurable: true });
+    Object.defineProperty(process.stdout, 'isTTY', { value: false, configurable: true });
+    try {
+      expect(canPrompt()).toBe(false);
+    } finally {
+      Object.defineProperty(process.stdin, 'isTTY', { value: origStdin, configurable: true });
+      Object.defineProperty(process.stdout, 'isTTY', { value: origStdout, configurable: true });
+    }
+  });
+});
+
+describe('resolveCliOptions', () => {
+  it('merges config values with CLI options, preferring CLI values', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'repo-toolkit-cli-config-'));
+
+    try {
+      const configPath = join(rootDir, 'publish-package.config.json');
+      await writeFile(
+        configPath,
+        `${JSON.stringify({ cwd: '/config-cwd', version: '1.2.3', access: 'restricted' }, null, 2)}\n`,
+      );
+
+      const result = parseFlags(['--config', configPath, '--cwd', '/cli-cwd'], [{ name: 'config' }, { name: 'cwd' }]);
+
+      expect(result).not.toBeNull();
+
+      const merged = await resolveCliOptions<{ cwd?: string; version?: string; access?: string }>({
+        result: result!,
+        buildOptions: (flags) => ({ cwd: flags.values.cwd }),
+      });
+
+      expect(merged).toEqual({
+        cwd: '/cli-cwd',
+        version: '1.2.3',
+        access: 'restricted',
+      });
+    } finally {
+      await rm(rootDir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('promptForRequiredValue', () => {
+  it('returns the provided value without prompting', async () => {
+    await expect(
+      promptForRequiredValue({
+        value: '1.2.3',
+        interactive: true,
+        message: 'Target version:',
+        missingMessage: 'missing',
+      }),
+    ).resolves.toBe('1.2.3');
+  });
+
+  it('throws the supplied error when prompting is unavailable', async () => {
+    await expect(
+      promptForRequiredValue({
+        value: undefined,
+        interactive: true,
+        canPromptNow: false,
+        message: 'Target version:',
+        missingMessage: 'version is required',
+      }),
+    ).rejects.toThrowError(/version is required/);
   });
 });
 
@@ -267,6 +376,18 @@ describe('resolvePublishPackagePlan', () => {
     expect(plan.version).toBe('1.2.3');
     expect(plan.publishDir).toBe('build-artifacts');
     expect(plan.versionPlaceholder).toBe('__VERSION__');
+  });
+
+  it('rejects publishDir values that escape the package root', () => {
+    const cwd = process.cwd();
+
+    expect(() =>
+      resolvePublishPackagePlan({
+        cwd,
+        version: '1.2.3',
+        publishDir: '../outside',
+      }),
+    ).toThrowError(/publishDir must not contain parent-directory segments/);
   });
 
   it('appends includePackageFiles to defaults', () => {
