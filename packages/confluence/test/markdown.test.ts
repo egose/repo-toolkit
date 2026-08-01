@@ -180,4 +180,40 @@ describe('markdownToStorage', () => {
     const { html } = markdownToStorage('line1\nline2');
     expect(html).toBe('<p>line1<br />line2</p>');
   });
+
+  it('strips Docusaurus/YAML frontmatter before converting', () => {
+    const md = `---
+title: Failed Deployments
+sidebar_label: Failed Deployments
+sidebar_position: 4
+---
+
+# Failed Deployments
+
+body content here`;
+    const { html, mermaidBlocks } = markdownToStorage(md);
+    expect(html).toContain('<h1>Failed Deployments</h1>');
+    expect(html).toContain('<p>body content here</p>');
+    expect(html).not.toContain('sidebar_label');
+    expect(html).not.toContain('sidebar_position');
+    expect(mermaidBlocks).toEqual([]);
+  });
+
+  it('strips frontmatter closed by ...', () => {
+    const { html } = markdownToStorage('---\nkey: val\n...\n\ntext');
+    expect(html).toBe('<p>text</p>');
+  });
+
+  it('leaves non-frontmatter leading ---（thematic break） content intact', () => {
+    const { html } = markdownToStorage('paragraph\n\n---\n\ntail');
+    expect(html).toContain('<p>paragraph</p>');
+    expect(html).toContain('<hr />');
+    expect(html).toContain('tail');
+  });
+
+  it('does not treat an unclosed opening --- as frontmatter', () => {
+    const { html } = markdownToStorage('---\nnot closed\nstill here');
+    expect(html).toContain('still here');
+    expect(html).toContain('not closed');
+  });
 });

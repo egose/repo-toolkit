@@ -31,7 +31,20 @@ export function renderMermaidPlaceholder(id: string): string {
 }
 
 export function markdownToStorage(markdown: string): MarkdownConvertResult {
-  const lines = markdown.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n');
+  let lines = markdown.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n');
+
+  if (lines.length > 0 && lines[0] === '---') {
+    let closeIndex = -1;
+    for (let j = 1; j < lines.length; j += 1) {
+      if (lines[j] === '---' || lines[j] === '...') {
+        closeIndex = j;
+        break;
+      }
+    }
+    if (closeIndex !== -1) {
+      lines = lines.slice(closeIndex + 1);
+    }
+  }
 
   const out: string[] = [];
   const mermaidBlocks: MermaidBlock[] = [];
