@@ -80,33 +80,35 @@ export function resolveConfluenceSyncPlan(options: ConfluenceSyncOptions = {}): 
   if (!options.folder) {
     throw new Error('folder is required');
   }
-  if (!options.username) {
-    throw new Error('username is required');
-  }
-  if (!options.apiToken) {
-    throw new Error('apiToken is required');
-  }
-  if (!options.baseUrl) {
-    throw new Error('baseUrl is required');
-  }
-  if (!options.spaceKey) {
-    throw new Error('spaceKey is required');
-  }
-  if (!options.parentPageId) {
-    throw new Error('parentPageId is required');
-  }
-  if (!/^[0-9]+$/.test(options.parentPageId)) {
-    throw new Error(`parentPageId must be numeric, got: ${options.parentPageId}`);
+  if (!options.dryRun) {
+    if (!options.username) {
+      throw new Error('username is required');
+    }
+    if (!options.apiToken) {
+      throw new Error('apiToken is required');
+    }
+    if (!options.baseUrl) {
+      throw new Error('baseUrl is required');
+    }
+    if (!options.spaceKey) {
+      throw new Error('spaceKey is required');
+    }
+    if (!options.parentPageId) {
+      throw new Error('parentPageId is required');
+    }
+    if (!/^[0-9]+$/.test(options.parentPageId)) {
+      throw new Error(`parentPageId must be numeric, got: ${options.parentPageId}`);
+    }
   }
 
   return {
     cwd,
     folder,
-    username: options.username,
-    apiToken: options.apiToken,
-    baseUrl: options.baseUrl,
-    spaceKey: options.spaceKey,
-    parentPageId: options.parentPageId,
+    username: options.username ?? '',
+    apiToken: options.apiToken ?? '',
+    baseUrl: options.baseUrl ?? '',
+    spaceKey: options.spaceKey ?? '',
+    parentPageId: options.parentPageId ?? '',
     versionMessage: options.versionMessage ?? 'Synced via repo-toolkit-confluence',
     skipUnchanged: options.skipUnchanged ?? true,
     dryRun: options.dryRun ?? false,
