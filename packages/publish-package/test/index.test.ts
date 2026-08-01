@@ -10,6 +10,8 @@ import {
   parseFlags,
   publishPackage,
   resolvePublishPackagePlan,
+  resolveCliOptions,
+  promptForRequiredValue,
   canPrompt,
   INTERACTIVE_FLAG,
 } from '../src/index';
@@ -155,6 +157,62 @@ describe('canPrompt', () => {
       Object.defineProperty(process.stdin, 'isTTY', { value: origStdin, configurable: true });
       Object.defineProperty(process.stdout, 'isTTY', { value: origStdout, configurable: true });
     }
+  });
+});
+
+describe('resolveCliOptions', () => {
+  it('merges config values with CLI options, preferring CLI values', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'repo-toolkit-cli-config-'));
+
+    try {
+      const configPath = join(rootDir, 'publish-package.config.json');
+      await writeFile(
+        configPath,
+        `${JSON.stringify({ cwd: '/config-cwd', version: '1.2.3', access: 'restricted' }, null, 2)}\n`,
+      );
+
+      const result = parseFlags(['--config', configPath, '--cwd', '/cli-cwd'], [{ name: 'config' }, { name: 'cwd' }]);
+
+      expect(result).not.toBeNull();
+
+      const merged = await resolveCliOptions<{ cwd?: string; version?: string; access?: string }>({
+        result: result!,
+        buildOptions: (flags) => ({ cwd: flags.values.cwd }),
+      });
+
+      expect(merged).toEqual({
+        cwd: '/cli-cwd',
+        version: '1.2.3',
+        access: 'restricted',
+      });
+    } finally {
+      await rm(rootDir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('promptForRequiredValue', () => {
+  it('returns the provided value without prompting', async () => {
+    await expect(
+      promptForRequiredValue({
+        value: '1.2.3',
+        interactive: true,
+        message: 'Target version:',
+        missingMessage: 'missing',
+      }),
+    ).resolves.toBe('1.2.3');
+  });
+
+  it('throws the supplied error when prompting is unavailable', async () => {
+    await expect(
+      promptForRequiredValue({
+        value: undefined,
+        interactive: true,
+        canPromptNow: false,
+        message: 'Target version:',
+        missingMessage: 'version is required',
+      }),
+    ).rejects.toThrowError(/version is required/);
   });
 });
 
@@ -318,6 +376,18 @@ describe('resolvePublishPackagePlan', () => {
     expect(plan.version).toBe('1.2.3');
     expect(plan.publishDir).toBe('build-artifacts');
     expect(plan.versionPlaceholder).toBe('__VERSION__');
+  });
+
+  it('rejects publishDir values that escape the package root', () => {
+    const cwd = process.cwd();
+
+    expect(() =>
+      resolvePublishPackagePlan({
+        cwd,
+        version: '1.2.3',
+        publishDir: '../outside',
+      }),
+    ).toThrowError(/publishDir must not contain parent-directory segments/);
   });
 
   it('appends includePackageFiles to defaults', () => {

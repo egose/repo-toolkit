@@ -1,7 +1,8 @@
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
-import { existsSync, rmSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { chmodSync, existsSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, relative } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -86,18 +87,27 @@ describe('buildWrapperScript', () => {
   it('produces an env-aware bash wrapper that execs node against the relative target', () => {
     const script = buildWrapperScript('packages/foo/dist/cli.js');
     expect(script).toContain('#!/usr/bin/env bash');
+    expect(script).toContain("target_path='packages/foo/dist/cli.js'");
     expect(script).toContain('node_bin="${REPO_TOOLKIT_NODE_BIN:-${ASDF_NODEJS_BIN:-}}"');
-    expect(script).toContain('exec "$node_bin" "${script_dir}/../packages/foo/dist/cli.js" "$@"');
+    expect(script).toContain('exec "$node_bin" "${script_dir}/../${target_path}" "$@"');
   });
 
   it('falls back to the build-time nodeCommand when no env var is set', () => {
     const script = buildWrapperScript('packages/foo/dist/cli.js', 'node20');
-    expect(script).toContain('node_bin="node20"');
+    expect(script).toContain("default_node='node20'");
+    expect(script).toContain('node_bin="$default_node"');
   });
 
   it('appends the node command to a directory env var', () => {
     const script = buildWrapperScript('packages/foo/dist/cli.js', 'node');
-    expect(script).toContain('[ -d "$node_bin" ] && node_bin="${node_bin}/node"');
+    expect(script).toContain('[ -d "$node_bin" ] && node_bin="${node_bin}/${default_node}"');
+  });
+
+  it('shell-quotes nodeCommand and targetPath literals before embedding them', () => {
+    const script = buildWrapperScript("packages/foo/cli'$(touch nope)'.js", "node'20");
+
+    expect(script).toContain("default_node='node'\\''20'");
+    expect(script).toContain("target_path='packages/foo/cli'\\''$(touch nope)'\\''.js'");
   });
 });
 
@@ -351,6 +361,80 @@ describe('buildReleaseArtifact + verifyReleaseArtifact (integration)', () => {
           distDir: 'dist',
         }),
       ).not.toThrow();
+    } finally {
+      await rm(rootDir, { recursive: true, force: true });
+    }
+  }, 30_000);
+
+  it('verifies an explicit artifactPath without requiring version', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'repo-toolkit-artifact-path-'));
+
+    try {
+      await createFixtureWorkspace(rootDir);
+
+      const plan = buildReleaseArtifact({
+        version: FIXTURE_VERSION,
+        cwd: rootDir,
+        toolName: FIXTURE_TOOL_NAME,
+        includeNodeModules: false,
+        productionNodeModules: false,
+      });
+
+      expect(() => verifyReleaseArtifact({ artifactPath: plan.artifactPath })).not.toThrow();
+    } finally {
+      await rm(rootDir, { recursive: true, force: true });
+    }
+  }, 30_000);
+
+  it('checks symlink safety before syntax-checking or executing extracted wrappers', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'repo-toolkit-artifact-malicious-'));
+    const distDir = join(rootDir, 'dist');
+    const installRoot = join(distDir, `${FIXTURE_TOOL_NAME}-${FIXTURE_VERSION}`);
+    const packageRoot = join(installRoot, 'packages', 'fixture-cli');
+    const outsideScript = join(rootDir, 'outside.sh');
+    const markerPath = join(rootDir, 'executed.txt');
+    const artifactPath = `${installRoot}.tar.gz`;
+
+    try {
+      await mkdir(join(installRoot, 'bin'), { recursive: true });
+      await mkdir(packageRoot, { recursive: true });
+
+      await writeFile(
+        join(installRoot, 'artifact-manifest.json'),
+        `${JSON.stringify(
+          {
+            version: FIXTURE_VERSION,
+            commands: [{ name: 'fixture-cli', packageDir: 'fixture-cli', entry: 'cli.js' }],
+            requiredFiles: [
+              'artifact-manifest.json',
+              'bin/fixture-cli',
+              'packages/fixture-cli/package.json',
+              'packages/fixture-cli/cli.js',
+            ],
+          },
+          null,
+          2,
+        )}\n`,
+      );
+      await writeFile(
+        join(packageRoot, 'package.json'),
+        `${JSON.stringify({ name: '@example/fixture-cli' }, null, 2)}\n`,
+      );
+      await writeFile(join(packageRoot, 'cli.js'), 'console.log("fixture")\n');
+      await writeFile(
+        outsideScript,
+        `#!/usr/bin/env bash
+echo executed > "${markerPath}"
+exit 0
+`,
+      );
+      chmodSync(outsideScript, 0o755);
+      await symlink(relative(join(installRoot, 'bin'), outsideScript), join(installRoot, 'bin', 'fixture-cli'));
+
+      execFileSync('tar', ['-czf', artifactPath, '-C', distDir, `${FIXTURE_TOOL_NAME}-${FIXTURE_VERSION}`]);
+
+      expect(() => verifyReleaseArtifact({ artifactPath })).toThrowError(/escaping the artifact root/);
+      expect(existsSync(markerPath)).toBe(false);
     } finally {
       await rm(rootDir, { recursive: true, force: true });
     }

@@ -1,0 +1,43 @@
+{
+  "name": "@repo-toolkit/confluence",
+  "description": "Sync a folder of markdown docs to Confluence pages and attachments (GitHub Action compatible)",
+  "version": "0.0.0-PLACEHOLDER",
+  "license": "PLACEHOLDER",
+  "repository": "PLACEHOLDER",
+  "type": "module",
+  "sideEffects": false,
+  "keywords": [
+    "confluence",
+    "docs-as-code",
+    "github-action",
+    "markdown",
+    "tooling"
+  ],
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "bin": {
+    "repo-toolkit-confluence": "dist/cli.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsup --config tsup.config.ts",
+    "test": "pnpm --filter @repo-toolkit/confluence... build && vitest run --config vitest.config.ts",
+    "confluence": "node dist/cli.js"
+  },
+  "files": [
+    "README.md",
+    "dist"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@repo-toolkit/publish-package": "workspace:*"
+  }
+}

@@ -1,10 +1,9 @@
 import {
-  loadConfigFile,
   parseFlags,
   type FlagSpec,
   INTERACTIVE_FLAG,
-  canPrompt,
-  promptText,
+  promptForRequiredValue,
+  resolveCliOptions,
 } from '@repo-toolkit/publish-package';
 import { publishPackages, type PublishPackagesOptions } from './index';
 
@@ -67,10 +66,12 @@ Options:
 `);
 }
 
-function buildOptions(
-  values: Record<string, string>,
-  repeat: Record<string, string[]>,
-): Partial<PublishPackagesOptions> {
+function buildOptions(result: ReturnType<typeof parseFlags>): Partial<PublishPackagesOptions> {
+  if (!result) {
+    return {};
+  }
+
+  const { values, repeat } = result;
   const options: Partial<PublishPackagesOptions> = {};
 
   if (values.cwd) options.cwd = values.cwd;
@@ -107,23 +108,18 @@ async function main(): Promise<void> {
   }
 
   const interactive = result.values.interactive === 'true';
-  const configPath = result.values.config;
-  const options = buildOptions(result.values, result.repeat);
+  const merged = await resolveCliOptions<PublishPackagesOptions>({
+    result,
+    buildOptions,
+  });
 
-  const config = configPath ? await loadConfigFile<PublishPackagesOptions>(configPath, options.cwd) : {};
-
-  const merged = { ...config, ...options } as PublishPackagesOptions;
-
-  if (!merged.version) {
-    if (interactive && canPrompt()) {
-      merged.version = await promptText({
-        message: 'Target version:',
-        validate: (v) => (v.length === 0 ? 'Version is required' : undefined),
-      });
-    } else {
-      throw new Error('version is required. Pass --version <version> or set version in the config file.');
-    }
-  }
+  merged.version = await promptForRequiredValue({
+    value: merged.version,
+    interactive,
+    message: 'Target version:',
+    missingMessage: 'version is required. Pass --version <version> or set version in the config file.',
+    validate: (v) => (v.length === 0 ? 'Version is required' : undefined),
+  });
 
   publishPackages(merged);
 }

@@ -324,6 +324,21 @@ export interface PromptTextOptions {
   validate?: (value: string) => string | undefined;
 }
 
+export interface ResolveCliOptionsArgs<T extends { cwd?: string }> {
+  result: ParseFlagsResult;
+  cwd?: string;
+  buildOptions: (result: ParseFlagsResult) => Partial<T>;
+}
+
+export interface PromptForRequiredValueOptions {
+  value: string | undefined;
+  interactive: boolean;
+  canPromptNow?: boolean;
+  message: string;
+  missingMessage: string;
+  validate?: (value: string) => string | undefined;
+}
+
 export async function promptText(opts: PromptTextOptions): Promise<string> {
   const value = await clackText({
     message: opts.message,
@@ -336,6 +351,29 @@ export async function promptText(opts: PromptTextOptions): Promise<string> {
   }
 
   return value as string;
+}
+
+export async function resolveCliOptions<T extends { cwd?: string }>(args: ResolveCliOptionsArgs<T>): Promise<T> {
+  const options = args.buildOptions(args.result);
+  const configPath = args.result.values.config;
+  const config = configPath ? await loadConfigFile<T>(configPath, args.cwd ?? options.cwd) : {};
+
+  return { ...config, ...options } as T;
+}
+
+export async function promptForRequiredValue(options: PromptForRequiredValueOptions): Promise<string> {
+  if (options.value) {
+    return options.value;
+  }
+
+  if (options.interactive && (options.canPromptNow ?? canPrompt())) {
+    return await promptText({
+      message: options.message,
+      validate: options.validate,
+    });
+  }
+
+  throw new Error(options.missingMessage);
 }
 
 // ---------------------------------------------------------------------------
@@ -568,10 +606,17 @@ function normalizePublishDir(publishDir: string): string {
     throw new Error(`publishDir must be relative: ${publishDir}`);
   }
 
-  const normalized = publishDir.replace(/\\/g, '/').replace(/\/$/, '').replace(/^\.\//, '');
+  const normalized = publishDir
+    .replace(/\\/g, '/')
+    .replace(/\/+$/, '')
+    .replace(/^(?:\.\/)+/, '');
 
   if (!normalized || normalized === '.') {
     throw new Error('publishDir must not be the package root');
+  }
+
+  if (normalized.split('/').includes('..')) {
+    throw new Error(`publishDir must not contain parent-directory segments: ${publishDir}`);
   }
 
   return normalized;

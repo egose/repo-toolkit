@@ -1,10 +1,9 @@
 import {
-  loadConfigFile,
   parseFlags,
   type FlagSpec,
   INTERACTIVE_FLAG,
-  canPrompt,
-  promptText,
+  promptForRequiredValue,
+  resolveCliOptions,
 } from '@repo-toolkit/publish-package';
 import { buildReleaseArtifact, type BuildArtifactOptions } from './index';
 
@@ -50,7 +49,12 @@ Options:
 `);
 }
 
-function buildOptions(values: Record<string, string>, repeat: Record<string, string[]>): Partial<BuildArtifactOptions> {
+function buildOptions(result: ReturnType<typeof parseFlags>): Partial<BuildArtifactOptions> {
+  if (!result) {
+    return {};
+  }
+
+  const { values, repeat } = result;
   const options: Partial<BuildArtifactOptions> = {};
 
   if (values.cwd) options.cwd = values.cwd;
@@ -79,23 +83,18 @@ async function main(): Promise<void> {
   }
 
   const interactive = result.values.interactive === 'true';
-  const configPath = result.values.config;
-  const options = buildOptions(result.values, result.repeat);
+  const merged = await resolveCliOptions<BuildArtifactOptions>({
+    result,
+    buildOptions,
+  });
 
-  const config = configPath ? await loadConfigFile<BuildArtifactOptions>(configPath, options.cwd) : {};
-
-  const merged = { ...config, ...options } as BuildArtifactOptions;
-
-  if (!merged.version) {
-    if (interactive && canPrompt()) {
-      merged.version = await promptText({
-        message: 'Target version:',
-        validate: (v) => (v.length === 0 ? 'Version is required' : undefined),
-      });
-    } else {
-      throw new Error('version is required. Pass --version <version> or set version in the config file.');
-    }
-  }
+  merged.version = await promptForRequiredValue({
+    value: merged.version,
+    interactive,
+    message: 'Target version:',
+    missingMessage: 'version is required. Pass --version <version> or set version in the config file.',
+    validate: (v) => (v.length === 0 ? 'Version is required' : undefined),
+  });
 
   const plan = buildReleaseArtifact(merged);
   console.log(`release artifact: ${plan.artifactPath}`);

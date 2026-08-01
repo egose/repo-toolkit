@@ -2,13 +2,13 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 import {
-  loadConfigFile,
   parseFlags,
   type FlagSpec,
   INTERACTIVE_FLAG,
   canPrompt,
-  promptText,
   DEFAULT_VERSION_PLACEHOLDER,
+  promptForRequiredValue,
+  resolveCliOptions,
 } from './index';
 import { publishPackage, type PublishPackageOptions } from './index';
 
@@ -128,16 +128,18 @@ async function main(): Promise<void> {
   }
 
   const interactive = result.values.interactive === 'true';
-  const configPath = result.values.config;
-  const options = buildOptions(result);
+  const merged = await resolveCliOptions<PublishPackageOptions>({
+    result,
+    buildOptions,
+  });
 
-  const config = configPath ? await loadConfigFile<PublishPackageOptions>(configPath, options.cwd) : {};
-
-  const merged = { ...config, ...options } as PublishPackageOptions;
-
-  if (interactive && canPrompt() && !merged.version && sourceVersionNeedsPrompt(merged)) {
-    merged.version = await promptText({
+  if (interactive && !merged.version && sourceVersionNeedsPrompt(merged)) {
+    merged.version = await promptForRequiredValue({
       message: 'Target version:',
+      value: merged.version,
+      interactive,
+      canPromptNow: canPrompt(),
+      missingMessage: 'version is required. Pass --version <version> or set version in the config file.',
       validate: (v) => (v.length === 0 ? 'Version is required' : undefined),
     });
   }

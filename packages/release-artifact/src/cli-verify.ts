@@ -1,10 +1,9 @@
 import {
-  loadConfigFile,
   parseFlags,
   type FlagSpec,
   INTERACTIVE_FLAG,
-  canPrompt,
-  promptText,
+  promptForRequiredValue,
+  resolveCliOptions,
 } from '@repo-toolkit/publish-package';
 import { verifyReleaseArtifact, type VerifyArtifactOptions } from './index';
 
@@ -64,22 +63,19 @@ async function main(): Promise<void> {
   }
 
   const interactive = result.values.interactive === 'true';
-  const configPath = result.values.config;
-  const options = buildOptions(result.values);
-
-  const config = configPath ? await loadConfigFile<VerifyArtifactOptions>(configPath, options.cwd) : {};
-
-  const merged = { ...config, ...options } as VerifyArtifactOptions;
+  const merged = await resolveCliOptions<VerifyArtifactOptions>({
+    result,
+    buildOptions: (flags) => buildOptions(flags.values),
+  });
 
   if (!merged.version && !merged.artifactPath) {
-    if (interactive && canPrompt()) {
-      merged.version = await promptText({
-        message: 'Target version:',
-        validate: (v) => (v.length === 0 ? 'Version is required' : undefined),
-      });
-    } else {
-      throw new Error('version is required. Pass --version <version> or set version in the config file.');
-    }
+    merged.version = await promptForRequiredValue({
+      value: merged.version,
+      interactive,
+      message: 'Target version:',
+      missingMessage: 'version is required. Pass --version <version> or set version in the config file.',
+      validate: (v) => (v.length === 0 ? 'Version is required' : undefined),
+    });
   }
 
   verifyReleaseArtifact(merged);

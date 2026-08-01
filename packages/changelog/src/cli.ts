@@ -1,4 +1,4 @@
-import { loadConfigFile, parseFlags, type FlagSpec, INTERACTIVE_FLAG } from '@repo-toolkit/publish-package';
+import { parseFlags, type FlagSpec, INTERACTIVE_FLAG, resolveCliOptions } from '@repo-toolkit/publish-package';
 import { generateChangelog, type GenerateChangelogOptions } from './index';
 
 const SPECS: FlagSpec[] = [
@@ -69,11 +69,10 @@ async function main() {
     return;
   }
 
-  const configPath = result.values.config;
-  const options = buildOptions(result.values);
-
-  const config = configPath ? await loadConfigFile<GenerateChangelogOptions>(configPath, options.cwd) : {};
-  const merged = { ...config, ...options } as GenerateChangelogOptions;
+  const merged = await resolveCliOptions<GenerateChangelogOptions>({
+    result,
+    buildOptions: (flags) => buildOptions(flags.values),
+  });
 
   const outputPath = await generateChangelog(merged);
   console.log(`Changelog generated at ${outputPath}.`);
