@@ -1,8 +1,14 @@
 const STORAGE_LINE_BREAK = '<br />';
 const LINE_BREAK_SENTINEL = '\u0001BR\u0001';
 
+export interface MermaidBlock {
+  id: string;
+  source: string;
+}
+
 export interface MarkdownConvertResult {
   html: string;
+  mermaidBlocks: MermaidBlock[];
 }
 
 const PROTOCOL_BLOCKLIST = /^(?:javascript|data|file|vbscript):/i;
@@ -12,10 +18,23 @@ const GT = '&' + 'gt;';
 const QUOT = '&' + 'quot;';
 const APOS = '&' + '#' + '39;';
 
+const MERMAID_PLACEHOLDER_PREFIX = '<ac:structured-macro ac:name="mermaid-placeholder" data-mermaid-id="';
+const MERMAID_PLACEHOLDER_RE_STRICT =
+  /<ac:structured-macro ac:name="mermaid-placeholder" data-mermaid-id="([^"]+)"><\/ac:structured-macro>/g;
+
+export function mermaidPlaceholderRe(): RegExp {
+  return new RegExp(MERMAID_PLACEHOLDER_RE_STRICT.source, 'g');
+}
+
+export function renderMermaidPlaceholder(id: string): string {
+  return `${MERMAID_PLACEHOLDER_PREFIX}${escapeXmlAttribute(id)}"></ac:structured-macro>`;
+}
+
 export function markdownToStorage(markdown: string): MarkdownConvertResult {
   const lines = markdown.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n');
 
   const out: string[] = [];
+  const mermaidBlocks: MermaidBlock[] = [];
   let i = 0;
 
   while (i < lines.length) {
@@ -42,7 +61,14 @@ export function markdownToStorage(markdown: string): MarkdownConvertResult {
         i += 1;
       }
       i += 1;
-      out.push(renderCodeBlock(buf.join('\n'), lang));
+      const code = buf.join('\n');
+      if (lang === 'mermaid') {
+        const id = `mermaid-${mermaidBlocks.length + 1}`;
+        mermaidBlocks.push({ id, source: code });
+        out.push(renderMermaidPlaceholder(id));
+      } else {
+        out.push(renderCodeBlock(code, lang));
+      }
       continue;
     }
 
@@ -101,7 +127,7 @@ export function markdownToStorage(markdown: string): MarkdownConvertResult {
     out.push(`<p>${renderedPara.split(LINE_BREAK_SENTINEL).join(STORAGE_LINE_BREAK)}</p>`);
   }
 
-  return { html: out.join('\n') };
+  return { html: out.join('\n'), mermaidBlocks };
 }
 
 function isLikelyListTerminator(lines: string[], currentIndex: number): boolean {
@@ -126,7 +152,7 @@ function renderHeading(line: string): string {
   return `<h${level}>${renderInline(text)}</h${level}>`;
 }
 
-function renderCodeBlock(code: string, _lang: string): string {
+export function renderCodeBlock(code: string, _lang: string): string {
   const lang = _lang && /^[a-zA-Z0-9+-]+$/.test(_lang) ? _lang : 'none';
   const titleAttr = escapeXmlAttribute(lang);
   return `<ac:structured-macro ac:name="code"><ac:parameter ac:name="language">${titleAttr}</ac:parameter><ac:plain-text-body><![CDATA[${escapeCdataTerminator(code)}]]></ac:plain-text-body></ac:structured-macro>`;

@@ -154,6 +154,28 @@ describe('markdownToStorage', () => {
     expect(html).toBe('<p>alt</p>');
   });
 
+  it('emits a placeholder macro for ```mermaid fenced blocks and exposes the source', () => {
+    const md = '```mermaid\ngraph TD\nA-->B\n```';
+    const { html, mermaidBlocks } = markdownToStorage(md);
+    expect(html).toContain(
+      '<ac:structured-macro ac:name="mermaid-placeholder" data-mermaid-id="mermaid-1"></ac:structured-macro>',
+    );
+    expect(mermaidBlocks).toEqual([{ id: 'mermaid-1', source: 'graph TD\nA-->B' }]);
+  });
+
+  it('numbers mermaid block ids sequentially when multiple are present', () => {
+    const md = '```mermaid\ngraph TD\nA-->B\n```\n\ntext\n\n```mermaid\nflowchart LR\nA-->B\n```';
+    const { mermaidBlocks } = markdownToStorage(md);
+    expect(mermaidBlocks.map((b) => b.id)).toEqual(['mermaid-1', 'mermaid-2']);
+  });
+
+  it('still renders non-mermaid fenced blocks as code macros', () => {
+    const { html, mermaidBlocks } = markdownToStorage('```js\nif (x) { y(); }\n```');
+    expect(html).toContain('<ac:structured-macro ac:name="code"');
+    expect(html).toContain('<ac:parameter ac:name="language">js</ac:parameter>');
+    expect(mermaidBlocks).toEqual([]);
+  });
+
   it('joins consecutive non-empty lines in a single paragraph via <br />', () => {
     const { html } = markdownToStorage('line1\nline2');
     expect(html).toBe('<p>line1<br />line2</p>');

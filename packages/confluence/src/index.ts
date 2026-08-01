@@ -28,9 +28,14 @@ export {
   LOCAL_IMAGE_PLACEHOLDER_RE,
   renderInline,
 };
+export type { MermaidBlock, MarkdownConvertResult } from './markdown';
 
 import { rewriteImagesToAttachments } from './attachments';
 export { rewriteImagesToAttachments };
+
+import { rewriteMermaidBlocks } from './mermaid';
+export { rewriteMermaidBlocks };
+export type { MermaidRewriteResult, MermaidRewriteOptions } from './mermaid';
 
 export const INTERACTIVE_FLAG: FlagSpec = { name: 'interactive', aliases: ['i'], boolean: true };
 
@@ -176,10 +181,19 @@ async function syncEntry(
       const pageId = page.id;
 
       const markdown = readFileSync(entry.absolute, 'utf8');
-      const { html } = markdownToStorage(markdown);
+      const { html, mermaidBlocks } = markdownToStorage(markdown);
 
       const markdownDir = dirname(entry.absolute);
       let body = html;
+      if (mermaidBlocks.length > 0) {
+        const mermaidResult = await rewriteMermaidBlocks(body, mermaidBlocks, pageId, client);
+        body = mermaidResult.html;
+        if (mermaidResult.fallbacks.length > 0) {
+          log(
+            `mermaid: ${mermaidResult.fallbacks.length} block(s) not rendered (mmdc unavailable or failed); emitted as code macros`,
+          );
+        }
+      }
       LOCAL_IMAGE_PLACEHOLDER_RE.lastIndex = 0;
       if (LOCAL_IMAGE_PLACEHOLDER_RE.test(body)) {
         const result = await rewriteImagesToAttachments(body, pageId, client, { markdownDir });
