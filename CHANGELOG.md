@@ -1,3 +1,11 @@
+## [0.9.0](https://github.com/egose/repo-toolkit/compare/v0.8.0...v0.9.0) (2026-08-02)
+
+### Features
+
+* **confluence:** add html fenced block rendering support ([3c284f8](https://github.com/egose/repo-toolkit/commit/3c284f8130f67c924fec80407523336da0a01a58))
+* **confluence:** add mermaid block rendering for confluence sync ([83b289f](https://github.com/egose/repo-toolkit/commit/83b289f57cc577cdf47b6f709204833ba4e204d3))
+* **confluence:** strip frontmatter before converting markdown ([f899665](https://github.com/egose/repo-toolkit/commit/f89966562f4ed70f15cf4093a3f0263ba2f656f7))
+
 ## [0.8.0](https://github.com/egose/repo-toolkit/compare/v0.7.2...v0.8.0) (2026-08-01)
 
 ### Features
