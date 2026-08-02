@@ -14,6 +14,7 @@ const SPECS: FlagSpec[] = [
   { name: 'version-message' },
   { name: 'skip-unchanged', boolean: true, negatable: true },
   { name: 'dry-run', boolean: true },
+  { name: 'render-html-blocks', boolean: true },
   INTERACTIVE_FLAG,
 ];
 
@@ -41,6 +42,8 @@ Options:
   --skip-unchanged               Skip pages whose body is unchanged (default: true)
   --no-skip-unchanged           Re-upload every page even when unchanged
   --dry-run                     Walk the doc tree and print the plan without API calls
+  --render-html-blocks          Render \`\`\`html fenced blocks as inline HTML via the
+                                Confluence html macro (default: false; emits as code box)
   -i, --interactive             (reserved; not currently interactive)
   -h, --help                    Show this help message
 `);
@@ -55,6 +58,7 @@ const ENV_INPUT_MAP: ReadonlyArray<[string, keyof ConfluenceSyncOptions]> = [
   ['INPUT_SPACE-KEY', 'spaceKey'],
   ['INPUT_PARENT-PAGE-ID', 'parentPageId'],
   ['INPUT_VERSION-MESSAGE', 'versionMessage'],
+  ['INPUT_RENDER-HTML-BLOCKS', 'renderHtmlBlocks'],
 ];
 
 function buildOptions(result: ReturnType<typeof parseFlags>): Partial<ConfluenceSyncOptions> {
@@ -78,6 +82,7 @@ function buildOptions(result: ReturnType<typeof parseFlags>): Partial<Confluence
   if (values['version-message']) options.versionMessage = values['version-message'];
   if (values['skip-unchanged'] !== undefined) options.skipUnchanged = values['skip-unchanged'] === 'true';
   if (values['dry-run'] !== undefined) options.dryRun = true;
+  if (values['render-html-blocks'] !== undefined) options.renderHtmlBlocks = true;
 
   return options;
 }
@@ -87,7 +92,11 @@ function optionsFromEnv(): Partial<ConfluenceSyncOptions> {
   for (const [envName, key] of ENV_INPUT_MAP) {
     const value = process.env[envName];
     if (typeof value === 'string' && value.length > 0) {
-      (options as Record<string, unknown>)[key] = value;
+      if (key === 'renderHtmlBlocks') {
+        (options as Record<string, unknown>)[key] = value === 'true' || value === '1';
+      } else {
+        (options as Record<string, unknown>)[key] = value;
+      }
     }
   }
   return options;

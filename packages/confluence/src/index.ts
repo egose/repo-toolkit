@@ -19,6 +19,7 @@ import {
   isRemoteUrl,
   LOCAL_IMAGE_PLACEHOLDER_RE,
   renderInline,
+  renderHtmlBlock,
 } from './markdown';
 export {
   markdownToStorage,
@@ -27,8 +28,9 @@ export {
   isRemoteUrl,
   LOCAL_IMAGE_PLACEHOLDER_RE,
   renderInline,
+  renderHtmlBlock,
 };
-export type { MermaidBlock, MarkdownConvertResult } from './markdown';
+export type { MermaidBlock, MarkdownConvertResult, MarkdownConvertOptions } from './markdown';
 
 import { rewriteImagesToAttachments } from './attachments';
 export { rewriteImagesToAttachments };
@@ -58,6 +60,8 @@ export interface ConfluenceSyncOptions {
   versionMessage?: string;
   /** Skip uploads that would have no markdown changes (default: true). */
   skipUnchanged?: boolean;
+  /** Render ```html fenced blocks as inline HTML via the Confluence `html` macro instead of a code box (default: false). */
+  renderHtmlBlocks?: boolean;
   /** Dry-run: walk the tree and print the plan but make no API calls. */
   dryRun?: boolean;
   /** Custom Confluence client instance (testing). When supplied, `username`/`apiToken`/`baseUrl` are ignored. */
@@ -77,6 +81,7 @@ export interface ConfluenceSyncPlan {
   versionMessage: string;
   skipUnchanged: boolean;
   dryRun: boolean;
+  renderHtmlBlocks: boolean;
 }
 
 export function resolveConfluenceSyncPlan(options: ConfluenceSyncOptions = {}): ConfluenceSyncPlan {
@@ -117,6 +122,7 @@ export function resolveConfluenceSyncPlan(options: ConfluenceSyncOptions = {}): 
     versionMessage: options.versionMessage ?? 'Synced via repo-toolkit-confluence',
     skipUnchanged: options.skipUnchanged ?? true,
     dryRun: options.dryRun ?? false,
+    renderHtmlBlocks: options.renderHtmlBlocks === true,
   };
 }
 
@@ -181,7 +187,9 @@ async function syncEntry(
       const pageId = page.id;
 
       const markdown = readFileSync(entry.absolute, 'utf8');
-      const { html, mermaidBlocks } = markdownToStorage(markdown);
+      const { html, mermaidBlocks } = markdownToStorage(markdown, {
+        renderHtmlBlocks: plan.renderHtmlBlocks,
+      });
 
       const markdownDir = dirname(entry.absolute);
       let body = html;

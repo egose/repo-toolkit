@@ -11,6 +11,11 @@ export interface MarkdownConvertResult {
   mermaidBlocks: MermaidBlock[];
 }
 
+export interface MarkdownConvertOptions {
+  /** Render ```html fenced blocks as inline HTML via the Confluence `html` macro instead of a code box. Default: false. */
+  renderHtmlBlocks?: boolean;
+}
+
 const PROTOCOL_BLOCKLIST = /^(?:javascript|data|file|vbscript):/i;
 const AMP = '&' + 'amp;';
 const LT = '&' + 'lt;';
@@ -30,7 +35,8 @@ export function renderMermaidPlaceholder(id: string): string {
   return `${MERMAID_PLACEHOLDER_PREFIX}${escapeXmlAttribute(id)}"></ac:structured-macro>`;
 }
 
-export function markdownToStorage(markdown: string): MarkdownConvertResult {
+export function markdownToStorage(markdown: string, options: MarkdownConvertOptions = {}): MarkdownConvertResult {
+  const renderHtmlBlocks = options.renderHtmlBlocks === true;
   let lines = markdown.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n');
 
   if (lines.length > 0 && lines[0] === '---') {
@@ -79,6 +85,8 @@ export function markdownToStorage(markdown: string): MarkdownConvertResult {
         const id = `mermaid-${mermaidBlocks.length + 1}`;
         mermaidBlocks.push({ id, source: code });
         out.push(renderMermaidPlaceholder(id));
+      } else if (lang === 'html' && renderHtmlBlocks) {
+        out.push(renderHtmlBlock(code));
       } else {
         out.push(renderCodeBlock(code, lang));
       }
@@ -169,6 +177,10 @@ export function renderCodeBlock(code: string, _lang: string): string {
   const lang = _lang && /^[a-zA-Z0-9+-]+$/.test(_lang) ? _lang : 'none';
   const titleAttr = escapeXmlAttribute(lang);
   return `<ac:structured-macro ac:name="code"><ac:parameter ac:name="language">${titleAttr}</ac:parameter><ac:plain-text-body><![CDATA[${escapeCdataTerminator(code)}]]></ac:plain-text-body></ac:structured-macro>`;
+}
+
+export function renderHtmlBlock(code: string): string {
+  return `<ac:structured-macro ac:name="html"><ac:plain-text-body><![CDATA[${escapeCdataTerminator(code)}]]></ac:plain-text-body></ac:structured-macro>`;
 }
 
 function escapeCdataTerminator(text: string): string {
