@@ -138,7 +138,13 @@ describe('resolveConfluenceSyncPlan', () => {
     expect(plan.folder).toBe('/tmp/repo/docs');
     expect(plan.skipUnchanged).toBe(true);
     expect(plan.dryRun).toBe(false);
+    expect(plan.renderHtmlBlocks).toBe(false);
     expect(plan.versionMessage).toMatch(/repo-toolkit-confluence/);
+  });
+
+  it('fills renderHtmlBlocks true when provided', () => {
+    const plan = resolveConfluenceSyncPlan({ ...base, renderHtmlBlocks: true });
+    expect(plan.renderHtmlBlocks).toBe(true);
   });
 
   it('requires folder', () => {
@@ -302,5 +308,44 @@ describe('syncConfluenceToDocs', () => {
     const pageByTitle = calls.filter((c) => c.method === 'getPageByTitle');
     const titlesPerLookup = pageByTitle.map((c) => c.args[1] as string);
     expect(titlesPerLookup.filter((t) => t === 'x')).toHaveLength(2);
+  });
+
+  it('renders ```html fenced blocks as the html macro when renderHtmlBlocks is on', async () => {
+    await writeFile(join(tmp, 'page.md'), '```html\n<div class="card">hi</div>\n```');
+    const { client, calls } = buildFakeClient({ spaceId: 'SPACE' });
+    await syncConfluenceToDocs({
+      folder: tmp,
+      username: 'u',
+      apiToken: 't',
+      baseUrl: 'https://x/wiki',
+      spaceKey: 'ENG',
+      parentPageId: '123',
+      renderHtmlBlocks: true,
+      client: client as unknown as Parameters<typeof syncConfluenceToDocs>[0]['client'],
+      log: () => {},
+    });
+    const update = calls.find((c) => c.method === 'updatePage')?.args[0] as { body: { value: string } } | undefined;
+    expect(update).toBeDefined();
+    expect(update?.body.value).toContain('<ac:structured-macro ac:name="html"');
+    expect(update?.body.value).not.toContain('ac:name="code"');
+  });
+
+  it('renders ```html fenced blocks as a code macro by default', async () => {
+    await writeFile(join(tmp, 'page.md'), '```html\n<div>hi</div>\n```');
+    const { client, calls } = buildFakeClient({ spaceId: 'SPACE' });
+    await syncConfluenceToDocs({
+      folder: tmp,
+      username: 'u',
+      apiToken: 't',
+      baseUrl: 'https://x/wiki',
+      spaceKey: 'ENG',
+      parentPageId: '123',
+      client: client as unknown as Parameters<typeof syncConfluenceToDocs>[0]['client'],
+      log: () => {},
+    });
+    const update = calls.find((c) => c.method === 'updatePage')?.args[0] as { body: { value: string } } | undefined;
+    expect(update).toBeDefined();
+    expect(update?.body.value).toContain('<ac:structured-macro ac:name="code"');
+    expect(update?.body.value).toContain('<ac:parameter ac:name="language">html</ac:parameter>');
   });
 });

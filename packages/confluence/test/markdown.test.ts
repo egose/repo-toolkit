@@ -7,6 +7,7 @@ import {
   escapeXmlAttribute,
   isRemoteUrl,
   renderInline,
+  renderHtmlBlock,
 } from '../src/markdown';
 
 const AMP_ENTITY = '&' + 'amp;';
@@ -119,6 +120,47 @@ describe('markdownToStorage', () => {
     expect(html).not.toContain('foo ]]> bar');
   });
 
+  it('defaults ```html fenced blocks to a code macro (renderHtmlBlocks off)', () => {
+    const { html } = markdownToStorage('```html\n<div>hi</div>\n```');
+    expect(html).toContain('<ac:structured-macro ac:name="code"');
+    expect(html).toContain('<ac:parameter ac:name="language">html</ac:parameter>');
+    expect(html).toContain('<![CDATA[<div>hi</div>]]>');
+    expect(html).not.toContain('ac:name="html"');
+  });
+
+  it('emits the html macro for ```html fenced blocks when renderHtmlBlocks is on', () => {
+    const { html, mermaidBlocks } = markdownToStorage('```html\n<div>hi</div>\n```', {
+      renderHtmlBlocks: true,
+    });
+    expect(html).toContain('<ac:structured-macro ac:name="html"');
+    expect(html).not.toContain('ac:name="code"');
+    expect(html).toContain('<![CDATA[<div>hi</div>]]>');
+    expect(mermaidBlocks).toEqual([]);
+  });
+
+  it('escapes CDATA terminators inside html macro bodies', () => {
+    const { html } = markdownToStorage('```html\nfoo ]]> bar\n```', { renderHtmlBlocks: true });
+    expect(html).toContain('foo ]]]]><![CDATA[> bar');
+    expect(html).not.toContain('foo ]]> bar');
+  });
+
+  it('renderHtmlBlock produces the html macro with a CDATA body', () => {
+    expect(renderHtmlBlock('<p>x</p>')).toBe(
+      '<ac:structured-macro ac:name="html"><ac:plain-text-body><![CDATA[<p>x</p>]]></ac:plain-text-body></ac:structured-macro>',
+    );
+  });
+
+  it('renderHtmlBlock neutralizes CDATA terminators', () => {
+    expect(renderHtmlBlock('a ]]> b')).toContain('a ]]]]><![CDATA[> b');
+  });
+
+  it('non-html fenced blocks remain code macros even with renderHtmlBlocks on', () => {
+    const { html } = markdownToStorage('```js\nif (x) { y(); }\n```', { renderHtmlBlocks: true });
+    expect(html).toContain('<ac:structured-macro ac:name="code"');
+    expect(html).toContain('<ac:parameter ac:name="language">js</ac:parameter>');
+    expect(html).not.toContain('ac:name="html"');
+  });
+
   it('renders unordered lists', () => {
     const { html } = markdownToStorage('- a\n- b\n- c');
     expect(html).toContain('<ul>');
@@ -154,8 +196,66 @@ describe('markdownToStorage', () => {
     expect(html).toBe('<p>alt</p>');
   });
 
+  it('emits a placeholder macro for ```mermaid fenced blocks and exposes the source', () => {
+    const md = '```mermaid\ngraph TD\nA-->B\n```';
+    const { html, mermaidBlocks } = markdownToStorage(md);
+    expect(html).toContain(
+      '<ac:structured-macro ac:name="mermaid-placeholder" data-mermaid-id="mermaid-1"></ac:structured-macro>',
+    );
+    expect(mermaidBlocks).toEqual([{ id: 'mermaid-1', source: 'graph TD\nA-->B' }]);
+  });
+
+  it('numbers mermaid block ids sequentially when multiple are present', () => {
+    const md = '```mermaid\ngraph TD\nA-->B\n```\n\ntext\n\n```mermaid\nflowchart LR\nA-->B\n```';
+    const { mermaidBlocks } = markdownToStorage(md);
+    expect(mermaidBlocks.map((b) => b.id)).toEqual(['mermaid-1', 'mermaid-2']);
+  });
+
+  it('still renders non-mermaid fenced blocks as code macros', () => {
+    const { html, mermaidBlocks } = markdownToStorage('```js\nif (x) { y(); }\n```');
+    expect(html).toContain('<ac:structured-macro ac:name="code"');
+    expect(html).toContain('<ac:parameter ac:name="language">js</ac:parameter>');
+    expect(mermaidBlocks).toEqual([]);
+  });
+
   it('joins consecutive non-empty lines in a single paragraph via <br />', () => {
     const { html } = markdownToStorage('line1\nline2');
     expect(html).toBe('<p>line1<br />line2</p>');
+  });
+
+  it('strips Docusaurus/YAML frontmatter before converting', () => {
+    const md = `---
+title: Failed Deployments
+sidebar_label: Failed Deployments
+sidebar_position: 4
+---
+
+# Failed Deployments
+
+body content here`;
+    const { html, mermaidBlocks } = markdownToStorage(md);
+    expect(html).toContain('<h1>Failed Deployments</h1>');
+    expect(html).toContain('<p>body content here</p>');
+    expect(html).not.toContain('sidebar_label');
+    expect(html).not.toContain('sidebar_position');
+    expect(mermaidBlocks).toEqual([]);
+  });
+
+  it('strips frontmatter closed by ...', () => {
+    const { html } = markdownToStorage('---\nkey: val\n...\n\ntext');
+    expect(html).toBe('<p>text</p>');
+  });
+
+  it('leaves non-frontmatter leading ---（thematic break） content intact', () => {
+    const { html } = markdownToStorage('paragraph\n\n---\n\ntail');
+    expect(html).toContain('<p>paragraph</p>');
+    expect(html).toContain('<hr />');
+    expect(html).toContain('tail');
+  });
+
+  it('does not treat an unclosed opening --- as frontmatter', () => {
+    const { html } = markdownToStorage('---\nnot closed\nstill here');
+    expect(html).toContain('still here');
+    expect(html).toContain('not closed');
   });
 });

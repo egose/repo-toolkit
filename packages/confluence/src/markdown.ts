@@ -1,8 +1,19 @@
 const STORAGE_LINE_BREAK = '<br />';
 const LINE_BREAK_SENTINEL = '\u0001BR\u0001';
 
+export interface MermaidBlock {
+  id: string;
+  source: string;
+}
+
 export interface MarkdownConvertResult {
   html: string;
+  mermaidBlocks: MermaidBlock[];
+}
+
+export interface MarkdownConvertOptions {
+  /** Render ```html fenced blocks as inline HTML via the Confluence `html` macro instead of a code box. Default: false. */
+  renderHtmlBlocks?: boolean;
 }
 
 const PROTOCOL_BLOCKLIST = /^(?:javascript|data|file|vbscript):/i;
@@ -12,10 +23,37 @@ const GT = '&' + 'gt;';
 const QUOT = '&' + 'quot;';
 const APOS = '&' + '#' + '39;';
 
-export function markdownToStorage(markdown: string): MarkdownConvertResult {
-  const lines = markdown.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n');
+const MERMAID_PLACEHOLDER_PREFIX = '<ac:structured-macro ac:name="mermaid-placeholder" data-mermaid-id="';
+const MERMAID_PLACEHOLDER_RE_STRICT =
+  /<ac:structured-macro ac:name="mermaid-placeholder" data-mermaid-id="([^"]+)"><\/ac:structured-macro>/g;
+
+export function mermaidPlaceholderRe(): RegExp {
+  return new RegExp(MERMAID_PLACEHOLDER_RE_STRICT.source, 'g');
+}
+
+export function renderMermaidPlaceholder(id: string): string {
+  return `${MERMAID_PLACEHOLDER_PREFIX}${escapeXmlAttribute(id)}"></ac:structured-macro>`;
+}
+
+export function markdownToStorage(markdown: string, options: MarkdownConvertOptions = {}): MarkdownConvertResult {
+  const renderHtmlBlocks = options.renderHtmlBlocks === true;
+  let lines = markdown.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n');
+
+  if (lines.length > 0 && lines[0] === '---') {
+    let closeIndex = -1;
+    for (let j = 1; j < lines.length; j += 1) {
+      if (lines[j] === '---' || lines[j] === '...') {
+        closeIndex = j;
+        break;
+      }
+    }
+    if (closeIndex !== -1) {
+      lines = lines.slice(closeIndex + 1);
+    }
+  }
 
   const out: string[] = [];
+  const mermaidBlocks: MermaidBlock[] = [];
   let i = 0;
 
   while (i < lines.length) {
@@ -42,7 +80,16 @@ export function markdownToStorage(markdown: string): MarkdownConvertResult {
         i += 1;
       }
       i += 1;
-      out.push(renderCodeBlock(buf.join('\n'), lang));
+      const code = buf.join('\n');
+      if (lang === 'mermaid') {
+        const id = `mermaid-${mermaidBlocks.length + 1}`;
+        mermaidBlocks.push({ id, source: code });
+        out.push(renderMermaidPlaceholder(id));
+      } else if (lang === 'html' && renderHtmlBlocks) {
+        out.push(renderHtmlBlock(code));
+      } else {
+        out.push(renderCodeBlock(code, lang));
+      }
       continue;
     }
 
@@ -101,7 +148,7 @@ export function markdownToStorage(markdown: string): MarkdownConvertResult {
     out.push(`<p>${renderedPara.split(LINE_BREAK_SENTINEL).join(STORAGE_LINE_BREAK)}</p>`);
   }
 
-  return { html: out.join('\n') };
+  return { html: out.join('\n'), mermaidBlocks };
 }
 
 function isLikelyListTerminator(lines: string[], currentIndex: number): boolean {
@@ -126,10 +173,14 @@ function renderHeading(line: string): string {
   return `<h${level}>${renderInline(text)}</h${level}>`;
 }
 
-function renderCodeBlock(code: string, _lang: string): string {
+export function renderCodeBlock(code: string, _lang: string): string {
   const lang = _lang && /^[a-zA-Z0-9+-]+$/.test(_lang) ? _lang : 'none';
   const titleAttr = escapeXmlAttribute(lang);
   return `<ac:structured-macro ac:name="code"><ac:parameter ac:name="language">${titleAttr}</ac:parameter><ac:plain-text-body><![CDATA[${escapeCdataTerminator(code)}]]></ac:plain-text-body></ac:structured-macro>`;
+}
+
+export function renderHtmlBlock(code: string): string {
+  return `<ac:structured-macro ac:name="html"><ac:plain-text-body><![CDATA[${escapeCdataTerminator(code)}]]></ac:plain-text-body></ac:structured-macro>`;
 }
 
 function escapeCdataTerminator(text: string): string {

@@ -19,6 +19,7 @@ import {
   isRemoteUrl,
   LOCAL_IMAGE_PLACEHOLDER_RE,
   renderInline,
+  renderHtmlBlock,
 } from './markdown';
 export {
   markdownToStorage,
@@ -27,10 +28,16 @@ export {
   isRemoteUrl,
   LOCAL_IMAGE_PLACEHOLDER_RE,
   renderInline,
+  renderHtmlBlock,
 };
+export type { MermaidBlock, MarkdownConvertResult, MarkdownConvertOptions } from './markdown';
 
 import { rewriteImagesToAttachments } from './attachments';
 export { rewriteImagesToAttachments };
+
+import { rewriteMermaidBlocks } from './mermaid';
+export { rewriteMermaidBlocks };
+export type { MermaidRewriteResult, MermaidRewriteOptions } from './mermaid';
 
 export const INTERACTIVE_FLAG: FlagSpec = { name: 'interactive', aliases: ['i'], boolean: true };
 
@@ -53,6 +60,8 @@ export interface ConfluenceSyncOptions {
   versionMessage?: string;
   /** Skip uploads that would have no markdown changes (default: true). */
   skipUnchanged?: boolean;
+  /** Render ```html fenced blocks as inline HTML via the Confluence `html` macro instead of a code box (default: false). */
+  renderHtmlBlocks?: boolean;
   /** Dry-run: walk the tree and print the plan but make no API calls. */
   dryRun?: boolean;
   /** Custom Confluence client instance (testing). When supplied, `username`/`apiToken`/`baseUrl` are ignored. */
@@ -72,6 +81,7 @@ export interface ConfluenceSyncPlan {
   versionMessage: string;
   skipUnchanged: boolean;
   dryRun: boolean;
+  renderHtmlBlocks: boolean;
 }
 
 export function resolveConfluenceSyncPlan(options: ConfluenceSyncOptions = {}): ConfluenceSyncPlan {
@@ -112,6 +122,7 @@ export function resolveConfluenceSyncPlan(options: ConfluenceSyncOptions = {}): 
     versionMessage: options.versionMessage ?? 'Synced via repo-toolkit-confluence',
     skipUnchanged: options.skipUnchanged ?? true,
     dryRun: options.dryRun ?? false,
+    renderHtmlBlocks: options.renderHtmlBlocks === true,
   };
 }
 
@@ -176,10 +187,21 @@ async function syncEntry(
       const pageId = page.id;
 
       const markdown = readFileSync(entry.absolute, 'utf8');
-      const { html } = markdownToStorage(markdown);
+      const { html, mermaidBlocks } = markdownToStorage(markdown, {
+        renderHtmlBlocks: plan.renderHtmlBlocks,
+      });
 
       const markdownDir = dirname(entry.absolute);
       let body = html;
+      if (mermaidBlocks.length > 0) {
+        const mermaidResult = await rewriteMermaidBlocks(body, mermaidBlocks, pageId, client);
+        body = mermaidResult.html;
+        if (mermaidResult.fallbacks.length > 0) {
+          log(
+            `mermaid: ${mermaidResult.fallbacks.length} block(s) not rendered (mmdc unavailable or failed); emitted as code macros`,
+          );
+        }
+      }
       LOCAL_IMAGE_PLACEHOLDER_RE.lastIndex = 0;
       if (LOCAL_IMAGE_PLACEHOLDER_RE.test(body)) {
         const result = await rewriteImagesToAttachments(body, pageId, client, { markdownDir });
