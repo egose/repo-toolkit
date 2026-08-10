@@ -150,4 +150,83 @@ describe('generateChangelog (real git)', () => {
     expect(firstRelease).toContain('first shipped feature');
     expect(firstRelease).toContain('second shipped fix');
   });
+
+  it('prepends the new release ahead of existing content and preserves OLD', async () => {
+    const cwd = await initRepo('1.0.0');
+    repoDirs.push(cwd);
+
+    await commitFile(cwd, 'first.txt', 'first\n', 'feat: first shipped feature');
+    runGit(cwd, ['tag', 'v1.0.0']);
+    await setVersion(cwd, '1.1.0');
+    await commitFile(cwd, 'second.txt', 'second\n', 'fix: second shipped fix');
+
+    const outputFile = join(cwd, 'CHANGELOG.md');
+    await writeFile(outputFile, 'OLD\n');
+
+    await generateChangelog({ cwd, outputFile, outputUnreleased: true, releaseCount: 1 });
+
+    const contents = await readFile(outputFile, 'utf8');
+    expect(contents).toContain('second shipped fix');
+    expect(contents).toContain('OLD');
+    // New release should appear before the preserved OLD block (prepend order).
+    expect(contents.indexOf('second shipped fix')).toBeLessThan(contents.indexOf('OLD'));
+    // Single blank-line separator, no excess newlines.
+    expect(contents).toMatch(/\n\nOLD\n$/);
+  });
+
+  it('appends the new release after existing content and preserves OLD', async () => {
+    const cwd = await initRepo('1.0.0');
+    repoDirs.push(cwd);
+
+    await commitFile(cwd, 'first.txt', 'first\n', 'feat: first shipped feature');
+    runGit(cwd, ['tag', 'v1.0.0']);
+    await setVersion(cwd, '1.1.0');
+    await commitFile(cwd, 'second.txt', 'second\n', 'fix: second shipped fix');
+
+    const outputFile = join(cwd, 'CHANGELOG.md');
+    await writeFile(outputFile, 'OLD\n');
+
+    await generateChangelog({
+      cwd,
+      outputFile,
+      append: true,
+      outputUnreleased: true,
+      releaseCount: 1,
+    });
+
+    const contents = await readFile(outputFile, 'utf8');
+    expect(contents).toContain('OLD');
+    expect(contents).toContain('second shipped fix');
+    // OLD should appear before the appended release.
+    expect(contents.indexOf('OLD')).toBeLessThan(contents.indexOf('second shipped fix'));
+    expect(contents).toMatch(/^OLD\n\n/);
+    expect(contents).toMatch(/\n$/);
+  });
+});
+
+describe('generateChangelog invalid-config path', () => {
+  const repoDirs: string[] = [];
+
+  afterEach(async () => {
+    await Promise.all(repoDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
+  });
+
+  it('rejects unknown preset fields before touching the filesystem', async () => {
+    const cwd = await initRepo('1.0.0');
+    repoDirs.push(cwd);
+
+    const outputFile = join(cwd, 'CHANGELOG.md');
+    await writeFile(outputFile, 'OLD\n');
+
+    await expect(
+      generateChangelog({
+        cwd,
+        outputFile,
+        bogus: true,
+      } as unknown as Parameters<typeof generateChangelog>[0]),
+    ).rejects.toThrow(/Unknown changelog config option: bogus/);
+
+    // File must remain untouched when validation fails fast.
+    expect(await readFile(outputFile, 'utf8')).toBe('OLD\n');
+  });
 });

@@ -14,23 +14,23 @@ export const SPECS: FlagSpec[] = [
   { name: 'output-unreleased', boolean: true, negatable: true },
 ];
 
-function printHelp() {
+export function printHelp(): void {
   console.log(`repo-toolkit-changelog
 
 Usage:
   repo-toolkit-changelog [options]
 
 Options:
-  --config <path>               Config file with changelog options such as custom types
-  --cwd <path>                  Working directory to read package and git metadata from
-  --output <path>               Output file path (default: CHANGELOG.md)
-  --tag-prefix <prefix>         Tag prefix to match (default: v)
-  --release-count <number>      Number of releases to include (default: 0)
-  --append                      Append to the output instead of prepending
-  --first-release               Include all commits when no prior release tag exists
-  --no-skip-unstable            Include unstable releases
-  --no-output-unreleased        Omit the unreleased section
-  -h, --help                    Show this help message
+  --config <path>                       Config file (JSON or JS module) with changelog options
+  --cwd <path>                          Working directory to read package and git metadata from
+  --output <path>                       Output file path (default: CHANGELOG.md)
+  --tag-prefix <prefix>                 Tag prefix to match (default: v; use --tag-prefix= for empty)
+  --release-count <non-negative int>     Number of releases to include (default: latest release only)
+  --append / --no-append                Append to or prepend to the output (default: prepend)
+  --first-release / --no-first-release  Include all commits when no prior release tag exists
+  --skip-unstable / --no-skip-unstable  Skip prerelease tags (default: skip)
+  --output-unreleased / --no-output-unreleased  Include the unreleased section (default: include)
+  -h, --help                            Show this help message
 `);
 }
 

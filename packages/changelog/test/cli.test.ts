@@ -1,10 +1,13 @@
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { parseFlags, resolveCliOptions } from '@repo-toolkit/publish-package';
-import { SPECS, resolveGenerateChangelogCliOptions } from '../src/cli';
+import { SPECS, printHelp, resolveGenerateChangelogCliOptions } from '../src/cli';
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
 
 function parseCli(argv: string[]) {
   const result = parseFlags(argv, SPECS);
@@ -198,5 +201,87 @@ describe('CLI config precedence', () => {
     await mkConfig(cwd, 'opts.json', { tagPrefix: 'cwd-relative' });
     const merged = await merge(['--cwd', cwd, '--config', 'opts.json']);
     expect(merged.tagPrefix).toBe('cwd-relative');
+  });
+});
+
+describe('help README parity (CLARC-03)', () => {
+  const readmePath = resolve(__dirname, '..', 'README.md');
+
+  it('every mentioned CLI flag in README also appears in --help output', async () => {
+    const spy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    printHelp();
+    const help = spy.mock.calls[0][0] as string;
+    spy.mockRestore();
+
+    const readme = await readFile(readmePath, 'utf8');
+
+    const flagsInReadme = [
+      ...readme.matchAll(
+        /`--(config|cwd|output|tag-prefix|release-count|append|first-release|skip-unstable|output-unreleased|help)`/g,
+      ),
+    ].map((m) => m[1]);
+
+    expect(flagsInReadme.length).toBeGreaterThan(0);
+    for (const flag of flagsInReadme) {
+      expect(help).toContain(`--${flag}`);
+    }
+  });
+
+  it('SPECS entries match the flags advertised in help output', () => {
+    const names = new Set(SPECS.map((s) => s.name));
+    expect(names).toEqual(
+      new Set([
+        'config',
+        'cwd',
+        'output',
+        'tag-prefix',
+        'release-count',
+        'append',
+        'first-release',
+        'skip-unstable',
+        'output-unreleased',
+      ]),
+    );
+  });
+});
+
+describe('package pack smoke (CLARC-03)', () => {
+  const tempPaths: string[] = [];
+
+  afterEach(async () => {
+    await Promise.all(tempPaths.splice(0).map((path) => rm(path, { recursive: true, force: true })));
+  });
+
+  it('the configured files list keeps sources out of the published tarball', async () => {
+    const { execFileSync } = await import('node:child_process');
+    const packDest = await mkdtemp(join(tmpdir(), 'pack-smoke-'));
+    tempPaths.push(packDest);
+
+    const pkgRoot = resolve(__dirname, '..');
+    execFileSync('pnpm', ['pack', '--pack-destination', packDest], {
+      cwd: pkgRoot,
+      stdio: 'pipe',
+      env: { ...process.env, CI: '1' },
+    });
+
+    const entries = await import('node:fs/promises').then((fs) => fs.readdir(packDest));
+    const tarballs = entries.filter((entry) => entry.endsWith('.tgz'));
+    expect(tarballs.length).toBe(1);
+
+    const tarball = join(packDest, tarballs[0]);
+    const listing = execFileSync('tar', ['-tzf', tarball], { encoding: 'utf8' }).split('\n');
+
+    // Required artifacts must be present.
+    expect(listing.some((entry) => entry.endsWith('/package.json'))).toBe(true);
+    expect(listing.some((entry) => entry.endsWith('/README.md'))).toBe(true);
+    expect(listing.some((entry) => entry.endsWith('/dist/index.js'))).toBe(true);
+    expect(listing.some((entry) => entry.endsWith('/dist/index.d.ts'))).toBe(true);
+    expect(listing.some((entry) => entry.endsWith('/dist/cli.js'))).toBe(true);
+
+    // Source, tests, and config files must NOT leak into the tarball.
+    expect(listing.some((entry) => entry.includes('/src/'))).toBe(false);
+    expect(listing.some((entry) => entry.includes('/test/'))).toBe(false);
+    expect(listing.some((entry) => entry.endsWith('/tsup.config.ts'))).toBe(false);
+    expect(listing.some((entry) => entry.endsWith('/vitest.config.ts'))).toBe(false);
   });
 });
