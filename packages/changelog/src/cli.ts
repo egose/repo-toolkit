@@ -1,7 +1,8 @@
-import { parseFlags, type FlagSpec, INTERACTIVE_FLAG, resolveCliOptions } from '@repo-toolkit/publish-package';
+import { pathToFileURL } from 'node:url';
+import { parseFlags, type FlagSpec, type ParseFlagsResult, resolveCliOptions } from '@repo-toolkit/publish-package';
 import { generateChangelog, type GenerateChangelogOptions } from './index';
 
-const SPECS: FlagSpec[] = [
+export const SPECS: FlagSpec[] = [
   { name: 'config' },
   { name: 'cwd' },
   { name: 'output' },
@@ -11,7 +12,6 @@ const SPECS: FlagSpec[] = [
   { name: 'first-release', boolean: true, negatable: true },
   { name: 'skip-unstable', boolean: true, negatable: true },
   { name: 'output-unreleased', boolean: true, negatable: true },
-  INTERACTIVE_FLAG,
 ];
 
 function printHelp() {
@@ -30,7 +30,6 @@ Options:
   --first-release               Include all commits when no prior release tag exists
   --no-skip-unstable            Include unstable releases
   --no-output-unreleased        Omit the unreleased section
-  -i, --interactive             Prompt for missing required values interactively
   -h, --help                    Show this help message
 `);
 }
@@ -38,11 +37,15 @@ Options:
 function parseNumber(value: string, flag: string): number {
   const parsed = Number.parseInt(value, 10);
 
-  if (Number.isNaN(parsed)) {
+  if (Number.isNaN(parsed) || !Number.isSafeInteger(parsed) || parsed < 0) {
     throw new Error(`Invalid numeric value for ${flag}: ${value}`);
   }
 
   return parsed;
+}
+
+export function resolveGenerateChangelogCliOptions(result: ParseFlagsResult): GenerateChangelogOptions {
+  return buildOptions(result.values);
 }
 
 function buildOptions(values: Record<string, string>): GenerateChangelogOptions {
@@ -50,7 +53,7 @@ function buildOptions(values: Record<string, string>): GenerateChangelogOptions 
 
   if (values.cwd) options.cwd = values.cwd;
   if (values.output) options.outputFile = values.output;
-  if (values['tag-prefix']) options.tagPrefix = values['tag-prefix'];
+  if (Object.prototype.hasOwnProperty.call(values, 'tag-prefix')) options.tagPrefix = values['tag-prefix'];
   if (values['release-count'] !== undefined)
     options.releaseCount = parseNumber(values['release-count'], '--release-count');
   if (values.append !== undefined) options.append = values.append === 'true';
@@ -71,15 +74,19 @@ async function main() {
 
   const merged = await resolveCliOptions<GenerateChangelogOptions>({
     result,
-    buildOptions: (flags) => buildOptions(flags.values),
+    buildOptions: resolveGenerateChangelogCliOptions,
   });
 
   const outputPath = await generateChangelog(merged);
   console.log(`Changelog generated at ${outputPath}.`);
 }
 
-main().catch((error: unknown) => {
-  const message = error instanceof Error ? error.message : String(error);
-  console.error(message);
-  process.exitCode = 1;
-});
+const executedAsEntryPoint = process.argv[1] ? import.meta.url === pathToFileURL(process.argv[1]).href : false;
+
+if (executedAsEntryPoint) {
+  main().catch((error: unknown) => {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(message);
+    process.exitCode = 1;
+  });
+}

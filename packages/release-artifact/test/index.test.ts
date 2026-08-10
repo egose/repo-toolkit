@@ -3,6 +3,7 @@ import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promis
 import { chmodSync, existsSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, relative } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -59,6 +60,26 @@ console.log('running');
     join(rootDir, 'packages', 'pkg-no-bin', 'package.json'),
     `${JSON.stringify({ name: '@example/pkg-no-bin', version: '0.0.0-PLACEHOLDER' }, null, 2)}\n`,
   );
+}
+
+async function createTraversalArchive(archivePath: string, topLevelDirName: string): Promise<void> {
+  const sourceRoot = await mkdtemp(join(tmpdir(), 'repo-toolkit-artifact-malicious-src-'));
+
+  try {
+    await mkdir(join(sourceRoot, topLevelDirName), { recursive: true });
+    await writeFile(join(sourceRoot, topLevelDirName, 'escape.txt'), 'malicious\n');
+    execFileSync('tar', [
+      '-czf',
+      archivePath,
+      '--transform',
+      `s#^${topLevelDirName}/escape.txt#../escape.txt#`,
+      '-C',
+      sourceRoot,
+      topLevelDirName,
+    ]);
+  } finally {
+    await rm(sourceRoot, { recursive: true, force: true });
+  }
 }
 
 describe('toBinEntries', () => {
@@ -133,7 +154,10 @@ describe('buildRequiredFiles', () => {
 describe('createArtifactManifest', () => {
   it('sorts commands by name then packageDir', () => {
     const manifest = createArtifactManifest(
+      FIXTURE_TOOL_NAME,
       '1.2.3',
+      `${FIXTURE_TOOL_NAME}-1.2.3`,
+      `${FIXTURE_TOOL_NAME}-1.2.3.tar.gz`,
       [
         { name: 'b-cli', packageDir: 'b', entry: 'cli.js' },
         { name: 'a-cli', packageDir: 'a', entry: 'cli.js' },
@@ -141,6 +165,7 @@ describe('createArtifactManifest', () => {
       ['VERSION', 'artifact-manifest.json'],
     );
 
+    expect(manifest.toolName).toBe(FIXTURE_TOOL_NAME);
     expect(manifest.version).toBe('1.2.3');
     expect(manifest.commands.map((command) => command.name)).toEqual(['a-cli', 'b-cli']);
     expect(manifest.requiredFiles).toEqual([...['VERSION', 'artifact-manifest.json']].sort());
@@ -210,6 +235,31 @@ describe('collectCommands', () => {
       );
 
       expect(() => collectCommands(join(rootDir, 'packages'), ['pkg-no-name'])).toThrowError(/Package name missing/);
+    } finally {
+      await rm(rootDir, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects duplicate command names across packages', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'repo-toolkit-artifact-cmds-'));
+
+    try {
+      await mkdir(join(rootDir, 'packages', 'pkg-a'), { recursive: true });
+      await mkdir(join(rootDir, 'packages', 'pkg-b'), { recursive: true });
+      await writeFile(
+        join(rootDir, 'packages', 'pkg-a', 'package.json'),
+        `${JSON.stringify({ name: '@example/a', bin: { shared: 'cli.js' } }, null, 2)}\n`,
+      );
+      await writeFile(join(rootDir, 'packages', 'pkg-a', 'cli.js'), 'console.log("a")\n');
+      await writeFile(
+        join(rootDir, 'packages', 'pkg-b', 'package.json'),
+        `${JSON.stringify({ name: '@example/b', bin: { shared: 'cli.js' } }, null, 2)}\n`,
+      );
+      await writeFile(join(rootDir, 'packages', 'pkg-b', 'cli.js'), 'console.log("b")\n');
+
+      expect(() => collectCommands(join(rootDir, 'packages'), ['pkg-a', 'pkg-b'])).toThrowError(
+        /Duplicate artifact command name/,
+      );
     } finally {
       await rm(rootDir, { recursive: true, force: true });
     }
@@ -433,7 +483,7 @@ exit 0
 
       execFileSync('tar', ['-czf', artifactPath, '-C', distDir, `${FIXTURE_TOOL_NAME}-${FIXTURE_VERSION}`]);
 
-      expect(() => verifyReleaseArtifact({ artifactPath })).toThrowError(/escaping the artifact root/);
+      expect(() => verifyReleaseArtifact({ artifactPath })).toThrowError(/escaping (the artifact root|link)/);
       expect(existsSync(markerPath)).toBe(false);
     } finally {
       await rm(rootDir, { recursive: true, force: true });
@@ -469,6 +519,22 @@ exit 0
       expect(() =>
         verifyReleaseArtifact({ version: FIXTURE_VERSION, cwd: rootDir, toolName: FIXTURE_TOOL_NAME, skipExec: true }),
       ).not.toThrow();
+    } finally {
+      await rm(rootDir, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects traversal archive members before extraction', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'repo-toolkit-artifact-traversal-'));
+    const archivePath = join(rootDir, `${FIXTURE_TOOL_NAME}-${FIXTURE_VERSION}.tar.gz`);
+
+    try {
+      await createTraversalArchive(archivePath, `${FIXTURE_TOOL_NAME}-${FIXTURE_VERSION}`);
+
+      expect(() => verifyReleaseArtifact({ artifactPath: archivePath })).toThrowError(
+        /normalized relative POSIX path|top-level directory/,
+      );
+      expect(existsSync(join(rootDir, 'escape.txt'))).toBe(false);
     } finally {
       await rm(rootDir, { recursive: true, force: true });
     }
@@ -531,4 +597,35 @@ describe('buildReleaseArtifact (production node_modules, real repo)', () => {
     rmSync(plan.artifactRoot, { recursive: true, force: true });
     rmSync(plan.artifactPath, { recursive: true, force: true });
   }, 60_000);
+});
+
+describe('bin/install', () => {
+  it('rejects malicious archives before extracting into the install path', async () => {
+    const repoRoot = fileURLToPath(new URL('../../..', import.meta.url));
+    const rootDir = await mkdtemp(join(tmpdir(), 'repo-toolkit-install-script-'));
+    const downloadDir = join(rootDir, 'download');
+    const installDir = join(rootDir, 'install');
+    const archivePath = join(downloadDir, `${FIXTURE_TOOL_NAME}-${FIXTURE_VERSION}.tar.gz`);
+
+    try {
+      await mkdir(downloadDir, { recursive: true });
+      await createTraversalArchive(archivePath, `${FIXTURE_TOOL_NAME}-${FIXTURE_VERSION}`);
+
+      expect(() =>
+        execFileSync('bash', [join(repoRoot, 'bin', 'install')], {
+          env: {
+            ...process.env,
+            ASDF_INSTALL_TYPE: 'version',
+            ASDF_INSTALL_VERSION: FIXTURE_VERSION,
+            ASDF_INSTALL_PATH: installDir,
+            ASDF_DOWNLOAD_PATH: downloadDir,
+          },
+          stdio: 'pipe',
+        }),
+      ).toThrowError();
+      expect(existsSync(join(installDir, 'escape.txt'))).toBe(false);
+    } finally {
+      await rm(rootDir, { recursive: true, force: true });
+    }
+  });
 });

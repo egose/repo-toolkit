@@ -11,7 +11,7 @@ pnpm add -D @repo-toolkit/changelog
 ## Config File
 
 Use `--config` when you want repo-specific options such as custom commit `types`,
-scope filtering, ignored commits, or custom issue and commit URLs.
+scope filtering, ignored commits, or custom URL formats.
 
 ```js
 /** @type {import('@repo-toolkit/changelog').ChangelogConfig} */
@@ -38,9 +38,8 @@ repo-toolkit-changelog --config changelog.config.mjs
 
 CLI flags override values from the config file.
 
-Use a JavaScript config file when you need `RegExp` values such as `ignoreCommits`
-or formatter callbacks such as `formatIssueUrl`. JSON config files only work for
-plain data options.
+Use a JavaScript config file when you need `RegExp` values such as `ignoreCommits`.
+JSON config files only work for plain data options.
 
 ## CLI
 
@@ -54,10 +53,12 @@ Useful flags:
 - `--cwd <path>`
 - `--output <path>`
 - `--tag-prefix <prefix>`
-- `--release-count <number>`
+- `--release-count <number>`: defaults to the latest release only; use `0` to regenerate all releases
 - `--first-release`
 - `--no-skip-unstable`
 - `--no-output-unreleased`
+
+`--first-release` takes precedence over `--release-count` and regenerates the full changelog.
 
 ## JavaScript API
 
@@ -80,10 +81,11 @@ await generateChangelog({
 - `scope`
 - `scopeOnly`
 - `preMajor`
-- `formatIssueUrl`
-- `formatCommitUrl`
-- `formatCompareUrl`
-- `formatUserUrl`
+- `issueUrlFormat`
+- `commitUrlFormat`
+- `compareUrlFormat`
+- `userUrlFormat`
+- `bumpStrict`
 
 ## Default Sections
 

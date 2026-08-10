@@ -5,15 +5,17 @@ import {
   constants,
   cpSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
   readFileSync,
   readlinkSync,
+  realpathSync,
   rmSync,
   writeFileSync,
 } from 'node:fs';
-import { basename, isAbsolute, join, relative, resolve } from 'node:path';
+import { basename, isAbsolute, join, posix as pathPosix, relative, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { isPlainObject, normalizeVersion } from '@repo-toolkit/publish-package';
 
@@ -23,6 +25,12 @@ const DEFAULT_PACKAGES_DIR = 'packages';
 const DEFAULT_DIST_DIR = 'dist';
 const DEFAULT_NODE_COMMAND = 'node';
 const DEFAULT_HELP_FLAG = '--help';
+const ARTIFACT_MANIFEST_SCHEMA_VERSION = 1;
+const MAX_ARCHIVE_MEMBER_COUNT = 20_000;
+const MAX_ARCHIVE_PATH_LENGTH = 512;
+const MAX_ARCHIVE_EXPANDED_BYTES = 512 * 1024 * 1024;
+const SAFE_FILENAME_COMPONENT_RE = /^[A-Za-z0-9][A-Za-z0-9._+-]*$/u;
+const SAFE_COMMAND_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/u;
 
 /**
  * Default exclude patterns applied to each copied package directory so the
@@ -48,9 +56,33 @@ export interface ArtifactCommand {
 }
 
 export interface ArtifactManifest {
+  schemaVersion: number;
+  toolName: string;
   version: string;
+  artifactDirName: string;
+  archiveFileName: string;
   commands: ArtifactCommand[];
   requiredFiles: string[];
+}
+
+interface ParsedArchiveEntry {
+  type: string;
+  size: number;
+  path: string;
+  linkTarget?: string;
+}
+
+interface ValidatedArchive {
+  artifactPath: string;
+  archiveFileName: string;
+  topLevelDirName: string;
+}
+
+interface ParseArtifactManifestOptions {
+  archiveFileName?: string;
+  artifactDirName?: string;
+  expectedVersion?: string;
+  expectedToolName?: string;
 }
 
 export interface BuildArtifactOptions {
@@ -180,9 +212,12 @@ export function discoverPackageDirNames(packagesRoot: string): string[] {
 
 export function collectCommands(packagesRoot: string, packageDirNames: ReadonlyArray<string>): ArtifactCommand[] {
   const commands: ArtifactCommand[] = [];
+  const seenCommandNames = new Set<string>();
 
   for (const packageDirName of packageDirNames) {
     const packageJsonPath = join(packagesRoot, packageDirName, 'package.json');
+    const packageDir = join(packagesRoot, packageDirName);
+    const packageDirReal = realpathSync(packageDir);
 
     if (!existsSync(packageJsonPath)) {
       continue;
@@ -199,7 +234,25 @@ export function collectCommands(packagesRoot: string, packageDirNames: ReadonlyA
       if (!commandName || !entry) {
         continue;
       }
-      commands.push({ name: commandName, packageDir: packageDirName, entry });
+
+      if (!SAFE_COMMAND_NAME_RE.test(commandName)) {
+        throw new Error(`Invalid command name in ${packageJsonPath}: ${commandName}`);
+      }
+
+      if (seenCommandNames.has(commandName)) {
+        throw new Error(`Duplicate artifact command name found: ${commandName}`);
+      }
+
+      const normalizedEntry = normalizeRelativePosixPath(entry, `bin entry for ${commandName}`);
+      const entryPath = resolve(packageDir, normalizedEntry);
+
+      if (!existsSync(entryPath) || !lstatSync(entryPath).isFile()) {
+        throw new Error(`Bin entry must be an existing regular file in ${packageJsonPath}: ${entry}`);
+      }
+
+      assertPathWithinRoot(packageDirReal, realpathSync(entryPath), `bin entry for ${commandName}`);
+      seenCommandNames.add(commandName);
+      commands.push({ name: commandName, packageDir: packageDirName, entry: normalizedEntry });
     }
   }
 
@@ -222,7 +275,10 @@ export function buildRequiredFiles(
 }
 
 export function createArtifactManifest(
+  toolName: string,
   version: string,
+  artifactDirName: string,
+  archiveFileName: string,
   commands: ReadonlyArray<ArtifactCommand>,
   requiredFiles: ReadonlyArray<string>,
 ): ArtifactManifest {
@@ -230,7 +286,15 @@ export function createArtifactManifest(
     (left, right) => left.name.localeCompare(right.name) || left.packageDir.localeCompare(right.packageDir),
   );
 
-  return { version, commands: sortedCommands, requiredFiles: [...requiredFiles].sort() };
+  return {
+    schemaVersion: ARTIFACT_MANIFEST_SCHEMA_VERSION,
+    toolName,
+    version,
+    artifactDirName,
+    archiveFileName,
+    commands: sortedCommands,
+    requiredFiles: [...requiredFiles].sort(),
+  };
 }
 
 /**
@@ -294,13 +358,13 @@ export function matchesAnyGlob(relPath: string, patterns: ReadonlyArray<string>)
 
 export function resolveBuildArtifactPlan(options: BuildArtifactOptions): BuildArtifactPlan {
   const version = normalizeVersion(options.version);
-  const toolName = options.toolName ?? DEFAULT_TOOL_NAME;
+  const toolName = validateFilenameComponent(options.toolName ?? DEFAULT_TOOL_NAME, 'toolName');
   const repoRoot = resolve(options.cwd ?? process.cwd());
   const packagesDir = options.packagesDir ?? DEFAULT_PACKAGES_DIR;
   const distDir = options.distDir ?? DEFAULT_DIST_DIR;
   const packagesRoot = resolve(repoRoot, packagesDir);
   const distRoot = resolve(repoRoot, distDir);
-  const artifactDirName = `${toolName}-${version}`;
+  const artifactDirName = `${toolName}-${validateFilenameComponent(version, 'version')}`;
   const artifactRoot = join(distRoot, artifactDirName);
   const artifactPath = `${artifactRoot}.tar.gz`;
   const versionFiles = options.versionFiles ?? [DEFAULT_VERSION_FILE];
@@ -323,6 +387,10 @@ export function resolveBuildArtifactPlan(options: BuildArtifactOptions): BuildAr
   if (commands.length === 0) {
     throw new Error('No CLI package bin entries found under packages/.');
   }
+
+  assertPathWithinRoot(realpathSync(repoRoot), distRoot, 'dist directory');
+  assertPathWithinRoot(distRoot, artifactRoot, 'artifact directory');
+  assertPathWithinRoot(distRoot, artifactPath, 'artifact archive');
 
   return {
     repoRoot,
@@ -393,7 +461,14 @@ export function buildReleaseArtifact(options: BuildArtifactOptions): BuildArtifa
   }
 
   const requiredFiles = buildRequiredFiles(plan.commands, plan.versionFiles);
-  const manifest = createArtifactManifest(plan.version, plan.commands, requiredFiles);
+  const manifest = createArtifactManifest(
+    plan.toolName,
+    plan.version,
+    plan.artifactDirName,
+    basename(plan.artifactPath),
+    plan.commands,
+    requiredFiles,
+  );
 
   writeFileSync(join(plan.artifactRoot, 'artifact-manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`);
 
@@ -458,6 +533,8 @@ export function verifyReleaseArtifact(options: VerifyArtifactOptions): void {
     throw new Error(`Missing release artifact: ${artifactPath}`);
   }
 
+  const validatedArchive = validateReleaseArchive(artifactPath);
+
   const extractRoot = mkdtempSync(join(tmpdir(), 'repo-toolkit-artifact-'));
   const helpFlag = options.helpFlag ?? DEFAULT_HELP_FLAG;
   const skipExec = options.skipExec ?? false;
@@ -465,7 +542,7 @@ export function verifyReleaseArtifact(options: VerifyArtifactOptions): void {
   try {
     execFileSync('tar', ['-xzf', artifactPath, '-C', extractRoot], { stdio: 'inherit' });
 
-    const installRoot = resolveInstallRoot(extractRoot, options);
+    const installRoot = resolveInstallRoot(extractRoot, validatedArchive.topLevelDirName, options);
     const manifestPath = join(installRoot, 'artifact-manifest.json');
 
     verifySymlinks(installRoot);
@@ -474,24 +551,22 @@ export function verifyReleaseArtifact(options: VerifyArtifactOptions): void {
       throw new Error('Release artifact is missing artifact-manifest.json.');
     }
 
-    const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as ArtifactManifest;
-
-    if (!Array.isArray(manifest.requiredFiles)) {
-      throw new Error('artifact-manifest.json must contain requiredFiles.');
-    }
-
-    if (!Array.isArray(manifest.commands) || manifest.commands.length === 0) {
-      throw new Error('artifact-manifest.json must contain at least one command.');
-    }
+    const manifest = parseArtifactManifest(readFileSync(manifestPath, 'utf8'), {
+      archiveFileName: validatedArchive.archiveFileName,
+      artifactDirName: validatedArchive.topLevelDirName,
+      expectedVersion: options.version ? normalizeVersion(options.version) : undefined,
+      expectedToolName: options.toolName ?? (options.artifactPath ? undefined : DEFAULT_TOOL_NAME),
+    });
 
     for (const relativePath of manifest.requiredFiles) {
-      if (!existsSync(join(installRoot, relativePath))) {
+      const absolutePath = resolveContainedPath(installRoot, relativePath, 'required file');
+      if (!existsSync(absolutePath)) {
         throw new Error(`Release artifact is missing ${relativePath}.`);
       }
     }
 
     for (const command of manifest.commands) {
-      const wrapperPath = join(installRoot, 'bin', command.name);
+      const wrapperPath = resolveContainedPath(installRoot, `bin/${command.name}`, 'command wrapper');
       accessSync(wrapperPath, constants.X_OK);
       execFileSync('bash', ['-n', wrapperPath], { stdio: 'inherit' });
       if (!skipExec) {
@@ -517,26 +592,339 @@ function shellSingleQuote(value: string): string {
   return `'${value.replace(/'/g, `'\\''`)}'`;
 }
 
-function resolveInstallRoot(extractRoot: string, options: VerifyArtifactOptions): string {
-  const directories = readdirSync(extractRoot, { withFileTypes: true }).filter((entry) => entry.isDirectory());
+function resolveInstallRoot(extractRoot: string, expectedDirName: string, options: VerifyArtifactOptions): string {
+  const entries = readdirSync(extractRoot, { withFileTypes: true });
+  const directories = entries.filter((entry) => entry.isDirectory());
 
   if (directories.length !== 1) {
     throw new Error(`Release artifact must extract to a single top-level directory (found ${directories.length}).`);
   }
 
+  if (entries.some((entry) => !entry.isDirectory())) {
+    throw new Error('Release artifact must not extract top-level files.');
+  }
+
   const installDirName = directories[0].name;
 
-  if (options.version) {
-    const expectedDirName = `${options.toolName ?? DEFAULT_TOOL_NAME}-${normalizeVersion(options.version)}`;
+  if (installDirName !== expectedDirName) {
+    throw new Error(
+      `Release artifact extracted to unexpected directory: ${installDirName} (expected ${expectedDirName})`,
+    );
+  }
 
-    if (installDirName !== expectedDirName) {
+  if (options.version) {
+    const versionDirName = `${options.toolName ?? DEFAULT_TOOL_NAME}-${normalizeVersion(options.version)}`;
+
+    if (installDirName !== versionDirName) {
       throw new Error(
-        `Release artifact extracted to unexpected directory: ${installDirName} (expected ${expectedDirName})`,
+        `Release artifact extracted to unexpected directory: ${installDirName} (expected ${versionDirName})`,
       );
     }
   }
 
   return join(extractRoot, installDirName);
+}
+
+function validateFilenameComponent(value: string, label: string): string {
+  if (!SAFE_FILENAME_COMPONENT_RE.test(value) || value === '.' || value === '..') {
+    throw new Error(`Invalid ${label}: ${value}`);
+  }
+
+  return value;
+}
+
+function normalizeRelativePosixPath(value: string, label: string): string {
+  if (typeof value !== 'string' || value.length === 0) {
+    throw new Error(`${label} must be a non-empty string`);
+  }
+
+  if (
+    value.includes('\\') ||
+    value.includes('\0') ||
+    value.includes('\n') ||
+    value.includes('\r') ||
+    /^[A-Za-z]:/u.test(value) ||
+    value.startsWith('/')
+  ) {
+    throw new Error(`${label} must be a normalized relative POSIX path: ${value}`);
+  }
+
+  const normalized = pathPosix.normalize(value).replace(/^\.\//u, '');
+
+  if (normalized.length === 0 || normalized === '.' || normalized.split('/').includes('..')) {
+    throw new Error(`${label} must be a normalized relative POSIX path: ${value}`);
+  }
+
+  return normalized;
+}
+
+function assertPathWithinRoot(rootPath: string, targetPath: string, label: string): void {
+  const relativePath = relative(rootPath, targetPath);
+
+  if (relativePath === '' || (!relativePath.startsWith('..') && !isAbsolute(relativePath))) {
+    return;
+  }
+
+  throw new Error(`${label} escapes its allowed root: ${targetPath}`);
+}
+
+function resolveContainedPath(rootPath: string, relativePath: string, label: string): string {
+  const normalizedPath = normalizeRelativePosixPath(relativePath, label);
+  const absolutePath = resolve(rootPath, normalizedPath);
+  assertPathWithinRoot(rootPath, absolutePath, label);
+  return absolutePath;
+}
+
+function parseArtifactManifest(contents: string, options: ParseArtifactManifestOptions = {}): ArtifactManifest {
+  const parsed = JSON.parse(contents) as unknown;
+
+  if (!isPlainObject(parsed)) {
+    throw new Error('artifact-manifest.json must be an object.');
+  }
+
+  if (parsed.schemaVersion !== ARTIFACT_MANIFEST_SCHEMA_VERSION) {
+    throw new Error(`artifact-manifest.json schemaVersion must be ${ARTIFACT_MANIFEST_SCHEMA_VERSION}.`);
+  }
+
+  if (typeof parsed.toolName !== 'string' || !SAFE_FILENAME_COMPONENT_RE.test(parsed.toolName)) {
+    throw new Error('artifact-manifest.json must contain a valid toolName.');
+  }
+
+  if (typeof parsed.version !== 'string' || parsed.version.length === 0) {
+    throw new Error('artifact-manifest.json must contain version.');
+  }
+
+  if (typeof parsed.artifactDirName !== 'string' || parsed.artifactDirName.length === 0) {
+    throw new Error('artifact-manifest.json must contain artifactDirName.');
+  }
+
+  if (typeof parsed.archiveFileName !== 'string' || parsed.archiveFileName.length === 0) {
+    throw new Error('artifact-manifest.json must contain archiveFileName.');
+  }
+
+  if (!Array.isArray(parsed.commands) || parsed.commands.length === 0) {
+    throw new Error('artifact-manifest.json must contain at least one command.');
+  }
+
+  if (!Array.isArray(parsed.requiredFiles)) {
+    throw new Error('artifact-manifest.json must contain requiredFiles.');
+  }
+
+  const commands = parsed.commands.map((command) => validateArtifactCommand(command));
+  const requiredFiles = validateUniquePathList(parsed.requiredFiles, 'requiredFiles');
+  const commandNames = new Set<string>();
+
+  for (const command of commands) {
+    if (commandNames.has(command.name)) {
+      throw new Error(`artifact-manifest.json contains duplicate command: ${command.name}`);
+    }
+    commandNames.add(command.name);
+  }
+
+  if (options.expectedToolName && parsed.toolName !== options.expectedToolName) {
+    throw new Error(
+      `artifact-manifest.json toolName mismatch: ${parsed.toolName} (expected ${options.expectedToolName})`,
+    );
+  }
+
+  if (options.expectedVersion && parsed.version !== options.expectedVersion) {
+    throw new Error(`artifact-manifest.json version mismatch: ${parsed.version} (expected ${options.expectedVersion})`);
+  }
+
+  if (options.artifactDirName && parsed.artifactDirName !== options.artifactDirName) {
+    throw new Error(
+      `artifact-manifest.json artifactDirName mismatch: ${parsed.artifactDirName} (expected ${options.artifactDirName})`,
+    );
+  }
+
+  if (options.archiveFileName && parsed.archiveFileName !== options.archiveFileName) {
+    throw new Error(
+      `artifact-manifest.json archiveFileName mismatch: ${parsed.archiveFileName} (expected ${options.archiveFileName})`,
+    );
+  }
+
+  return {
+    schemaVersion: parsed.schemaVersion,
+    toolName: parsed.toolName,
+    version: parsed.version,
+    artifactDirName: parsed.artifactDirName,
+    archiveFileName: parsed.archiveFileName,
+    commands,
+    requiredFiles,
+  };
+}
+
+function validateArtifactCommand(value: unknown): ArtifactCommand {
+  if (!isPlainObject(value)) {
+    throw new Error('artifact-manifest.json commands must contain objects.');
+  }
+
+  const name = value.name;
+  if (typeof name !== 'string' || !SAFE_COMMAND_NAME_RE.test(name)) {
+    throw new Error('artifact-manifest.json commands must contain safe command names.');
+  }
+
+  if (typeof value.packageDir !== 'string') {
+    throw new Error(`artifact-manifest.json command packageDir must be a string for ${name}`);
+  }
+
+  if (typeof value.entry !== 'string') {
+    throw new Error(`artifact-manifest.json command entry must be a string for ${name}`);
+  }
+
+  const packageDir = normalizeRelativePosixPath(value.packageDir, `command packageDir for ${name}`);
+  const entry = normalizeRelativePosixPath(value.entry, `command entry for ${name}`);
+
+  return { name, packageDir, entry };
+}
+
+function validateUniquePathList(values: unknown[], label: string): string[] {
+  const seen = new Set<string>();
+  const normalizedValues: string[] = [];
+
+  for (const value of values) {
+    if (typeof value !== 'string') {
+      throw new Error(`artifact-manifest.json ${label} entries must be strings.`);
+    }
+
+    const normalized = normalizeRelativePosixPath(value, label);
+    if (seen.has(normalized)) {
+      throw new Error(`artifact-manifest.json contains duplicate ${label} entry: ${normalized}`);
+    }
+    seen.add(normalized);
+    normalizedValues.push(normalized);
+  }
+
+  return normalizedValues;
+}
+
+function validateReleaseArchive(artifactPath: string): ValidatedArchive {
+  const archiveFileName = basename(artifactPath);
+  const entries = listArchiveEntries(artifactPath);
+
+  if (entries.length === 0) {
+    throw new Error(`Release artifact is empty: ${artifactPath}`);
+  }
+
+  if (entries.length > MAX_ARCHIVE_MEMBER_COUNT) {
+    throw new Error(`Release artifact exceeds the member limit: ${entries.length}`);
+  }
+
+  let expandedBytes = 0;
+  const seenPaths = new Set<string>();
+  const topLevelNames = new Set<string>();
+
+  for (const entry of entries) {
+    if (entry.path.length > MAX_ARCHIVE_PATH_LENGTH) {
+      throw new Error(`Release artifact member path is too long: ${entry.path}`);
+    }
+
+    expandedBytes += entry.size;
+    if (expandedBytes > MAX_ARCHIVE_EXPANDED_BYTES) {
+      throw new Error(`Release artifact exceeds the expanded size limit: ${artifactPath}`);
+    }
+
+    const normalizedPath = normalizeRelativePosixPath(entry.path, 'archive member');
+    if (seenPaths.has(normalizedPath)) {
+      throw new Error(`Release artifact contains duplicate member paths: ${normalizedPath}`);
+    }
+    seenPaths.add(normalizedPath);
+
+    const topLevelName = normalizedPath.split('/')[0] ?? normalizedPath;
+    topLevelNames.add(topLevelName);
+    if (topLevelNames.size > 1) {
+      throw new Error('Release artifact must contain exactly one top-level directory.');
+    }
+
+    if (!isSupportedArchiveType(entry.type)) {
+      throw new Error(`Release artifact contains unsupported archive member type for ${normalizedPath}`);
+    }
+
+    if (!normalizedPath.includes('/') && entry.type !== 'd') {
+      throw new Error(`Release artifact contains a top-level file: ${normalizedPath}`);
+    }
+
+    if (entry.type === 'l' || entry.type === 'h') {
+      const target = entry.linkTarget;
+      if (!target) {
+        throw new Error(`Release artifact contains a link without a target: ${normalizedPath}`);
+      }
+
+      if (target.startsWith('/') || target.includes('\\') || /^[A-Za-z]:/u.test(target)) {
+        throw new Error(`Release artifact contains an escaping link: ${normalizedPath} -> ${target}`);
+      }
+
+      const resolvedTarget = pathPosix.normalize(pathPosix.join(pathPosix.dirname(normalizedPath), target));
+      if (
+        resolvedTarget === '.' ||
+        (resolvedTarget !== topLevelName && !resolvedTarget.startsWith(`${topLevelName}/`))
+      ) {
+        throw new Error(`Release artifact contains an escaping link: ${normalizedPath} -> ${target}`);
+      }
+    }
+  }
+
+  const [topLevelDirName] = [...topLevelNames];
+  if (!topLevelDirName) {
+    throw new Error(`Release artifact is missing a top-level directory: ${artifactPath}`);
+  }
+
+  return {
+    artifactPath,
+    archiveFileName,
+    topLevelDirName,
+  };
+}
+
+function listArchiveEntries(artifactPath: string): ParsedArchiveEntry[] {
+  const output = execFileSync('tar', ['-tvzf', artifactPath, '--full-time', '--numeric-owner'], {
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+
+  return output
+    .split('\n')
+    .map((line) => line.trimEnd())
+    .filter(Boolean)
+    .map((line) => parseArchiveEntry(line));
+}
+
+function parseArchiveEntry(line: string): ParsedArchiveEntry {
+  const match = /^([A-Za-z-])\S*\s+\d+\/\d+\s+(\d+)\s+\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}(?:\.\d+)?\s+(.*)$/u.exec(
+    line,
+  );
+
+  if (!match) {
+    throw new Error(`Unable to parse tar listing entry: ${line}`);
+  }
+
+  const [, type, size, rest] = match;
+
+  if (type === 'l') {
+    const linkMatch = /^(.*) -> (.*)$/u.exec(rest);
+    if (!linkMatch) {
+      throw new Error(`Unable to parse symlink tar entry: ${line}`);
+    }
+    return { type, size: Number(size), path: stripTrailingSlash(linkMatch[1]), linkTarget: linkMatch[2] };
+  }
+
+  if (type === 'h') {
+    const linkMatch = /^(.*) link to (.*)$/u.exec(rest);
+    if (!linkMatch) {
+      throw new Error(`Unable to parse hardlink tar entry: ${line}`);
+    }
+    return { type, size: Number(size), path: stripTrailingSlash(linkMatch[1]), linkTarget: linkMatch[2] };
+  }
+
+  return { type, size: Number(size), path: stripTrailingSlash(rest) };
+}
+
+function stripTrailingSlash(value: string): string {
+  return value.endsWith('/') ? value.slice(0, -1) : value;
+}
+
+function isSupportedArchiveType(type: string): boolean {
+  return type === '-' || type === 'd' || type === 'l' || type === 'h' || type === 'x' || type === 'g';
 }
 
 function readJson(filePath: string): PackageJson {

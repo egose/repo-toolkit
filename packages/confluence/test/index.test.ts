@@ -1,17 +1,17 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { resolveConfluenceSyncPlan, syncConfluenceToDocs, type ConfluenceSyncOptions, type Page } from '../src/index';
 
-function pageFixture(id: string, title: string, versionNumber = 1, bodyValue = ''): Page {
+function pageFixture(id: string, title: string, versionNumber = 1, bodyValue = '', parentId = 'PARENT'): Page {
   return {
     id,
     status: 'current',
     title,
     spaceId: 'SPACE',
-    parentId: 'PARENT',
+    parentId,
     body: bodyValue ? { storage: { value: bodyValue, representation: 'storage' } } : undefined,
     version: { number: versionNumber },
     _links: { webui: `/pages/${id}` },
@@ -25,7 +25,7 @@ interface RecordedCall {
 
 function buildFakeClient(opts: {
   spaceId?: string;
-  existingPages?: Record<string, Page>;
+  existingPages?: Page[];
   initialAttachmentIds?: Record<string, string>;
 }) {
   const spaceId = opts.spaceId ?? 'SPACE';
@@ -39,10 +39,9 @@ function buildFakeClient(opts: {
       calls.push({ method: 'getSpaceIdByKey', args: [key] });
       return spaceId;
     },
-    async getPageByTitle(_spaceId: string, title: string): Promise<Page | undefined> {
-      calls.push({ method: 'getPageByTitle', args: [_spaceId, title] });
-      const existing = opts.existingPages?.[title];
-      return existing ? { ...existing } : undefined;
+    async getPagesByTitle(_spaceId: string, title: string): Promise<Page[]> {
+      calls.push({ method: 'getPagesByTitle', args: [_spaceId, title] });
+      return (opts.existingPages ?? []).filter((page) => page.title === title).map((page) => ({ ...page }));
     },
     async getPage(pageId: string): Promise<Page> {
       calls.push({ method: 'getPage', args: [pageId] });
@@ -50,7 +49,7 @@ function buildFakeClient(opts: {
       if (internal) {
         return { ...internal };
       }
-      for (const p of Object.values(opts.existingPages ?? {})) {
+      for (const p of opts.existingPages ?? []) {
         if (p.id === pageId) {
           return { ...p };
         }
@@ -209,7 +208,7 @@ describe('syncConfluenceToDocs', () => {
     });
     const methods = calls.map((c) => c.method);
     expect(methods).toContain('getSpaceIdByKey');
-    expect(methods).toContain('getPageByTitle');
+    expect(methods).toContain('getPagesByTitle');
     expect(methods).toContain('createPage');
     expect(methods).toContain('updatePage');
     const createTitles = calls
@@ -271,9 +270,7 @@ describe('syncConfluenceToDocs', () => {
     const logSpy = vi.fn();
     const { client, calls } = buildFakeClient({
       spaceId: 'SPACE',
-      existingPages: {
-        intro: pageFixture('P1', 'intro', 3, body),
-      },
+      existingPages: [pageFixture('P1', 'intro', 3, body, '123')],
     });
     await syncConfluenceToDocs({
       folder: tmp,
@@ -305,9 +302,104 @@ describe('syncConfluenceToDocs', () => {
       client: client as unknown as Parameters<typeof syncConfluenceToDocs>[0]['client'],
       log: () => {},
     });
-    const pageByTitle = calls.filter((c) => c.method === 'getPageByTitle');
+    const pageByTitle = calls.filter((c) => c.method === 'getPagesByTitle');
     const titlesPerLookup = pageByTitle.map((c) => c.args[1] as string);
     expect(titlesPerLookup.filter((t) => t === 'x')).toHaveLength(2);
+  });
+
+  it('selects the page that matches the requested parent when the same title exists elsewhere', async () => {
+    await mkdir(join(tmp, 'guide'), { recursive: true });
+    await writeFile(join(tmp, 'guide', 'intro.md'), '# Intro');
+    const { client, calls } = buildFakeClient({
+      spaceId: 'SPACE',
+      existingPages: [pageFixture('P-other', 'intro', 1, '', '999'), pageFixture('P-guide', 'guide', 1, '', '123')],
+    });
+
+    await syncConfluenceToDocs({
+      folder: tmp,
+      username: 'u',
+      apiToken: 't',
+      baseUrl: 'https://x/wiki',
+      spaceKey: 'ENG',
+      parentPageId: '123',
+      client: client as unknown as Parameters<typeof syncConfluenceToDocs>[0]['client'],
+      log: () => {},
+    });
+
+    const createCalls = calls.filter((call) => call.method === 'createPage');
+    expect(createCalls).toHaveLength(1);
+    expect((createCalls[0].args[0] as { title: string }).title).toBe('intro');
+  });
+
+  it('rejects ambiguous same-parent page title matches before mutating pages', async () => {
+    await writeFile(join(tmp, 'intro.md'), '# Intro');
+    const { client, calls } = buildFakeClient({
+      spaceId: 'SPACE',
+      existingPages: [pageFixture('P1', 'intro', 1, '', '123'), pageFixture('P2', 'intro', 1, '', '123')],
+    });
+
+    await expect(
+      syncConfluenceToDocs({
+        folder: tmp,
+        username: 'u',
+        apiToken: 't',
+        baseUrl: 'https://x/wiki',
+        spaceKey: 'ENG',
+        parentPageId: '123',
+        client: client as unknown as Parameters<typeof syncConfluenceToDocs>[0]['client'],
+        log: () => {},
+      }),
+    ).rejects.toThrowError(/Multiple Confluence pages matched title intro/);
+    expect(calls.some((call) => call.method === 'updatePage')).toBe(false);
+  });
+
+  it('rejects local file and folder title collisions before making API calls', async () => {
+    await mkdir(join(tmp, 'foo'), { recursive: true });
+    await writeFile(join(tmp, 'foo.md'), '# Foo');
+    await writeFile(join(tmp, 'foo', 'bar.md'), '# Bar');
+    const { client, calls } = buildFakeClient({ spaceId: 'SPACE' });
+
+    await expect(
+      syncConfluenceToDocs({
+        folder: tmp,
+        username: 'u',
+        apiToken: 't',
+        baseUrl: 'https://x/wiki',
+        spaceKey: 'ENG',
+        parentPageId: '123',
+        client: client as unknown as Parameters<typeof syncConfluenceToDocs>[0]['client'],
+        log: () => {},
+      }),
+    ).rejects.toThrowError(/conflicting page titles/);
+    expect(calls).toHaveLength(0);
+  });
+
+  it('rejects attachment sources that escape the documentation root', async () => {
+    const outsideDir = await mkdtemp(join(tmpdir(), 'rt-sync-outside-'));
+
+    try {
+      await mkdir(join(tmp, 'img'), { recursive: true });
+      await writeFile(join(outsideDir, 'secret.png'), Buffer.from([1]));
+      await symlink(join(outsideDir, 'secret.png'), join(tmp, 'img', 'secret.png'));
+      await writeFile(join(tmp, 'page.md'), '![logo](./img/secret.png)');
+      const { client, calls } = buildFakeClient({ spaceId: 'SPACE' });
+
+      await expect(
+        syncConfluenceToDocs({
+          folder: tmp,
+          username: 'u',
+          apiToken: 't',
+          baseUrl: 'https://x/wiki',
+          spaceKey: 'ENG',
+          parentPageId: '123',
+          client: client as unknown as Parameters<typeof syncConfluenceToDocs>[0]['client'],
+          log: () => {},
+        }),
+      ).rejects.toThrowError(/escapes the documentation root/);
+      expect(calls.some((call) => call.method === 'updatePage')).toBe(false);
+    } finally {
+      await rm(outsideDir, { recursive: true, force: true });
+    }
   });
 
   it('renders ```html fenced blocks as the html macro when renderHtmlBlocks is on', async () => {

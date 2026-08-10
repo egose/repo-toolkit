@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process';
-import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { isAbsolute, resolve, relative as pathRelative, basename as pathBasename } from 'node:path';
+import { copyFileSync, existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
+import { dirname, isAbsolute, resolve, relative as pathRelative, basename as pathBasename } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { readFile } from 'node:fs/promises';
 import { text as clackText, isCancel as clackIsCancel } from '@clack/prompts';
@@ -156,26 +156,36 @@ export function parseFlags(
   specs: ReadonlyArray<FlagSpec>,
   options: ParseFlagsOptions = {},
 ): ParseFlagsResult | null {
-  const byKey: Record<string, FlagSpec> = {};
+  const byKey = new Map<string, FlagSpec>();
 
   for (const spec of specs) {
-    byKey[spec.name] = spec;
+    registerFlagSpec(byKey, spec.name, spec);
 
     for (const alias of spec.aliases ?? []) {
-      byKey[alias] = spec;
+      registerFlagSpec(byKey, alias, spec);
     }
   }
 
   const strict = options.strict ?? true;
-  const values: Record<string, string> = {};
-  const repeat: Record<string, string[]> = {};
+  const values: Record<string, string> = Object.create(null) as Record<string, string>;
+  const repeat: Record<string, string[]> = Object.create(null) as Record<string, string[]>;
   const unknown: string[] = [];
 
   for (let index = 0; index < argv.length; index += 1) {
     let arg = argv[index];
 
     if (arg === '--') {
-      continue;
+      const remaining = argv.slice(index + 1);
+      if (remaining.length === 0) {
+        break;
+      }
+
+      if (strict) {
+        throw new Error(`Unknown argument: ${remaining[0]}`);
+      }
+
+      unknown.push(...remaining);
+      break;
     }
 
     if (arg === '-h' || arg === '--help') {
@@ -186,7 +196,7 @@ export function parseFlags(
       const shortBody = arg.slice(1);
       const eqIdx = shortBody.indexOf('=');
       const shortKey = eqIdx >= 0 ? shortBody.slice(0, eqIdx) : shortBody;
-      const shortSpec = byKey[shortKey];
+      const shortSpec = byKey.get(shortKey);
 
       if (shortSpec) {
         arg = eqIdx >= 0 ? `--${shortSpec.name}=${shortBody.slice(eqIdx + 1)}` : `--${shortSpec.name}`;
@@ -209,7 +219,7 @@ export function parseFlags(
     // Negation for negatable boolean flags (`--no-<name>`).
     if (key.startsWith('no-')) {
       const positiveKey = key.slice(3);
-      const spec = byKey[positiveKey];
+      const spec = byKey.get(positiveKey);
 
       if (spec && spec.boolean && spec.negatable) {
         if (inlineValue !== undefined) {
@@ -220,7 +230,7 @@ export function parseFlags(
       }
     }
 
-    const spec = byKey[key];
+    const spec = byKey.get(key);
 
     if (!spec) {
       if (strict) {
@@ -255,6 +265,15 @@ export function parseFlags(
   }
 
   return { values, repeat, unknown };
+}
+
+function registerFlagSpec(byKey: Map<string, FlagSpec>, key: string, spec: FlagSpec): void {
+  const existing = byKey.get(key);
+  if (existing) {
+    throw new Error(`Duplicate flag registration for ${key}: --${existing.name} and --${spec.name}`);
+  }
+
+  byKey.set(key, spec);
 }
 
 export function readValue(argv: string[], index: number, flag: string): string {
@@ -389,12 +408,28 @@ export function inferNpmTag(version: string): string | undefined {
     return undefined;
   }
 
-  const prereleasePart = version.split('-')[1];
+  let core = version;
+  if (core.startsWith('v')) {
+    core = core.slice(1);
+  }
+
+  const buildIdx = core.indexOf('+');
+  if (buildIdx >= 0) {
+    core = core.slice(0, buildIdx);
+  }
+
+  const hyphenIdx = core.indexOf('-');
+  if (hyphenIdx < 0) {
+    return undefined;
+  }
+
+  const prereleasePart = core.slice(hyphenIdx + 1);
   if (!prereleasePart) {
     return undefined;
   }
 
-  const [preid] = prereleasePart.split('.');
+  const dotIdx = prereleasePart.indexOf('.');
+  const preid = dotIdx >= 0 ? prereleasePart.slice(0, dotIdx) : prereleasePart;
   return preid || undefined;
 }
 
@@ -447,12 +482,19 @@ export function createPublishPackageJson(
     }
 
     if (key === 'exports') {
-      publishPackageJson.exports = rewriteExports(value, publishDir);
+      publishPackageJson.exports = rewriteExports(value, publishDir, 'exports');
+      continue;
+    }
+
+    if (key === 'imports') {
+      publishPackageJson.imports = rewriteImports(value, publishDir);
       continue;
     }
 
     publishPackageJson[key] = value;
   }
+
+  validatePublishManifestFields(publishPackageJson);
 
   // Inject a `files` field so npm doesn't accidentally include stray files
   // (e.g. .map files, temp artefacts) from the publish directory.
@@ -486,11 +528,17 @@ export function resolvePublishPackagePlan(options: PublishPackageOptions = {}): 
   const rootDir = resolveDirectory(options.rootDir, cwd);
   const packageJsonPath = resolveInputPath(cwd, options.packageJsonPath ?? PACKAGE_JSON);
   const sourcePackageJson = readJson(packageJsonPath);
+  validateSourceManifest(sourcePackageJson, packageJsonPath);
   const rootPackageJson = readJson(resolveInputPath(rootDir, PACKAGE_JSON));
+  validateRootManifest(rootPackageJson, rootDir);
   const versionPlaceholder = options.versionPlaceholder ?? DEFAULT_VERSION_PLACEHOLDER;
   const publishDir = normalizePublishDir(options.publishDir ?? DEFAULT_PUBLISH_DIR);
   const version = resolveVersion(options.version, sourcePackageJson.version, versionPlaceholder);
   const packageNames = resolvePackageNames(sourcePackageJson);
+
+  if (sourcePackageJson.private === true) {
+    throw new Error(`Refusing to publish private package from ${packageJsonPath}`);
+  }
 
   return {
     cwd,
@@ -529,6 +577,7 @@ export function resolvePublishPackagePlan(options: PublishPackageOptions = {}): 
 
 export function publishPackage(options: PublishPackageOptions = {}): void {
   const plan = resolvePublishPackagePlan(options);
+  const packageRoot = realpathSync(plan.cwd);
 
   console.log(`publishing package from ${plan.cwd}`);
   console.log(`package version ${plan.version}`);
@@ -536,14 +585,19 @@ export function publishPackage(options: PublishPackageOptions = {}): void {
     console.log(`npm dist-tag ${plan.npmTag}`);
   }
 
+  ensurePathWithinRoot(packageRoot, plan.resolvedPublishDir, 'publish directory');
+
   if (!plan.skipBuild) {
     runShellCommand(plan.buildCommand, plan.cwd);
+    ensurePathWithinRoot(packageRoot, plan.resolvedPublishDir, 'publish directory');
     if (!existsSync(plan.resolvedPublishDir)) {
       throw new Error(`Missing publish directory after build: ${plan.resolvedPublishDir}`);
     }
   }
 
+  ensurePathWithinRoot(packageRoot, plan.resolvedPublishDir, 'publish directory');
   mkdirSync(plan.resolvedPublishDir, { recursive: true });
+  detectCopyCollisions([...plan.packageFiles, ...plan.rootFiles]);
   copyFilesFromDirectory(plan.cwd, plan.resolvedPublishDir, plan.packageFiles);
   copyFilesFromDirectory(plan.rootDir, plan.resolvedPublishDir, plan.rootFiles);
 
@@ -566,6 +620,7 @@ export function publishPackage(options: PublishPackageOptions = {}): void {
   const targetPackageJson = resolve(plan.resolvedPublishDir, PACKAGE_JSON);
 
   for (const name of plan.packageNames) {
+    ensurePathWithinRoot(packageRoot, plan.resolvedPublishDir, 'publish directory');
     writeJson(targetPackageJson, {
       ...publishPackageData,
       name,
@@ -655,6 +710,119 @@ function resolvePackageNames(packageJson: PackageJson): string[] {
   return packageNames;
 }
 
+function validateSourceManifest(manifest: PackageJson, manifestPath: string): void {
+  if (!isPlainObject(manifest)) {
+    throw new Error(`Invalid manifest at ${manifestPath}: expected an object`);
+  }
+
+  const name = manifest.name;
+  if (typeof name !== 'string' || name.length === 0) {
+    throw new Error(`Invalid manifest at ${manifestPath}: name must be a non-empty string`);
+  }
+
+  for (const extra of Array.isArray(manifest.additionalNames) ? manifest.additionalNames : []) {
+    if (typeof extra !== 'string' || extra.length === 0) {
+      throw new Error(`Invalid manifest at ${manifestPath}: additionalNames must be non-empty strings`);
+    }
+  }
+
+  const version = manifest.version;
+  if (version !== undefined && typeof version !== 'string') {
+    throw new Error(`Invalid manifest at ${manifestPath}: version must be a string or undefined`);
+  }
+
+  for (const field of DEPENDENCY_FIELDS) {
+    const value = manifest[field];
+    if (value === undefined) {
+      continue;
+    }
+    if (!isPlainObject(value)) {
+      throw new Error(`Invalid manifest at ${manifestPath}: ${field} must be an object`);
+    }
+    for (const [depName, range] of Object.entries(value as Record<string, unknown>)) {
+      if (typeof range !== 'string') {
+        throw new Error(`Invalid manifest at ${manifestPath}: ${field}.${depName} must be a string range`);
+      }
+    }
+  }
+
+  if (manifest.bin !== undefined) {
+    if (typeof manifest.bin !== 'string' && !isPlainObject(manifest.bin)) {
+      throw new Error(`Invalid manifest at ${manifestPath}: bin must be a string or object`);
+    }
+  }
+
+  for (const field of ['main', 'module', 'types'] as const) {
+    const value = manifest[field];
+    if (value !== undefined && typeof value !== 'string') {
+      throw new Error(`Invalid manifest at ${manifestPath}: ${field} must be a string`);
+    }
+  }
+
+  if (manifest.exports !== undefined) {
+    const shape = validateExportsShape(manifest.exports, 'exports');
+    if (!shape.valid) {
+      throw new Error(`Invalid manifest at ${manifestPath}: ${shape.reason}`);
+    }
+  }
+
+  if (manifest.imports !== undefined) {
+    if (!isPlainObject(manifest.imports)) {
+      throw new Error(`Invalid manifest at ${manifestPath}: imports must be an object`);
+    }
+    for (const [key, value] of Object.entries(manifest.imports as Record<string, unknown>)) {
+      const shape = validateExportsShape(value, `imports.${key}`);
+      if (!shape.valid) {
+        throw new Error(`Invalid manifest at ${manifestPath}: ${shape.reason}`);
+      }
+    }
+  }
+}
+
+function validateRootManifest(manifest: PackageJson, rootDir: string): void {
+  if (!isPlainObject(manifest)) {
+    throw new Error(`Invalid root manifest at ${rootDir}: expected an object`);
+  }
+  if (manifest.engines !== undefined) {
+    if (!isPlainObject(manifest.engines)) {
+      throw new Error(`Invalid root manifest at ${rootDir}: engines must be an object`);
+    }
+    for (const [key, value] of Object.entries(manifest.engines as Record<string, unknown>)) {
+      if (typeof value !== 'string') {
+        throw new Error(`Invalid root manifest at ${rootDir}: engines.${key} must be a string`);
+      }
+    }
+  }
+}
+
+function validateExportsShape(value: unknown, label: string): { valid: boolean; reason?: string } {
+  if (value === null) {
+    return { valid: false, reason: `${label} must not be null` };
+  }
+  if (typeof value === 'string') {
+    return { valid: true };
+  }
+  if (Array.isArray(value)) {
+    for (let i = 0; i < value.length; i += 1) {
+      const r = validateExportsShape(value[i], `${label}[${i}]`);
+      if (!r.valid) {
+        return r;
+      }
+    }
+    return { valid: true };
+  }
+  if (isPlainObject(value)) {
+    for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
+      const r = validateExportsShape(child, `${label}.${key}`);
+      if (!r.valid) {
+        return r;
+      }
+    }
+    return { valid: true };
+  }
+  return { valid: false, reason: `${label} must be a string, array, or object` };
+}
+
 function toStringSet(value: ReadonlyArray<string> | Set<string> | undefined): Set<string> {
   if (!value) {
     return new Set<string>();
@@ -690,14 +858,75 @@ function runShellCommand(command: string, cwd: string): void {
  * directory semantics where the publish dir is the root of the tarball.
  */
 function copyFilesFromDirectory(sourceDir: string, publishDir: string, fileNames: ReadonlyArray<string>): void {
+  const sourceRoot = realpathSync(sourceDir);
+
   for (const fileName of fileNames) {
+    assertSafeRelativeCopySource(fileName);
     const sourcePath = resolve(sourceDir, fileName);
     if (!existsSync(sourcePath)) {
       continue;
     }
 
-    copyFileSync(sourcePath, resolve(publishDir, pathBasename(fileName)));
+    const resolvedSourcePath = realpathSync(sourcePath);
+    assertPathWithinRoot(sourceRoot, resolvedSourcePath, `copy source ${fileName}`);
+
+    if (!lstatSync(resolvedSourcePath).isFile()) {
+      throw new Error(`Copy source must be a regular file: ${fileName}`);
+    }
+
+    copyFileSync(resolvedSourcePath, resolve(publishDir, pathBasename(fileName)));
   }
+}
+
+function assertSafeRelativeCopySource(fileName: string): void {
+  if (isAbsolute(fileName)) {
+    throw new Error(`Copy source must be relative: ${fileName}`);
+  }
+
+  const normalized = fileName.replace(/\\/g, '/');
+  if (normalized.split('/').includes('..')) {
+    throw new Error(`Copy source must not contain parent-directory segments: ${fileName}`);
+  }
+}
+
+function detectCopyCollisions(allFiles: ReadonlyArray<string>): void {
+  const seen = new Map<string, string>();
+
+  for (const fileName of allFiles) {
+    const dest = pathBasename(fileName);
+    const existingSource = seen.get(dest);
+    if (existingSource !== undefined) {
+      if (existingSource === fileName) {
+        throw new Error(`Duplicate copy entry: ${fileName} listed more than once`);
+      }
+      throw new Error(`Copy destination collision: ${existingSource} and ${fileName} both copy to ${dest}`);
+    }
+    seen.set(dest, fileName);
+  }
+}
+
+function ensurePathWithinRoot(rootPath: string, targetPath: string, label: string): void {
+  let candidatePath = resolve(targetPath);
+
+  while (!existsSync(candidatePath)) {
+    const parentPath = dirname(candidatePath);
+    if (parentPath === candidatePath) {
+      break;
+    }
+    candidatePath = parentPath;
+  }
+
+  assertPathWithinRoot(rootPath, realpathSync(candidatePath), label);
+}
+
+function assertPathWithinRoot(rootPath: string, targetPath: string, label: string): void {
+  const relativePath = pathRelative(rootPath, targetPath);
+
+  if (relativePath === '' || (!relativePath.startsWith('..') && !isAbsolute(relativePath))) {
+    return;
+  }
+
+  throw new Error(`${label} escapes the package root: ${targetPath}`);
 }
 
 function runNpmPublish(plan: PublishPackagePlan, packageName: string): void {
@@ -739,17 +968,44 @@ function rewriteDistPath(value: string, publishDir: string): string {
   return value.replace(new RegExp(`^\\.\\/${escaped}/`), './').replace(new RegExp(`^${escaped}/`), './');
 }
 
-function rewriteExports(exportsField: unknown, publishDir: string): unknown {
+function rewriteExports(exportsField: unknown, publishDir: string, label: string): unknown {
   if (typeof exportsField === 'string') {
     return rewriteDistPath(exportsField, publishDir);
   }
 
+  if (Array.isArray(exportsField)) {
+    return exportsField.map((entry, i) => {
+      if (typeof entry === 'string') {
+        return rewriteDistPath(entry, publishDir);
+      }
+      if (isPlainObject(entry) || Array.isArray(entry)) {
+        return rewriteExports(entry, publishDir, `${label}[${i}]`);
+      }
+      throw new Error(`Unsupported ${label}[${i}] type: ${typeof entry}`);
+    });
+  }
+
   if (!isPlainObject(exportsField)) {
-    return exportsField;
+    throw new Error(`Unsupported ${label} type: ${typeof exportsField}`);
   }
 
   return Object.fromEntries(
-    Object.entries(exportsField).map(([key, value]) => [key, rewriteExports(value, publishDir)]),
+    Object.entries(exportsField).map(([key, value]) => {
+      if (key === 'require' || key === 'import' || key === 'default' || key === 'types' || key === 'node') {
+        return [key, rewriteExports(value, publishDir, `${label}.${key}`)];
+      }
+      return [key, rewriteExports(value, publishDir, `${label}.${key}`)];
+    }),
+  );
+}
+
+function rewriteImports(importsField: unknown, publishDir: string): unknown {
+  if (!isPlainObject(importsField)) {
+    throw new Error(`Unsupported imports type: ${typeof importsField}`);
+  }
+
+  return Object.fromEntries(
+    Object.entries(importsField).map(([key, value]) => [key, rewriteExports(value, publishDir, `imports.${key}`)]),
   );
 }
 
@@ -759,12 +1015,55 @@ function rewriteBin(binField: unknown, publishDir: string): unknown {
   }
 
   if (!isPlainObject(binField)) {
-    return binField;
+    throw new Error(`Unsupported bin type: ${typeof binField}`);
   }
 
-  return Object.fromEntries(
-    Object.entries(binField).map(([key, value]) => [key, rewriteDistPath(value as string, publishDir)]),
-  );
+  const rewritten: Record<string, string> = {};
+  for (const [key, value] of Object.entries(binField)) {
+    if (typeof value !== 'string') {
+      throw new Error(`Unsupported bin.${key} type: ${typeof value}`);
+    }
+    rewritten[key] = rewriteDistPath(value, publishDir);
+  }
+  return rewritten;
+}
+
+function validatePublishManifestFields(publishPackageJson: PackageJson): void {
+  for (const field of ['dependencies', 'peerDependencies', 'optionalDependencies'] as const) {
+    const value = publishPackageJson[field];
+    if (value === undefined) {
+      continue;
+    }
+    if (!isPlainObject(value)) {
+      throw new Error(`Invalid ${field}: expected an object`);
+    }
+    for (const [name, range] of Object.entries(value as Record<string, unknown>)) {
+      if (typeof range !== 'string') {
+        throw new Error(`Invalid ${field}.${name}: expected string range`);
+      }
+      if (range.startsWith('workspace:')) {
+        const spec = range.slice('workspace:'.length);
+        if (spec === '*' || spec === '^' || spec === '~' || spec === '') {
+          throw new Error(
+            `Unresolved workspace: range in ${field}.${name}: ${range}. Run publish-packages to resolve, or pass allowUnresolvedWorkspace to permit.`,
+          );
+        }
+      }
+    }
+  }
+
+  const main = publishPackageJson.main;
+  if (main !== undefined && typeof main !== 'string') {
+    throw new Error('Invalid main: expected a string');
+  }
+  const module = publishPackageJson.module;
+  if (module !== undefined && typeof module !== 'string') {
+    throw new Error('Invalid module: expected a string');
+  }
+  const types = publishPackageJson.types;
+  if (types !== undefined && typeof types !== 'string') {
+    throw new Error('Invalid types: expected a string');
+  }
 }
 
 function rewriteVersionValue(

@@ -1,9 +1,10 @@
 import { spawn, spawnSync } from 'node:child_process';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import type { ConfluenceClient, Attachment } from './confluence-client';
+import { ConfluenceUploadError } from './confluence-client';
 import {
   escapeAttachmentFilename,
   escapeXmlAttribute,
@@ -14,7 +15,6 @@ import {
 
 export interface MermaidRewriteResult {
   html: string;
-  /** Placeholders that could not be rendered (mmdc missing or render failure). Fallback source is in the original code macro. */
   fallbacks: string[];
   uploaded: ReadonlyArray<{ id: string; attachment: Attachment }>;
 }
@@ -26,7 +26,16 @@ export interface MermaidRewriteOptions {
   renderHook?: (source: string, outFile: string) => Promise<void>;
   /** Force-enable or force-disable rendering regardless of PATH detection. When true, skips the mmdc probe. */
   available?: boolean;
+  /** Timeout (ms) for the mmdc subprocess and stream accumulation. Default 30000. */
+  renderTimeoutMs?: number;
+  /** Maximum bytes accumulated from stdout/stderr before rejecting. Default 1 MiB. */
+  maxStreamBytes?: number;
 }
+
+export const DEFAULT_MERMAID_RENDER_TIMEOUT_MS = 30_000;
+export const DEFAULT_MERMAID_MAX_STREAM_BYTES = 1024 * 1024;
+const SVG_START_RE = /<svg[\s/>]/;
+const SVG_END_RE = /<\/svg>\s*$|\/>\s*$/;
 
 export async function rewriteMermaidBlocks(
   html: string,
@@ -74,24 +83,48 @@ export async function rewriteMermaidBlocks(
       const inPath = join(workDir, 'diagram.mmd');
       const outPath = join(workDir, 'diagram.svg');
       await writeFile(inPath, block.source, 'utf8');
-      await renderHook(block.source, outPath);
+      try {
+        await renderHook(block.source, outPath, options.mmdcPath, options.renderTimeoutMs, options.maxStreamBytes);
+      } catch {
+        fallbacks.push(block.id);
+        continue;
+      }
+
+      let svg: string;
+      try {
+        svg = await readFile(outPath, 'utf8');
+      } catch {
+        fallbacks.push(block.id);
+        continue;
+      }
+      const trimmed = svg.trim();
+      if (trimmed.length === 0 || !SVG_START_RE.test(trimmed) || !SVG_END_RE.test(trimmed)) {
+        fallbacks.push(block.id);
+        continue;
+      }
 
       const filename = escapeAttachmentFilename(`${block.id}.svg`);
-      let attachment = existingByName.get(filename);
-      if (attachment && attachment.id) {
-        attachment = await client.updateAttachmentData(
-          pageId,
-          attachment.id,
-          outPath,
-          `Updated via repo-toolkit-confluence`,
-        );
-      } else {
-        attachment = await client.uploadAttachment(pageId, outPath, `Uploaded via repo-toolkit-confluence`);
+      let attachment: Attachment | undefined;
+      try {
+        const existing = existingByName.get(filename);
+        if (existing && existing.id) {
+          attachment = await client.updateAttachmentData(
+            pageId,
+            existing.id,
+            outPath,
+            'Updated via repo-toolkit-confluence',
+          );
+        } else {
+          attachment = await client.uploadAttachment(pageId, outPath, 'Uploaded via repo-toolkit-confluence');
+        }
+        uploaded.push({ id: block.id, attachment });
+        placeholderToAttachment.set(block.id, filename);
+      } catch (cause: unknown) {
+        if (cause instanceof ConfluenceUploadError) {
+          throw cause;
+        }
+        throw cause;
       }
-      uploaded.push({ id: block.id, attachment });
-      placeholderToAttachment.set(block.id, filename);
-    } catch {
-      fallbacks.push(block.id);
     } finally {
       await rm(workDir, { recursive: true, force: true }).catch(() => {});
     }
@@ -129,23 +162,87 @@ export async function isMmdcAvailable(override?: string): Promise<boolean> {
   return spawnSync('sh', ['-c', 'command -v mmdc'], { stdio: 'ignore' }).status === 0;
 }
 
-async function defaultRenderHook(source: string, outFile: string): Promise<void> {
+async function defaultRenderHook(
+  source: string,
+  outFile: string,
+  mmdcPath?: string,
+  timeoutMs?: number,
+  maxStreamBytes?: number,
+): Promise<void> {
+  const timeout = timeoutMs ?? DEFAULT_MERMAID_RENDER_TIMEOUT_MS;
+  const maxBytes = maxStreamBytes ?? DEFAULT_MERMAID_MAX_STREAM_BYTES;
+  const cmdPath = mmdcPath ?? 'mmdc';
+  return runMmdc(cmdPath, source, outFile, timeout, maxBytes);
+}
+
+function runMmdc(
+  cmdPath: string,
+  source: string,
+  outFile: string,
+  timeoutMs: number,
+  maxStreamBytes: number,
+): Promise<void> {
   return new Promise<void>((resolve, reject) => {
-    const child = spawn('mmdc', ['-i', '-', '-o', outFile, '-t', 'default', '-b', 'transparent'], {
+    const child = spawn(cmdPath, ['-i', '-', '-o', outFile, '-t', 'default', '-b', 'transparent'], {
       stdio: ['pipe', 'pipe', 'pipe'],
+      shell: false,
     });
+    let stdoutLen = 0;
+    let stderrLen = 0;
     let stderr = '';
-    child.stderr?.on('data', (chunk: Buffer) => {
-      stderr += chunk.toString();
+    let killed = false;
+    const timer = setTimeout(() => {
+      killed = true;
+      child.kill('SIGTERM');
+      const sigKillTimer = setTimeout(() => {
+        try {
+          child.kill('SIGKILL');
+        } catch {
+          void undefined;
+        }
+      }, 2000);
+      if (typeof (sigKillTimer as unknown as { unref?: () => void }).unref === 'function') {
+        (sigKillTimer as unknown as { unref: () => void }).unref();
+      }
+    }, timeoutMs);
+    if (typeof (timer as unknown as { unref?: () => void }).unref === 'function') {
+      (timer as unknown as { unref: () => void }).unref();
+    }
+
+    child.stdout?.on('data', (chunk: Buffer) => {
+      stdoutLen += chunk.length;
+      if (stdoutLen > maxStreamBytes && !killed) {
+        killed = true;
+        child.kill('SIGKILL');
+      }
     });
-    child.on('error', (err) => reject(err));
-    child.on('close', (code) => {
+    child.stderr?.on('data', (chunk: Buffer) => {
+      stderrLen += chunk.length;
+      if (stderrLen > maxStreamBytes && !killed) {
+        killed = true;
+        child.kill('SIGKILL');
+      }
+      if (stderr.length < maxStreamBytes) {
+        stderr += chunk.toString('utf8').slice(0, Math.max(0, maxStreamBytes - stderr.length));
+      }
+    });
+    child.on('error', (err) => {
+      clearTimeout(timer);
+      reject(err);
+    });
+    child.on('close', (code, signal) => {
+      clearTimeout(timer);
+      if (killed && code !== 0) {
+        reject(new Error(`mmdc exceeded ${timeoutMs}ms or output limit (killed=${signal ?? code})`));
+        return;
+      }
       if (code === 0) {
         resolve();
       } else {
-        reject(new Error(`mmdc exited with code ${code}${stderr ? `: ${stderr}` : ''}`));
+        reject(new Error(`mmdc exited with code ${String(code)}${stderr ? `: ${stderr}` : ''}`));
       }
     });
+    child.stdin?.on('error', () => undefined);
     child.stdin?.end(source);
   });
 }

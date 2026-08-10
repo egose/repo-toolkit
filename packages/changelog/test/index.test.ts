@@ -1,5 +1,5 @@
 import { Readable } from 'node:stream';
-import { rm, readFile } from 'node:fs/promises';
+import { mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -12,8 +12,10 @@ const stubs = vi.hoisted(() => {
   // exported below.
   const optionsCalls: unknown[] = [];
   const loadPresetCalls: unknown[] = [];
+  const tagsCalls: unknown[] = [];
   const configCalls: unknown[] = [];
   const factoryCalls: unknown[] = [];
+  let writeStreamImpl: () => Readable = () => Readable.from(['# stub changelog\n']);
 
   // The preset factory stub. Tests reset `factoryCalls` in `beforeEach`.
   const factory = vi.fn(async (options: unknown) => {
@@ -42,11 +44,15 @@ const stubs = vi.hoisted(() => {
         optionsCalls.push(opts);
         return instance;
       },
+      tags: (opts: unknown) => {
+        tagsCalls.push(opts);
+        return instance;
+      },
       config: (cfg: unknown) => {
         configCalls.push(cfg);
         return instance;
       },
-      writeStream: () => Readable.from(['# stub changelog\n']),
+      writeStream: () => writeStreamImpl(),
     };
     return instance;
   });
@@ -57,7 +63,14 @@ const stubs = vi.hoisted(() => {
     factoryCalls,
     optionsCalls,
     loadPresetCalls,
+    tagsCalls,
     configCalls,
+    setWriteStreamImpl: (next: () => Readable) => {
+      writeStreamImpl = next;
+    },
+    resetWriteStreamImpl: () => {
+      writeStreamImpl = () => Readable.from(['# stub changelog\n']);
+    },
   };
 });
 
@@ -73,6 +86,7 @@ import {
   type ChangelogType,
   type CreatePresetOptions,
 } from '../src/index';
+import { resolveGenerateChangelogCliOptions } from '../src/cli';
 
 beforeEach(() => {
   stubs.factory.mockClear();
@@ -80,7 +94,9 @@ beforeEach(() => {
   stubs.factoryCalls.length = 0;
   stubs.optionsCalls.length = 0;
   stubs.loadPresetCalls.length = 0;
+  stubs.tagsCalls.length = 0;
   stubs.configCalls.length = 0;
+  stubs.resetWriteStreamImpl();
 });
 
 describe('DEFAULT_TYPES', () => {
@@ -148,6 +164,8 @@ describe('createPreset', () => {
       scope: 'api',
       scopeOnly: true,
       preMajor: true,
+      issueUrlFormat: '{{host}}/{{owner}}/{{repository}}/issues/{{id}}',
+      bumpStrict: true,
     };
 
     await createPreset(opts);
@@ -157,6 +175,8 @@ describe('createPreset', () => {
     expect(passed.scope).toBe('api');
     expect(passed.scopeOnly).toBe(true);
     expect(passed.preMajor).toBe(true);
+    expect(passed.issueUrlFormat).toBe('{{host}}/{{owner}}/{{repository}}/issues/{{id}}');
+    expect(passed.bumpStrict).toBe(true);
   });
 });
 
@@ -182,11 +202,12 @@ describe('createGenerator', () => {
     const opts = stubs.optionsCalls[0] as Record<string, unknown>;
     expect(opts).toEqual({
       append: false,
-      releaseCount: 0,
-      skipUnstable: true,
       outputUnreleased: true,
-      tagPrefix: 'v',
-      firstRelease: false,
+    });
+
+    expect(stubs.tagsCalls[0]).toEqual({
+      prefix: 'v',
+      skipUnstable: true,
     });
   });
 
@@ -203,12 +224,18 @@ describe('createGenerator', () => {
     const opts = stubs.optionsCalls[0] as Record<string, unknown>;
     expect(opts).toEqual({
       append: true,
-      releaseCount: 5,
-      skipUnstable: false,
+      releaseCount: 0,
       outputUnreleased: false,
-      tagPrefix: 'release-',
-      firstRelease: true,
     });
+
+    expect(stubs.tagsCalls[0]).toEqual({
+      prefix: 'release-',
+      skipUnstable: false,
+    });
+  });
+
+  it('rejects invalid release counts before generator setup', async () => {
+    await expect(createGenerator({ releaseCount: -1 })).rejects.toThrowError(/non-negative safe integer/);
   });
 
   it('strips pipeline-only options before forwarding preset options', async () => {
@@ -242,6 +269,10 @@ describe('createGenerator', () => {
 describe('generateChangelog', () => {
   const workDir = join(tmpdir(), `repo-toolkit-changelog-test-${process.pid}-${Date.now()}`);
 
+  beforeEach(async () => {
+    await mkdir(workDir, { recursive: true });
+  });
+
   afterEach(async () => {
     await rm(workDir, { recursive: true, force: true });
   });
@@ -259,6 +290,55 @@ describe('generateChangelog', () => {
     expect(existsSync(outputFile)).toBe(true);
     const contents = await readFile(outputFile, 'utf8');
     expect(contents).toContain('# stub changelog');
+  });
+
+  it('prepends generated content ahead of the existing file by default', async () => {
+    const outputFile = join(workDir, 'CHANGELOG.md');
+    await writeFile(outputFile, 'OLD\n\n');
+
+    await generateChangelog({ cwd: workDir, outputFile });
+
+    const contents = await readFile(outputFile, 'utf8');
+    expect(contents).toBe('# stub changelog\n\nOLD\n');
+  });
+
+  it('appends generated content after the existing file when append is true', async () => {
+    const outputFile = join(workDir, 'CHANGELOG.md');
+    await writeFile(outputFile, 'OLD\n\n');
+
+    await generateChangelog({ cwd: workDir, outputFile, append: true });
+
+    const contents = await readFile(outputFile, 'utf8');
+    expect(contents).toBe('OLD\n\n# stub changelog\n');
+  });
+
+  it('removes excess blank lines when combining generated and existing content', async () => {
+    const outputFile = join(workDir, 'CHANGELOG.md');
+    stubs.setWriteStreamImpl(() => Readable.from(['NEW\n\n\n']));
+    await writeFile(outputFile, 'OLD\n\n\n');
+
+    await generateChangelog({ cwd: workDir, outputFile });
+
+    const contents = await readFile(outputFile, 'utf8');
+    expect(contents).toBe('NEW\n\nOLD\n');
+  });
+
+  it('leaves the original file unchanged and removes temp files when the generator fails', async () => {
+    const outputFile = join(workDir, 'CHANGELOG.md');
+    await writeFile(outputFile, 'OLD\n');
+    stubs.setWriteStreamImpl(
+      () =>
+        new Readable({
+          read() {
+            this.destroy(new Error('generator failed'));
+          },
+        }),
+    );
+
+    await expect(generateChangelog({ cwd: workDir, outputFile })).rejects.toThrowError(/generator failed/);
+    await expect(readFile(outputFile, 'utf8')).resolves.toBe('OLD\n');
+    const entries = await readdir(workDir);
+    expect(entries.some((entry) => entry.endsWith('.tmp'))).toBe(false);
   });
 
   it('resolves a relative outputFile against cwd', async () => {
@@ -289,5 +369,27 @@ describe('generateChangelog', () => {
 
     expect(result).toBe(join(workDir, 'CHANGELOG.md'));
     expect(existsSync(join(workDir, 'CHANGELOG.md'))).toBe(true);
+  });
+});
+
+describe('resolveGenerateChangelogCliOptions', () => {
+  it('preserves an explicit empty tag prefix', () => {
+    const options = resolveGenerateChangelogCliOptions({
+      values: { 'tag-prefix': '' },
+      repeat: {},
+      unknown: [],
+    });
+
+    expect(options.tagPrefix).toBe('');
+  });
+
+  it('rejects invalid release-count values', () => {
+    expect(() =>
+      resolveGenerateChangelogCliOptions({
+        values: { 'release-count': '-1' },
+        repeat: {},
+        unknown: [],
+      }),
+    ).toThrowError(/Invalid numeric value/);
   });
 });
