@@ -2,6 +2,7 @@ import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { dirname, isAbsolute, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { Readable } from 'node:stream';
+import { isPlainObject } from '@repo-toolkit/publish-package';
 import { ConventionalChangelog, type Options as ChangelogOptions } from 'conventional-changelog';
 import createConventionalCommitsPreset from 'conventional-changelog-conventionalcommits';
 
@@ -31,7 +32,7 @@ export interface ChangelogType {
   type: string;
   section?: string;
   scope?: string;
-  effect?: 'bump' | 'changelog' | 'hidden';
+  effect?: 'hidden';
   hidden?: boolean;
 }
 
@@ -82,65 +83,71 @@ export interface GenerateChangelogOptions extends CreatePresetOptions {
 
 export type ChangelogConfig = GenerateChangelogOptions;
 
-export const DEFAULT_TYPES: ReadonlyArray<ChangelogType> = [
-  {
-    type: 'feat',
-    section: 'Features',
-  },
-  {
-    type: 'fix',
-    scope: 'deps',
-    effect: 'hidden',
-  },
-  {
-    type: 'fix',
-    section: 'Bug Fixes',
-  },
-  {
-    type: 'revert',
-    section: 'Reverts',
-  },
-  {
-    type: 'docs',
-    section: 'Documentation',
-  },
-  {
-    type: 'refactor',
-    section: 'Code Refactoring',
-  },
-  {
-    type: 'perf',
-    section: 'Performance Improvements',
-  },
-  {
-    type: 'build',
-    section: 'Build System',
-  },
-  {
-    type: 'e2e',
-    section: 'End-to-end Testing',
-  },
-  {
-    type: 'ci',
-    effect: 'hidden',
-  },
-  {
-    type: 'chore',
-    effect: 'hidden',
-  },
-  {
-    type: 'style',
-    effect: 'hidden',
-  },
-  {
-    type: 'test',
-    effect: 'hidden',
-  },
-  {
-    type: 'release',
-    effect: 'hidden',
-  },
-];
+export const DEFAULT_TYPES: ReadonlyArray<Readonly<ChangelogType>> = Object.freeze(
+  [
+    {
+      type: 'feat',
+      section: 'Features',
+    },
+    {
+      type: 'fix',
+      scope: 'deps',
+      effect: 'hidden',
+    },
+    {
+      type: 'fix',
+      section: 'Bug Fixes',
+    },
+    {
+      type: 'revert',
+      section: 'Reverts',
+    },
+    {
+      type: 'docs',
+      section: 'Documentation',
+    },
+    {
+      type: 'refactor',
+      section: 'Code Refactoring',
+    },
+    {
+      type: 'perf',
+      section: 'Performance Improvements',
+    },
+    {
+      type: 'build',
+      section: 'Build System',
+    },
+    {
+      type: 'e2e',
+      section: 'End-to-end Testing',
+    },
+    {
+      type: 'ci',
+      effect: 'hidden',
+    },
+    {
+      type: 'chore',
+      effect: 'hidden',
+    },
+    {
+      type: 'style',
+      effect: 'hidden',
+    },
+    {
+      type: 'test',
+      effect: 'hidden',
+    },
+    {
+      type: 'release',
+      effect: 'hidden',
+    },
+  ].map((entry) => Object.freeze(entry)) as ReadonlyArray<Readonly<ChangelogType>>,
+);
+
+export function getDefaultTypes(): ReadonlyArray<Readonly<ChangelogType>> {
+  return DEFAULT_TYPES;
+}
 
 function normalizeTypes(types: ReadonlyArray<ChangelogType>) {
   return types.map((entry) => ({
@@ -189,6 +196,8 @@ function validateGenerateChangelogOptions(options: GenerateChangelogOptions): vo
   if (options.releaseCount !== undefined) {
     validateReleaseCount(options.releaseCount);
   }
+
+  validatePresetOptions(splitPresetOptions(options));
 }
 
 function validateReleaseCount(value: number): number {
@@ -197,6 +206,121 @@ function validateReleaseCount(value: number): number {
   }
 
   return value;
+}
+
+const PRESET_OPTION_KEYS = [
+  'types',
+  'ignoreCommits',
+  'issuePrefixes',
+  'scope',
+  'scopeOnly',
+  'preMajor',
+  'issueUrlFormat',
+  'commitUrlFormat',
+  'compareUrlFormat',
+  'userUrlFormat',
+  'bumpStrict',
+] as const;
+
+const STRING_FORMAT_KEYS = ['issueUrlFormat', 'commitUrlFormat', 'compareUrlFormat', 'userUrlFormat'] as const;
+
+function validatePresetOptions(options: CreatePresetOptions): void {
+  for (const key of Object.keys(options) as readonly string[]) {
+    if (!(PRESET_OPTION_KEYS as readonly string[]).includes(key)) {
+      throw new Error(`Unknown changelog config option: ${key}`);
+    }
+  }
+
+  if (options.types !== undefined) {
+    validateTypes(options.types);
+  }
+
+  if (options.ignoreCommits !== undefined && !(options.ignoreCommits instanceof RegExp)) {
+    throw new Error('ignoreCommits must be a RegExp');
+  }
+
+  if (options.issuePrefixes !== undefined) {
+    validateStringArray(options.issuePrefixes, 'issuePrefixes');
+  }
+
+  if (options.scope !== undefined) {
+    if (typeof options.scope !== 'string' && !Array.isArray(options.scope)) {
+      throw new Error('scope must be a string or an array of strings');
+    }
+    if (Array.isArray(options.scope)) {
+      validateStringArray(options.scope, 'scope');
+    }
+  }
+
+  if (options.scopeOnly !== undefined && typeof options.scopeOnly !== 'boolean') {
+    throw new Error('scopeOnly must be a boolean');
+  }
+
+  if (options.preMajor !== undefined && typeof options.preMajor !== 'boolean') {
+    throw new Error('preMajor must be a boolean');
+  }
+
+  for (const key of STRING_FORMAT_KEYS) {
+    const value = options[key];
+    if (value !== undefined && typeof value !== 'string') {
+      throw new Error(`${key} must be a string`);
+    }
+  }
+
+  if (options.bumpStrict !== undefined && typeof options.bumpStrict !== 'boolean') {
+    throw new Error('bumpStrict must be a boolean');
+  }
+}
+
+function validateTypes(types: unknown): void {
+  if (!Array.isArray(types)) {
+    throw new Error('types must be an array');
+  }
+
+  types.forEach((entry, index) => {
+    if (!isPlainObject(entry)) {
+      throw new Error(`types[${index}] must be an object`);
+    }
+
+    if (typeof entry.type !== 'string' || entry.type.length === 0) {
+      throw new Error(`types[${index}].type must be a non-empty string`);
+    }
+
+    if (entry.section !== undefined && typeof entry.section !== 'string') {
+      throw new Error(`types[${index}].section must be a string`);
+    }
+
+    if (entry.scope !== undefined && typeof entry.scope !== 'string') {
+      throw new Error(`types[${index}].scope must be a string`);
+    }
+
+    if (entry.effect !== undefined && entry.effect !== 'hidden') {
+      throw new Error(`types[${index}].effect must be 'hidden'`);
+    }
+
+    if (entry.hidden !== undefined && typeof entry.hidden !== 'boolean') {
+      throw new Error(`types[${index}].hidden must be a boolean`);
+    }
+
+    const knownKeys = new Set(['type', 'section', 'scope', 'effect', 'hidden']);
+    for (const key of Object.keys(entry)) {
+      if (!knownKeys.has(key)) {
+        throw new Error(`types[${index}] has unknown field: ${key}`);
+      }
+    }
+  });
+}
+
+function validateStringArray(value: unknown, label: string): void {
+  if (!Array.isArray(value)) {
+    throw new Error(`${label} must be an array of strings`);
+  }
+
+  value.forEach((entry, index) => {
+    if (typeof entry !== 'string') {
+      throw new Error(`${label}[${index}] must be a string`);
+    }
+  });
 }
 
 function resolveOutputPath(cwd: string, outputFile: string) {
@@ -282,6 +406,7 @@ function trimTrailingNewlines(value: string): string {
 }
 
 export async function createPreset(options: CreatePresetOptions = {}) {
+  validatePresetOptions(options);
   const preset = await createConventionalCommitsPreset(resolvePresetOptions(options));
 
   return {

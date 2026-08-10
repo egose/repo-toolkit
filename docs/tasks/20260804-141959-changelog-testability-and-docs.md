@@ -45,7 +45,7 @@ Completion evidence:
 
 ### Task CLARC-02: Make defaults immutable and validate runtime config
 
-Status: pending
+Status: completed
 
 Priority: P2
 
@@ -74,9 +74,15 @@ Acceptance criteria:
 - Invalid types and unknown/unsupported effects fail before generation.
 - Type-level readonly checks and runtime tests both exist.
 
+Completion evidence:
+
+- Changed: `packages/changelog/src/index.ts`, `packages/changelog/test/index.test.ts`
+- Verified: `pnpm --filter @repo-toolkit/changelog test` (80 tests, 3 files, all pass), `pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm build`
+- Result: `DEFAULT_TYPES` is now deeply frozen (`Object.freeze` on the array and each entry) and exposed via a `getDefaultTypes()` accessor returning the same frozen reference; `effect` was narrowed to `'hidden'` only (the only value consumed by upstream `conventional-changelog-conventionalcommits`), and `validatePresetOptions` enforces the full config shape — unknown top-level keys, unknown `types[]` fields, non-RegExp `ignoreCommits`, non-string arrays, non-boolean flags, and unsupported `effect` values all fail fast with actionable, field-level errors before the generator is built. Runtime validation is shared between `createPreset` (library path) and `createGenerator`/`generateChangelog` (CLI path) via `splitPresetOptions`, and `0` is the published canonical earliest-tag release count.
+
 ### Task CLARC-03: Complete package documentation and integration coverage
 
-Status: pending
+Status: completed
 
 Priority: P2
 
@@ -104,6 +110,12 @@ Acceptance criteria:
 - README examples pass smoke fixtures and match `--help`.
 - Real integration tests exercise tag selection and output ordering.
 - Package and full repository verification pass, including build and pack inspection.
+
+Completion evidence:
+
+- Changed: `packages/changelog/README.md`, `packages/changelog/src/cli.ts`, `packages/changelog/test/cli.test.ts`, `packages/changelog/test/integration.test.ts`
+- Verified: `pnpm --filter @repo-toolkit/changelog test` (80 tests, 3 files, all pass), `pnpm lint`, `pnpm typecheck`, `pnpm test` (279 tests across monorepo), `pnpm build`, `pnpm pack` smoke
+- Result: README now contains a full CLI flag table (every spec, every default, every negation form), a public-exports table covering `generateChangelog`/`createGenerator`/`createPreset`/`getDefaultTypes`/`DEFAULT_TYPES`/types with return values, an explicit output-semantics section (atomic sibling temp-file writes, prepend/append ordering, blank-line normalization, single trailing newline), a JS-config-trust warning explaining that `--config` to a JS module executes trusted code in-process while JSON is parsed via `JSON.parse`, and documentation of the narrowed `effect: 'hidden'` contract plus `DEFAULT_TYPES` deep-freeze guarantee. `printHelp` was exported and realigned to list both positive and `--no-*` forms of every negatable flag, matching the README table. New tests: README-mentions-flags vs `--help` parity, SPECS-vs-help parity, a real-Git prepend-preserves-OLD test, a real-Git append-preserves-OLD test, a real-Git invalid-config-fails-fast-and-keeps-OLD-file test, and a `pnpm pack` tarball inspection that asserts `package.json`, `README.md`, and the three `dist/` artifacts are shipped while `src/`, `test/`, `tsup.config.ts`, and `vitest.config.ts` are excluded.
 
 ## Definition Of Done
 

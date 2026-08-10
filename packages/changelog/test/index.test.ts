@@ -82,9 +82,11 @@ import {
   createPreset,
   createGenerator,
   generateChangelog,
+  getDefaultTypes,
   DEFAULT_TYPES,
   type ChangelogType,
   type CreatePresetOptions,
+  type GenerateChangelogOptions,
 } from '../src/index';
 import { resolveGenerateChangelogCliOptions } from '../src/cli';
 
@@ -391,5 +393,151 @@ describe('resolveGenerateChangelogCliOptions', () => {
         unknown: [],
       }),
     ).toThrowError(/Invalid numeric value/);
+  });
+});
+
+describe('DEFAULT_TYPES immutability (CLARC-02)', () => {
+  it('is deeply frozen and rejects mutation of nested entries', () => {
+    expect(Object.isFrozen(DEFAULT_TYPES)).toBe(true);
+
+    for (const entry of DEFAULT_TYPES) {
+      expect(Object.isFrozen(entry)).toBe(true);
+    }
+  });
+
+  it('mutation attempts throw in strict mode and do not corrupt later calls', () => {
+    'use strict';
+    expect(() => {
+      (DEFAULT_TYPES[0] as ChangelogType).type = 'tampered';
+    }).toThrow();
+
+    expect(DEFAULT_TYPES[0].type).toBe('feat');
+
+    return createPreset().then(() => {
+      const passed = stubs.factoryCalls[0] as { types: ChangelogType[] };
+      expect(passed.types[0].type).toBe('feat');
+    });
+  });
+
+  it('exposes a getDefaultTypes() accessor that returns the same frozen source', () => {
+    expect(getDefaultTypes()).toBe(DEFAULT_TYPES);
+    expect(Object.isFrozen(getDefaultTypes())).toBe(true);
+  });
+
+  it('consumer-supplied types cannot mutate DEFAULT_TYPES through normalizeTypes', async () => {
+    const custom: ChangelogType[] = [{ type: 'feat', section: 'Features' }];
+    await createPreset({ types: custom });
+
+    // DEFAULT_TYPES entries must remain untouched even though the caller
+    // supplied their own array.
+    expect(DEFAULT_TYPES.find((t) => t.type === 'revert')?.section).toBe('Reverts');
+  });
+});
+
+describe('runtime config validation (CLARC-02)', () => {
+  it('rejects unknown top-level config keys', async () => {
+    await expect(createPreset({ bogus: true } as unknown as CreatePresetOptions)).rejects.toThrowError(
+      /Unknown changelog config option: bogus/,
+    );
+  });
+
+  it('rejects non-RegExp ignoreCommits', async () => {
+    await expect(createPreset({ ignoreCommits: 'not-a-regex' } as unknown as CreatePresetOptions)).rejects.toThrowError(
+      /ignoreCommits must be a RegExp/,
+    );
+  });
+
+  it('accepts a RegExp ignoreCommits', async () => {
+    await expect(createPreset({ ignoreCommits: /^chore: release/ })).resolves.toMatchObject({
+      name: 'conventionalcommits',
+    });
+  });
+
+  it('rejects non-array types', async () => {
+    await expect(createPreset({ types: 'nope' } as unknown as CreatePresetOptions)).rejects.toThrowError(
+      /types must be an array/,
+    );
+  });
+
+  it('rejects type entries missing a type field', async () => {
+    await expect(
+      createPreset({ types: [{ section: 'Features' }] } as unknown as CreatePresetOptions),
+    ).rejects.toThrowError(/types\[0\]\.type must be a non-empty string/);
+  });
+
+  it('rejects an empty type field', async () => {
+    await expect(createPreset({ types: [{ type: '' }] } as unknown as CreatePresetOptions)).rejects.toThrowError(
+      /types\[0\]\.type must be a non-empty string/,
+    );
+  });
+
+  it('rejects an unsupported effect value', async () => {
+    await expect(
+      createPreset({ types: [{ type: 'feat', effect: 'bump' }] } as unknown as CreatePresetOptions),
+    ).rejects.toThrowError(/types\[0\]\.effect must be 'hidden'/);
+  });
+
+  it('rejects a non-boolean hidden flag', async () => {
+    await expect(
+      createPreset({ types: [{ type: 'feat', hidden: 'yes' }] } as unknown as CreatePresetOptions),
+    ).rejects.toThrowError(/types\[0\]\.hidden must be a boolean/);
+  });
+
+  it('rejects an unknown field on a type entry', async () => {
+    await expect(
+      createPreset({ types: [{ type: 'feat', extra: 1 }] } as unknown as CreatePresetOptions),
+    ).rejects.toThrowError(/types\[0\] has unknown field: extra/);
+  });
+
+  it('rejects non-string issuePrefixes entries', async () => {
+    await expect(createPreset({ issuePrefixes: ['#', 5] } as unknown as CreatePresetOptions)).rejects.toThrowError(
+      /issuePrefixes\[1\] must be a string/,
+    );
+  });
+
+  it('rejects a non-array scope', async () => {
+    await expect(createPreset({ scope: 42 } as unknown as CreatePresetOptions)).rejects.toThrowError(
+      /scope must be a string or an array of strings/,
+    );
+  });
+
+  it('rejects a non-string entry in a scope array', async () => {
+    await expect(createPreset({ scope: ['api', 9] } as unknown as CreatePresetOptions)).rejects.toThrowError(
+      /scope\[1\] must be a string/,
+    );
+  });
+
+  it('rejects non-boolean scopeOnly', async () => {
+    await expect(createPreset({ scopeOnly: 'yes' } as unknown as CreatePresetOptions)).rejects.toThrowError(
+      /scopeOnly must be a boolean/,
+    );
+  });
+
+  it('rejects non-boolean preMajor', async () => {
+    await expect(createPreset({ preMajor: 'yes' } as unknown as CreatePresetOptions)).rejects.toThrowError(
+      /preMajor must be a boolean/,
+    );
+  });
+
+  it('rejects a non-string URL format option', async () => {
+    await expect(createPreset({ issueUrlFormat: 42 } as unknown as CreatePresetOptions)).rejects.toThrowError(
+      /issueUrlFormat must be a string/,
+    );
+  });
+
+  it('rejects non-boolean bumpStrict', async () => {
+    await expect(createPreset({ bumpStrict: 'yes' } as unknown as CreatePresetOptions)).rejects.toThrowError(
+      /bumpStrict must be a boolean/,
+    );
+  });
+
+  it('createGenerator validates the pipeline options and the preset options together', async () => {
+    await expect(createGenerator({ cwd: '/repo', releaseCount: -1 })).rejects.toThrowError(
+      /releaseCount must be a non-negative safe integer/,
+    );
+
+    await expect(
+      createGenerator({ cwd: '/repo', bogus: true } as unknown as GenerateChangelogOptions),
+    ).rejects.toThrowError(/Unknown changelog config option: bogus/);
   });
 });
