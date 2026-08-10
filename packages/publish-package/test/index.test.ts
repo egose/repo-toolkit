@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -25,6 +25,22 @@ describe('inferNpmTag', () => {
 
   it('returns undefined for stable versions', () => {
     expect(inferNpmTag('1.2.3')).toBeUndefined();
+  });
+
+  it('strips build metadata before deriving preid', () => {
+    expect(inferNpmTag('1.2.3-beta.1+sha.abc')).toBe('beta');
+  });
+
+  it('handles a preid without a dotted numeric segment', () => {
+    expect(inferNpmTag('1.2.3-alpha')).toBe('alpha');
+  });
+
+  it('handles a version without a numeric prerelease', () => {
+    expect(inferNpmTag('1.0.0-rc')).toBe('rc');
+  });
+
+  it('strips a leading v before deriving preid', () => {
+    expect(inferNpmTag('v1.2.3-beta.4')).toBe('beta');
   });
 });
 
@@ -108,8 +124,12 @@ describe('parseFlags', () => {
   });
 
   it('treats -- as a separator and parses subsequent flags normally', () => {
-    const result = parseFlags(['--', '--cwd', '/x'], specs);
-    expect(result?.values.cwd).toBe('/x');
+    expect(() => parseFlags(['--', '--cwd', '/x'], specs)).toThrowError(/Unknown argument: --cwd/);
+  });
+
+  it('collects post-separator args as unknown in non-strict mode', () => {
+    const result = parseFlags(['--', '--cwd', '/x'], specs, { strict: false });
+    expect(result?.unknown).toEqual(['--cwd', '/x']);
   });
 
   it('resolves a short boolean alias (-i) to the canonical name', () => {
@@ -129,6 +149,23 @@ describe('parseFlags', () => {
 
   it('throws on unknown short flags', () => {
     expect(() => parseFlags(['-x'], specs)).toThrowError(/Unknown argument: -x/);
+  });
+
+  it('rejects duplicate canonical flag names and aliases', () => {
+    expect(() => parseFlags([], [{ name: 'cwd' }, { name: 'cwd' }])).toThrowError(/Duplicate flag registration/);
+    expect(() =>
+      parseFlags(
+        [],
+        [
+          { name: 'cwd', aliases: ['c'] },
+          { name: 'config', aliases: ['c'] },
+        ],
+      ),
+    ).toThrowError(/Duplicate flag registration/);
+  });
+
+  it('does not treat prototype keys as registered flags unless explicitly declared', () => {
+    expect(() => parseFlags(['--constructor'], specs)).toThrowError(/Unknown argument: --constructor/);
   });
 });
 
@@ -332,6 +369,141 @@ describe('createPublishPackageJson', () => {
     expect(out.license).toBe('Apache-2.0');
     expect(out.engines).toEqual({ node: '>=20' });
   });
+
+  it('rewrites array-form exports entries leaf by leaf', () => {
+    const out = createPublishPackageJson(
+      {
+        name: '@repo-toolkit/publish-package',
+        version: '0.0.0-PLACEHOLDER',
+        exports: {
+          '.': [{ types: ['./dist/index.d.ts'], import: './dist/index.js' }, './dist/index.cjs'],
+          './tools': ['./dist/tools.js', { import: './dist/tools.mjs' }],
+        },
+      },
+      {
+        version: '1.2.3',
+        internalPackageNames: internalNames,
+      },
+    );
+
+    expect(out.exports).toEqual({
+      '.': [{ types: ['./index.d.ts'], import: './index.js' }, './index.cjs'],
+      './tools': ['./tools.js', { import: './tools.mjs' }],
+    });
+  });
+
+  it('rewrites imports paths', () => {
+    const out = createPublishPackageJson(
+      {
+        name: '@repo-toolkit/publish-package',
+        version: '0.0.0-PLACEHOLDER',
+        imports: {
+          '#internal': './dist/internal.js',
+          '#shared': {
+            import: './dist/shared.mjs',
+            default: './dist/shared.cjs',
+          },
+        },
+      },
+      {
+        version: '1.2.3',
+        internalPackageNames: internalNames,
+      },
+    );
+
+    expect(out.imports).toEqual({
+      '#internal': './internal.js',
+      '#shared': {
+        import: './shared.mjs',
+        default: './shared.cjs',
+      },
+    });
+  });
+});
+
+describe('createPublishPackageJson validation', () => {
+  it('rejects a non-object exports value', () => {
+    expect(() =>
+      createPublishPackageJson(
+        {
+          name: '@repo-toolkit/publish-package',
+          version: '0.0.0-PLACEHOLDER',
+          exports: 42,
+        },
+        {
+          version: '1.2.3',
+          internalPackageNames: internalNames,
+        },
+      ),
+    ).toThrow(/Unsupported exports type/);
+  });
+
+  it('rejects an unsupported bin type', () => {
+    expect(() =>
+      createPublishPackageJson(
+        {
+          name: '@repo-toolkit/publish-package',
+          version: '0.0.0-PLACEHOLDER',
+          bin: 42,
+        },
+        {
+          version: '1.2.3',
+          internalPackageNames: internalNames,
+        },
+      ),
+    ).toThrow(/Unsupported bin type/);
+  });
+
+  it('rejects a non-string bin entry', () => {
+    expect(() =>
+      createPublishPackageJson(
+        {
+          name: '@repo-toolkit/publish-package',
+          version: '0.0.0-PLACEHOLDER',
+          bin: { cli: 42 },
+        },
+        {
+          version: '1.2.3',
+          internalPackageNames: internalNames,
+        },
+      ),
+    ).toThrow(/Unsupported bin.cli type/);
+  });
+
+  it('rejects unresolved workspace:* ranges in final manifests', () => {
+    expect(() =>
+      createPublishPackageJson(
+        {
+          name: '@repo-toolkit/publish-package',
+          version: '0.0.0-PLACEHOLDER',
+          dependencies: {
+            '@repo-toolkit/some-thing': 'workspace:*',
+            lodash: '^4.0.0',
+          },
+        },
+        {
+          version: '1.2.3',
+          internalPackageNames: new Set<string>(),
+        },
+      ),
+    ).toThrow(/Unresolved workspace: range/);
+  });
+
+  it('rejects a non-string main value', () => {
+    expect(() =>
+      createPublishPackageJson(
+        {
+          name: '@repo-toolkit/publish-package',
+          version: '0.0.0-PLACEHOLDER',
+          main: 42,
+        },
+        {
+          version: '1.2.3',
+          internalPackageNames: internalNames,
+        },
+      ),
+    ).toThrow(/value.replace is not a function|Invalid main/);
+  });
 });
 
 describe('resolvePublishPackagePlan', () => {
@@ -416,13 +588,148 @@ describe('resolvePublishPackagePlan', () => {
   });
 });
 
+describe('resolvePublishPackagePlan source validation', () => {
+  it('rejects a non-object name field', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'pp-manifest-'));
+    try {
+      await writeFile(join(rootDir, 'package.json'), `${JSON.stringify({ name: 42, version: '1.0.0' })}\n`);
+      expect(() => resolvePublishPackagePlan({ cwd: rootDir, skipBuild: true, dryRun: true })).toThrow(
+        /name must be a non-empty string/,
+      );
+    } finally {
+      await rm(rootDir, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects an additionalNames entry that is not a string', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'pp-manifest-'));
+    try {
+      await writeFile(
+        join(rootDir, 'package.json'),
+        `${JSON.stringify({ name: '@ex/pkg', additionalNames: ['@ex/ok', 42], version: '1.0.0' })}\n`,
+      );
+      expect(() => resolvePublishPackagePlan({ cwd: rootDir, skipBuild: true, dryRun: true })).toThrow(
+        /additionalNames must be non-empty strings/,
+      );
+    } finally {
+      await rm(rootDir, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects a malformed (non-object) dependencies field', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'pp-manifest-'));
+    try {
+      await writeFile(
+        join(rootDir, 'package.json'),
+        `${JSON.stringify({ name: '@ex/pkg', version: '1.0.0', dependencies: ['bad'] })}\n`,
+      );
+      expect(() => resolvePublishPackagePlan({ cwd: rootDir, skipBuild: true, dryRun: true })).toThrow(
+        /dependencies must be an object/,
+      );
+    } finally {
+      await rm(rootDir, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects a null exports value', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'pp-manifest-'));
+    try {
+      await writeFile(
+        join(rootDir, 'package.json'),
+        `${JSON.stringify({ name: '@ex/pkg', version: '1.0.0', exports: null })}\n`,
+      );
+      expect(() => resolvePublishPackagePlan({ cwd: rootDir, skipBuild: true, dryRun: true })).toThrow(
+        /exports must not be null/,
+      );
+    } finally {
+      await rm(rootDir, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects non-object imports field', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'pp-manifest-'));
+    try {
+      await writeFile(
+        join(rootDir, 'package.json'),
+        `${JSON.stringify({ name: '@ex/pkg', version: '1.0.0', imports: 'bad' })}\n`,
+      );
+      expect(() => resolvePublishPackagePlan({ cwd: rootDir, skipBuild: true, dryRun: true })).toThrow(
+        /imports must be an object/,
+      );
+    } finally {
+      await rm(rootDir, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects a non-numeric additionalNames entry', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'pp-manifest-num'));
+    try {
+      await writeFile(
+        join(rootDir, 'package.json'),
+        `${JSON.stringify({ name: '@ex/pkg', version: '1.0.0', additionalNames: [42] })}\n`,
+      );
+      expect(() => resolvePublishPackagePlan({ cwd: rootDir, skipBuild: true, dryRun: true })).toThrow(
+        /additionalNames must be non-empty strings/,
+      );
+    } finally {
+      await rm(rootDir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('publishPackage copy collisions', () => {
+  it('rejects two distinct sources that flatten to the same basename', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'pp-collision-'));
+    try {
+      await mkdir(join(rootDir, 'dist'), { recursive: true });
+      await mkdir(join(rootDir, 'docs'), { recursive: true });
+      await writeFile(join(rootDir, 'package.json'), `${JSON.stringify({ name: '@ex/pkg', version: '1.0.0' })}\n`);
+      await writeFile(join(rootDir, 'dist', 'index.js'), 'export {}\n');
+      await writeFile(join(rootDir, 'README.md'), 'readme\n');
+      await writeFile(join(rootDir, 'docs', 'README.md'), 'docs readme\n');
+
+      expect(() =>
+        publishPackage({
+          cwd: rootDir,
+          skipBuild: true,
+          dryRun: true,
+          includePackageFiles: ['docs/README.md'],
+        }),
+      ).toThrow(/Copy destination collision/);
+    } finally {
+      await rm(rootDir, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects identical duplicate source entries', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'pp-dup-'));
+    try {
+      await mkdir(join(rootDir, 'dist'), { recursive: true });
+      await writeFile(join(rootDir, 'package.json'), `${JSON.stringify({ name: '@ex/pkg', version: '1.0.0' })}\n`);
+      await writeFile(join(rootDir, 'dist', 'index.js'), 'export {}\n');
+
+      expect(() =>
+        publishPackage({
+          cwd: rootDir,
+          skipBuild: true,
+          dryRun: true,
+          includePackageFiles: ['README.md', 'README.md'],
+        }),
+      ).toThrow(/Duplicate copy entry/);
+    } finally {
+      await rm(rootDir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe('publishPackage', () => {
   it('writes a publish-ready package.json and copies files in dry-run mode (last additionalName wins)', async () => {
     const rootDir = await mkdtemp(join(tmpdir(), 'repo-toolkit-publish-package-'));
-    const publishDir = join(rootDir, 'dist');
+    const publishDir = join(rootDir, 'artifacts', 'npm');
 
     try {
       await mkdir(publishDir, { recursive: true });
+      await mkdir(join(rootDir, 'docs'), { recursive: true });
       await writeFile(
         join(rootDir, 'package.json'),
         `${JSON.stringify(
@@ -430,8 +737,8 @@ describe('publishPackage', () => {
             name: '@example/pkg',
             additionalNames: ['@example/pkg-alt'],
             version: '1.2.3',
-            main: 'dist/index.js',
-            types: 'dist/index.d.ts',
+            main: 'artifacts/npm/index.js',
+            types: 'artifacts/npm/index.d.ts',
           },
           null,
           2,
@@ -439,6 +746,7 @@ describe('publishPackage', () => {
       );
       await writeFile(join(rootDir, 'README.md'), '# Example\n');
       await writeFile(join(rootDir, 'CHANGELOG.md'), '# Changelog\n');
+      await writeFile(join(rootDir, 'docs', 'NOTICE.md'), 'Nested notice\n');
       await writeFile(join(rootDir, 'LICENSE'), 'Apache-2.0\n');
       await writeFile(join(publishDir, 'index.js'), 'export {}\n');
       await writeFile(join(publishDir, 'index.d.ts'), 'export {};\n');
@@ -446,6 +754,8 @@ describe('publishPackage', () => {
       publishPackage({
         cwd: rootDir,
         version: '1.2.3',
+        publishDir: 'artifacts/npm',
+        includePackageFiles: ['docs/NOTICE.md'],
         skipBuild: true,
         dryRun: true,
       });
@@ -458,8 +768,107 @@ describe('publishPackage', () => {
       expect(publishPackageJson.files).toEqual(['**/*', '!**/*.map']);
       expect(existsSync(join(publishDir, 'README.md'))).toBe(true);
       expect(existsSync(join(publishDir, 'CHANGELOG.md'))).toBe(true);
+      expect(existsSync(join(publishDir, 'NOTICE.md'))).toBe(true);
       expect(existsSync(join(publishDir, 'LICENSE'))).toBe(true);
     } finally {
+      await rm(rootDir, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects private packages before writing to the publish directory', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'repo-toolkit-publish-package-private-'));
+
+    try {
+      await writeFile(
+        join(rootDir, 'package.json'),
+        `${JSON.stringify({ name: '@example/pkg', version: '1.2.3', private: true })}\n`,
+      );
+
+      expect(() =>
+        publishPackage({
+          cwd: rootDir,
+          skipBuild: true,
+          dryRun: true,
+        }),
+      ).toThrowError(/Refusing to publish private package/);
+      expect(existsSync(join(rootDir, 'dist', 'package.json'))).toBe(false);
+    } finally {
+      await rm(rootDir, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects traversal copy sources before modifying the publish directory', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'repo-toolkit-publish-package-traversal-'));
+    const outsideFile = join(rootDir, '..', 'outside.txt');
+
+    try {
+      await mkdir(join(rootDir, 'dist'), { recursive: true });
+      await writeFile(join(rootDir, 'package.json'), `${JSON.stringify({ name: '@example/pkg', version: '1.2.3' })}\n`);
+      await writeFile(join(rootDir, 'dist', 'index.js'), 'export {}\n');
+      await writeFile(outsideFile, 'marker\n');
+
+      expect(() =>
+        publishPackage({
+          cwd: rootDir,
+          skipBuild: true,
+          dryRun: true,
+          includePackageFiles: ['../outside.txt'],
+        }),
+      ).toThrowError(/parent-directory segments/);
+      expect(existsSync(join(rootDir, 'dist', 'outside.txt'))).toBe(false);
+      await expect(readFile(outsideFile, 'utf8')).resolves.toBe('marker\n');
+    } finally {
+      await rm(outsideFile, { force: true });
+      await rm(rootDir, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects symlinked copy sources that escape the package root', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'repo-toolkit-publish-package-symlink-source-'));
+    const outsideDir = await mkdtemp(join(tmpdir(), 'repo-toolkit-publish-package-outside-'));
+
+    try {
+      await mkdir(join(rootDir, 'dist'), { recursive: true });
+      await mkdir(join(rootDir, 'docs'), { recursive: true });
+      await writeFile(join(rootDir, 'package.json'), `${JSON.stringify({ name: '@example/pkg', version: '1.2.3' })}\n`);
+      await writeFile(join(rootDir, 'dist', 'index.js'), 'export {}\n');
+      await writeFile(join(outsideDir, 'secret.md'), 'secret\n');
+      await symlink(join(outsideDir, 'secret.md'), join(rootDir, 'docs', 'secret.md'));
+
+      expect(() =>
+        publishPackage({
+          cwd: rootDir,
+          skipBuild: true,
+          dryRun: true,
+          includePackageFiles: ['docs/secret.md'],
+        }),
+      ).toThrowError(/escapes the package root/);
+      expect(existsSync(join(rootDir, 'dist', 'secret.md'))).toBe(false);
+    } finally {
+      await rm(outsideDir, { recursive: true, force: true });
+      await rm(rootDir, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects publishDir symlinks that escape the package root before running the build', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'repo-toolkit-publish-package-symlink-dist-'));
+    const outsideDir = await mkdtemp(join(tmpdir(), 'repo-toolkit-publish-package-dest-outside-'));
+    const markerPath = join(rootDir, 'build-ran.txt');
+
+    try {
+      await writeFile(join(rootDir, 'package.json'), `${JSON.stringify({ name: '@example/pkg', version: '1.2.3' })}\n`);
+      await symlink(outsideDir, join(rootDir, 'dist'));
+
+      expect(() =>
+        publishPackage({
+          cwd: rootDir,
+          buildCommand: `touch ${JSON.stringify(markerPath)}`,
+          dryRun: true,
+        }),
+      ).toThrowError(/publish directory escapes the package root/);
+      expect(existsSync(markerPath)).toBe(false);
+    } finally {
+      await rm(outsideDir, { recursive: true, force: true });
       await rm(rootDir, { recursive: true, force: true });
     }
   });

@@ -12,11 +12,37 @@ import {
   isPlainObject,
   normalizeVersion,
   publishPackage,
+  resolvePublishPackagePlan,
   type PackageJson,
   type PublishPackageOptions,
 } from '@repo-toolkit/publish-package';
 
 export { inferNpmTag, isPlainObject, normalizeVersion };
+
+const PUBLISH_PACKAGES_OPTION_KEYS = new Set([
+  'version',
+  'cwd',
+  'npmTag',
+  'dryRun',
+  'filters',
+  'from',
+  'packageFiles',
+  'includePackageFiles',
+  'noDefaultPackageFiles',
+  'rootFiles',
+  'includeRootFiles',
+  'noDefaultRootFiles',
+  'publishDir',
+  'versionPlaceholder',
+  'buildCommand',
+  'skipBuild',
+  'access',
+  'registry',
+  'otp',
+  'provenance',
+]);
+
+const BUILD_ORDER_DEPENDENCY_FIELDS = [...DEPENDENCY_FIELDS, 'devDependencies'] as const;
 
 export interface PackageEntry {
   dir: string;
@@ -93,13 +119,16 @@ export function sortPackagesByInternalDependencies(
   packages: ReadonlyArray<PackageEntry>,
   internalPackageNames: Set<string>,
 ): PackageEntry[] {
-  const packagesByName = new Map(packages.map((pkg) => [pkg.packageJson.name as string, pkg]));
+  const sortedPackages = [...packages].sort((left, right) =>
+    String(left.packageJson.name).localeCompare(String(right.packageJson.name)),
+  );
+  const packagesByName = new Map(sortedPackages.map((pkg) => [pkg.packageJson.name as string, pkg]));
   const visited = new Set<string>();
   const visitingSet = new Set<string>();
   const visitingOrder: string[] = [];
   const ordered: PackageEntry[] = [];
 
-  for (const pkg of packages) {
+  for (const pkg of sortedPackages) {
     visit(pkg);
   }
 
@@ -120,7 +149,7 @@ export function sortPackagesByInternalDependencies(
     visitingSet.add(packageName);
     visitingOrder.push(packageName);
 
-    for (const dependencyName of getInternalDependencies(pkg.packageJson, internalPackageNames)) {
+    for (const dependencyName of [...getInternalDependencies(pkg.packageJson, internalPackageNames)].sort()) {
       const dependencyPackage = packagesByName.get(dependencyName);
       if (dependencyPackage) {
         visit(dependencyPackage);
@@ -135,6 +164,7 @@ export function sortPackagesByInternalDependencies(
 }
 
 export function resolvePublishPackagesPlan(options: PublishPackagesOptions): PublishPackagesPlan {
+  validatePublishPackagesOptions(options);
   const version = normalizeVersion(options.version);
   const rootDir = path.resolve(options.cwd ?? process.cwd());
   const packages = discoverPackages(rootDir);
@@ -153,11 +183,17 @@ export function resolvePublishPackagesPlan(options: PublishPackagesOptions): Pub
     rootDir,
     version,
     npmTag: options.npmTag ?? inferNpmTag(version),
-    packageFiles: options.packageFiles ?? DEFAULT_PACKAGE_FILES,
-    includePackageFiles: options.includePackageFiles ?? [],
+    packageFiles: Object.freeze([
+      ...(options.noDefaultPackageFiles
+        ? (options.packageFiles ?? [])
+        : (options.packageFiles ?? DEFAULT_PACKAGE_FILES)),
+    ]),
+    includePackageFiles: Object.freeze([...(options.includePackageFiles ?? [])]),
     noDefaultPackageFiles: options.noDefaultPackageFiles ?? false,
-    rootFiles: options.rootFiles ?? DEFAULT_ROOT_FILES,
-    includeRootFiles: options.includeRootFiles ?? [],
+    rootFiles: Object.freeze([
+      ...(options.noDefaultRootFiles ? (options.rootFiles ?? []) : (options.rootFiles ?? DEFAULT_ROOT_FILES)),
+    ]),
+    includeRootFiles: Object.freeze([...(options.includeRootFiles ?? [])]),
     noDefaultRootFiles: options.noDefaultRootFiles ?? false,
     publishDir: options.publishDir ?? DEFAULT_PUBLISH_DIR,
     versionPlaceholder: options.versionPlaceholder ?? DEFAULT_VERSION_PLACEHOLDER,
@@ -168,43 +204,49 @@ export function resolvePublishPackagesPlan(options: PublishPackagesOptions): Pub
     otp: options.otp,
     provenance: options.provenance ?? false,
     dryRun: options.dryRun ?? false,
-    internalPackageNames,
-    packages: orderedPackages,
+    internalPackageNames: new Set(internalPackageNames),
+    packages: orderedPackages.map((pkg) => ({ ...pkg, packageJson: { ...pkg.packageJson } })),
   };
 }
 
 export function publishPackages(options: PublishPackagesOptions): void {
   const plan = resolvePublishPackagesPlan(options);
+  const publishOptionsByPackage = plan.packages.map((pkg) => ({
+    pkg,
+    publishOptions: toPublishPackageOptions(plan, pkg.dir),
+  }));
+
+  for (const entry of publishOptionsByPackage) {
+    resolvePublishPackagePlan(entry.publishOptions);
+  }
 
   console.log(`target version ${plan.version}`);
   if (plan.npmTag) {
     console.log(`npm dist-tag ${plan.npmTag}`);
   }
 
-  for (const pkg of plan.packages) {
-    console.log(`processing ${pkg.dir}`);
-    publishPackage({
-      cwd: pkg.dir,
-      rootDir: plan.rootDir,
-      version: plan.version,
-      npmTag: plan.npmTag,
-      dryRun: plan.dryRun,
-      packageFiles: plan.packageFiles,
-      includePackageFiles: plan.includePackageFiles,
-      noDefaultPackageFiles: plan.noDefaultPackageFiles,
-      rootFiles: plan.rootFiles,
-      includeRootFiles: plan.includeRootFiles,
-      noDefaultRootFiles: plan.noDefaultRootFiles,
-      publishDir: plan.publishDir,
-      versionPlaceholder: plan.versionPlaceholder,
-      buildCommand: plan.buildCommand,
-      skipBuild: plan.skipBuild,
-      access: plan.access,
-      registry: plan.registry,
-      otp: plan.otp,
-      provenance: plan.provenance,
-      internalPackageNames: plan.internalPackageNames,
-    } satisfies PublishPackageOptions);
+  const completed: string[] = [];
+
+  for (let index = 0; index < publishOptionsByPackage.length; index += 1) {
+    const entry = publishOptionsByPackage[index];
+    console.log(`processing ${entry.pkg.dir}`);
+
+    try {
+      publishPackage(entry.publishOptions);
+      completed.push(entry.pkg.packageJson.name as string);
+    } catch (error) {
+      const pending = publishOptionsByPackage
+        .slice(index)
+        .map((candidate) => candidate.pkg.packageJson.name as string)
+        .filter((name) => !completed.includes(name));
+      const wrappedError = new Error(
+        `Publish failed after preflight. Completed packages: ${formatPackageList(completed)}. Pending packages: ${formatPackageList(
+          pending,
+        )}.`,
+      ) as Error & { cause?: unknown };
+      wrappedError.cause = error;
+      throw wrappedError;
+    }
   }
 }
 
@@ -219,21 +261,49 @@ function discoverPackages(rootDir: string): PackageEntry[] {
     .map((entry) => path.join(packageRoot, entry.name))
     .filter((dir) => existsSync(path.join(dir, 'package.json')));
 
-  return packageDirs.map((dir) => {
-    const packageJson = readJson(path.join(dir, 'package.json'));
+  const packages = packageDirs.map((dir) => {
+    const packageJsonPath = path.join(dir, 'package.json');
+    const packageJson = readJson(packageJsonPath);
 
-    if (!packageJson.name) {
-      throw new Error(`Package name missing in ${path.join(dir, 'package.json')}`);
+    if (!isPlainObject(packageJson)) {
+      throw new Error(`Package manifest must be an object: ${packageJsonPath}`);
+    }
+
+    const name = packageJson.name;
+    if (typeof name !== 'string' || !isValidPackageName(name)) {
+      throw new Error(`Package name missing or invalid in ${packageJsonPath}`);
+    }
+
+    if (packageJson.private === true) {
+      throw new Error(`Refusing to publish private workspace package: ${packageJsonPath}`);
     }
 
     return { dir, packageJson };
   });
+
+  const packagePathsByName = new Map<string, string[]>();
+
+  for (const pkg of packages) {
+    const name = pkg.packageJson.name as string;
+    const manifestPath = path.join(pkg.dir, 'package.json');
+    const paths = packagePathsByName.get(name) ?? [];
+    paths.push(manifestPath);
+    packagePathsByName.set(name, paths);
+  }
+
+  const duplicates = [...packagePathsByName.entries()].filter(([, paths]) => paths.length > 1);
+  if (duplicates.length > 0) {
+    const details = duplicates.map(([name, paths]) => `${name}: ${paths.join(', ')}`).join('; ');
+    throw new Error(`Duplicate workspace package names found: ${details}`);
+  }
+
+  return packages;
 }
 
 function getInternalDependencies(packageJson: PackageJson, internalPackageNames: Set<string>): Set<string> {
   const dependencyNames = new Set<string>();
 
-  for (const field of DEPENDENCY_FIELDS) {
+  for (const field of BUILD_ORDER_DEPENDENCY_FIELDS) {
     const dependencies = packageJson[field];
     if (!isPlainObject(dependencies)) {
       continue;
@@ -285,4 +355,97 @@ function selectPackages(
   }
 
   return selectedPackages;
+}
+
+function validatePublishPackagesOptions(options: PublishPackagesOptions): void {
+  for (const key of Object.keys(options)) {
+    if (!PUBLISH_PACKAGES_OPTION_KEYS.has(key)) {
+      throw new Error(`Unknown publish-packages option: ${key}`);
+    }
+  }
+
+  validateOptionalStringArray(options.filters, 'filters');
+  validateOptionalStringArray(options.packageFiles, 'packageFiles');
+  validateOptionalStringArray(options.includePackageFiles, 'includePackageFiles');
+  validateOptionalStringArray(options.rootFiles, 'rootFiles');
+  validateOptionalStringArray(options.includeRootFiles, 'includeRootFiles');
+  validateOptionalBoolean(options.noDefaultPackageFiles, 'noDefaultPackageFiles');
+  validateOptionalBoolean(options.noDefaultRootFiles, 'noDefaultRootFiles');
+  validateOptionalBoolean(options.skipBuild, 'skipBuild');
+  validateOptionalBoolean(options.provenance, 'provenance');
+  validateOptionalBoolean(options.dryRun, 'dryRun');
+  validateOptionalString(options.cwd, 'cwd');
+  validateOptionalString(options.version, 'version');
+  validateOptionalString(options.npmTag, 'npmTag');
+  validateOptionalString(options.publishDir, 'publishDir');
+  validateOptionalString(options.versionPlaceholder, 'versionPlaceholder');
+  validateOptionalString(options.buildCommand, 'buildCommand');
+  validateOptionalString(options.access, 'access');
+  validateOptionalString(options.registry, 'registry');
+  validateOptionalString(options.otp, 'otp');
+
+  if (options.from !== undefined && (typeof options.from !== 'string' || options.from.length === 0)) {
+    throw new Error('from must be a non-empty string');
+  }
+}
+
+function validateOptionalStringArray(value: ReadonlyArray<string> | undefined, label: string): void {
+  if (value === undefined) {
+    return;
+  }
+
+  if (!Array.isArray(value)) {
+    throw new Error(`${label} must be an array of non-empty strings`);
+  }
+
+  for (const entry of value) {
+    if (typeof entry !== 'string' || entry.length === 0) {
+      throw new Error(`${label} must be an array of non-empty strings`);
+    }
+  }
+}
+
+function validateOptionalBoolean(value: boolean | undefined, label: string): void {
+  if (value !== undefined && typeof value !== 'boolean') {
+    throw new Error(`${label} must be a boolean`);
+  }
+}
+
+function validateOptionalString(value: string | undefined, label: string): void {
+  if (value !== undefined && typeof value !== 'string') {
+    throw new Error(`${label} must be a string`);
+  }
+}
+
+function isValidPackageName(name: string): boolean {
+  return /^(?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*$/u.test(name);
+}
+
+function toPublishPackageOptions(plan: PublishPackagesPlan, cwd: string): PublishPackageOptions {
+  return {
+    cwd,
+    rootDir: plan.rootDir,
+    version: plan.version,
+    npmTag: plan.npmTag,
+    dryRun: plan.dryRun,
+    packageFiles: plan.packageFiles,
+    includePackageFiles: plan.includePackageFiles,
+    noDefaultPackageFiles: plan.noDefaultPackageFiles,
+    rootFiles: plan.rootFiles,
+    includeRootFiles: plan.includeRootFiles,
+    noDefaultRootFiles: plan.noDefaultRootFiles,
+    publishDir: plan.publishDir,
+    versionPlaceholder: plan.versionPlaceholder,
+    buildCommand: plan.buildCommand,
+    skipBuild: plan.skipBuild,
+    access: plan.access,
+    registry: plan.registry,
+    otp: plan.otp,
+    provenance: plan.provenance,
+    internalPackageNames: plan.internalPackageNames,
+  } satisfies PublishPackageOptions;
+}
+
+function formatPackageList(packageNames: ReadonlyArray<string>): string {
+  return packageNames.length > 0 ? packageNames.join(', ') : '(none)';
 }

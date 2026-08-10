@@ -10,11 +10,18 @@ interface FakeCall {
   init: { method: string; headers: Record<string, string>; body?: string | Buffer };
 }
 
-function makeResponse(status: number, body: unknown): Response {
+function makeResponse(status: number, body: unknown, responseHeaders?: Record<string, string>): Response {
   const text = typeof body === 'string' ? body : JSON.stringify(body);
+  const headers = new Headers();
+  if (responseHeaders) {
+    for (const [k, v] of Object.entries(responseHeaders)) {
+      headers.set(k, v);
+    }
+  }
   return {
     ok: status >= 200 && status < 300,
     status,
+    headers,
     text: async () => text,
   } as Response;
 }
@@ -58,6 +65,18 @@ describe('ConfluenceClient construction', () => {
     });
   });
 
+  it('rejects insecure or malformed base URLs', () => {
+    expect(() => new ConfluenceClient({ baseUrl: 'http://x/wiki', username: 'u', apiToken: 't' })).toThrowError(
+      /https/,
+    );
+    expect(() => new ConfluenceClient({ baseUrl: 'https://u:p@x/wiki', username: 'u', apiToken: 't' })).toThrowError(
+      /embedded credentials/,
+    );
+    expect(() => new ConfluenceClient({ baseUrl: 'https://x/wiki?test=1', username: 'u', apiToken: 't' })).toThrowError(
+      /query or fragment/,
+    );
+  });
+
   it('sends basic auth header', async () => {
     const { fetchFn, calls } = buildFetchSequence([{ status: 200, body: { results: [{ id: 'S1', key: 'ENG' }] } }]);
     const client = new ConfluenceClient({
@@ -84,8 +103,8 @@ describe('ConfluenceClient.getSpaceIdByKey', () => {
   });
 });
 
-describe('ConfluenceClient.getPageByTitle', () => {
-  it('returns undefined when no match', async () => {
+describe('ConfluenceClient.getPagesByTitle', () => {
+  it('returns an empty array when no match', async () => {
     const { fetchFn } = buildFetchSequence([{ status: 200, body: { results: [] } }]);
     const client = new ConfluenceClient({
       baseUrl: 'https://x/wiki',
@@ -93,12 +112,19 @@ describe('ConfluenceClient.getPageByTitle', () => {
       apiToken: 't',
       fetch: fetchFn as unknown as typeof fetch,
     });
-    expect(await client.getPageByTitle('S1', 'Missing')).toBeUndefined();
+    expect(await client.getPagesByTitle('S1', 'Missing')).toEqual([]);
   });
 
-  it('returns the first matching page', async () => {
+  it('returns every matching page across pagination', async () => {
     const { fetchFn, calls } = buildFetchSequence([
-      { status: 200, body: { results: [{ id: 'P1', title: 'Intro', _links: { webui: '/x' } }] } },
+      {
+        status: 200,
+        body: {
+          results: [{ id: 'P1', title: 'Intro', parentId: '1', _links: { webui: '/x' } }],
+          _links: { next: '/wiki/api/v2/pages?cursor=abc' },
+        },
+      },
+      { status: 200, body: { results: [{ id: 'P2', title: 'Intro', parentId: '2', _links: { webui: '/y' } }] } },
     ]);
     const client = new ConfluenceClient({
       baseUrl: 'https://x/wiki',
@@ -106,8 +132,8 @@ describe('ConfluenceClient.getPageByTitle', () => {
       apiToken: 't',
       fetch: fetchFn as unknown as typeof fetch,
     });
-    const page = await client.getPageByTitle('S1', 'Intro');
-    expect(page?.id).toBe('P1');
+    const pages = await client.getPagesByTitle('S1', 'Intro');
+    expect(pages.map((page) => page.id)).toEqual(['P1', 'P2']);
     expect(calls[0].endpoint).toContain('space-id=S1');
     expect(calls[0].endpoint).toContain('title=Intro');
     expect(calls[0].endpoint).toContain('body-format=storage');
@@ -180,6 +206,20 @@ describe('ConfluenceClient error handling', () => {
     expect(err).toBeInstanceOf(ConfluenceApiError);
     expect((err as ConfluenceApiError).message).toMatch(/version conflict/i);
   });
+
+  it('rejects redirect responses before following them', async () => {
+    const fetchFn = vi.fn(
+      async () => ({ ok: false, status: 302, headers: new Headers(), text: async () => '' }) as Response,
+    );
+    const client = new ConfluenceClient({
+      baseUrl: 'https://x/wiki',
+      username: 'u',
+      apiToken: 't',
+      fetch: fetchFn as unknown as typeof fetch,
+    });
+
+    await expect(client.getPage('P1')).rejects.toMatchObject({ status: 302, responseBody: '' });
+  });
 });
 
 describe('ConfluenceClient.uploadAttachment (multipart)', () => {
@@ -191,6 +231,17 @@ describe('ConfluenceClient.uploadAttachment (multipart)', () => {
   afterEach(async () => {
     await rm(tmpDir, { recursive: true, force: true });
   });
+
+  async function drainBodyStream(body: unknown): Promise<string> {
+    if (body && typeof (body as AsyncIterable<Buffer>)[Symbol.asyncIterator] === 'function') {
+      const chunks: Buffer[] = [];
+      for await (const chunk of body as AsyncIterable<Buffer>) {
+        chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk as Uint8Array));
+      }
+      return Buffer.concat(chunks).toString('utf8');
+    }
+    return body instanceof Buffer ? body.toString('utf8') : String(body);
+  }
 
   it('POSTs multipart to v1 attachment endpoint with X-Atlassian-Token: no-check', async () => {
     const file = join(tmpDir, 'logo.png');
@@ -214,9 +265,12 @@ describe('ConfluenceClient.uploadAttachment (multipart)', () => {
     expect(call.init.method).toBe('POST');
     expect(call.init.headers['X-Atlassian-Token']).toBe('no-check');
     expect(call.init.headers['Content-Type']).toMatch(/^multipart\/form-data; boundary=----repo-toolkit-confluence-/);
-    const body = call.init.body as Buffer;
-    expect(body.toString('utf8')).toContain('Content-Disposition: form-data; name="file"; filename="logo.png"');
-    expect(body.toString('utf8')).toContain('Content-Disposition: form-data; name="comment"');
+    const wire = await drainBodyStream(call.init.body);
+    expect(wire).toContain('Content-Disposition: form-data; name="file"; filename="logo.png"');
+    expect(wire).toContain('Content-Disposition: form-data; name="comment"');
+    expect(wire).toContain('first upload');
+    const fileBytes = Buffer.from([1, 2, 3]).toString('binary');
+    expect(wire).toContain(fileBytes);
   });
 
   it('targets the existing-attachment data endpoint when attachmentId given', async () => {
@@ -233,5 +287,168 @@ describe('ConfluenceClient.uploadAttachment (multipart)', () => {
     });
     await client.updateAttachmentData('P1', 'A1', file, 'update');
     expect(calls[0].endpoint).toBe('https://x/wiki/rest/api/content/P1/child/attachment/A1/data');
+  });
+
+  it('sanitizes hostile filename characters so they cannot inject header lines', async () => {
+    const hostileName = 'a"b\r\nContent-Disposition: malicious\r\nx.png';
+    const file = join(tmpDir, hostileName);
+    await writeFile(file, Buffer.from([4, 5]));
+    const { fetchFn, calls } = buildFetchSequence([
+      {
+        status: 200,
+        body: { results: [{ id: 'A3', title: 'x', version: { number: 1 }, _links: { webui: '/a3' } }] },
+      },
+    ]);
+    const client = new ConfluenceClient({
+      baseUrl: 'https://x/wiki',
+      username: 'u',
+      apiToken: 't',
+      fetch: fetchFn as unknown as typeof fetch,
+    });
+    await client.uploadAttachment('P1', file, 'c');
+    const wire = await drainBodyStream(calls[0].init.body);
+    expect(wire).not.toContain('\r\nContent-Disposition: malicious\r\n');
+    expect(wire).not.toContain('\nContent-Disposition: malicious');
+    expect(wire).not.toContain('Content-Disposition: form-data; name="malicious"');
+    const fileLines = wire
+      .split('\r\n')
+      .filter((line) => line.startsWith('Content-Disposition: form-data; name="file"'));
+    expect(fileLines).toHaveLength(1);
+    const sanitizedOnLine = fileLines[0] ?? '';
+    expect(sanitizedOnLine).not.toContain('"a"b');
+  });
+
+  it('keeps Unicode filenames valid and intact in the multipart body', async () => {
+    const unicodeName = '文档-éàü-αβγ.png';
+    const file = join(tmpDir, unicodeName);
+    await writeFile(file, Buffer.from([7, 8, 9]));
+    const { fetchFn, calls } = buildFetchSequence([
+      {
+        status: 200,
+        body: { results: [{ id: 'A4', title: 'u', version: { number: 1 }, _links: { webui: '/a4' } }] },
+      },
+    ]);
+    const client = new ConfluenceClient({
+      baseUrl: 'https://x/wiki',
+      username: 'u',
+      apiToken: 't',
+      fetch: fetchFn as unknown as typeof fetch,
+    });
+    await client.uploadAttachment('P1', file);
+    const wire = await drainBodyStream(calls[0].init.body);
+    expect(wire).toContain(`filename="${unicodeName}"`);
+    expect(wire).toContain('文档');
+  });
+
+  it('rejects files exceeding maxUploadBytes before reading them', async () => {
+    const file = join(tmpDir, 'big.bin');
+    await writeFile(file, Buffer.alloc(1024, 1));
+    const { fetchFn, calls } = buildFetchSequence([
+      { status: 200, body: { results: [{ id: 'A5', version: { number: 1 }, _links: { webui: '/a5' } }] } },
+    ]);
+    const client = new ConfluenceClient({
+      baseUrl: 'https://x/wiki',
+      username: 'u',
+      apiToken: 't',
+      fetch: fetchFn as unknown as typeof fetch,
+      maxUploadBytes: 512,
+    });
+    await expect(client.uploadAttachment('P1', file)).rejects.toThrowError(/upload size limit/);
+    expect(calls).toHaveLength(0);
+  });
+});
+
+describe('ConfluenceClient network controls (timeout, retry, pagination)', () => {
+  it('aborts a hanging request after the configured timeout', async () => {
+    const fetchFn = vi.fn(async (_endpoint: string, init: RequestInit) => {
+      expect(init.signal).toBeDefined();
+      return new Promise<Response>((_resolve, reject) => {
+        const sig = (init.signal as AbortSignal) ?? new AbortController().signal;
+        sig.addEventListener('abort', () => reject(new Error('timed out')) as unknown as () => void);
+      });
+    });
+    const client = new ConfluenceClient({
+      baseUrl: 'https://x/wiki',
+      username: 'u',
+      apiToken: 't',
+      fetch: fetchFn as unknown as typeof fetch,
+      requestTimeoutMs: 30,
+    });
+    await expect(client.getSpaceIdByKey('X')).rejects.toMatchObject({ name: 'ConfluenceApiError', status: 0 });
+  });
+
+  it('retries 429 responses on safe GETs honoring Retry-After, then succeeds', async () => {
+    let callCount = 0;
+    const fetchFn = vi.fn(async (): Promise<Response> => {
+      callCount += 1;
+      if (callCount === 1) {
+        return makeResponse(429, { message: 'slow down' }, { 'Retry-After': '0' }) as Response;
+      }
+      return makeResponse(200, { results: [{ id: 'S1', key: 'X' }] }) as Response;
+    });
+    const client = new ConfluenceClient({
+      baseUrl: 'https://x/wiki',
+      username: 'u',
+      apiToken: 't',
+      fetch: fetchFn as unknown as typeof fetch,
+      maxRetries: 3,
+    });
+    const id = await client.getSpaceIdByKey('X');
+    expect(id).toBe('S1');
+    expect(fetchFn).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not retry writes (POST)', async () => {
+    const fetchFn = vi.fn(async () => {
+      return makeResponse(500, { message: 'boom' }, { 'Retry-After': '0' }) as Response;
+    });
+    const client = new ConfluenceClient({
+      baseUrl: 'https://x/wiki',
+      username: 'u',
+      apiToken: 't',
+      fetch: fetchFn as unknown as typeof fetch,
+      maxRetries: 3,
+    });
+    await client
+      .createPage({
+        spaceId: 'S1',
+        title: 't',
+        body: { representation: 'storage', value: '<p/>' },
+      })
+      .catch((e) => e);
+    expect(fetchFn).toHaveBeenCalledTimes(1);
+  });
+
+  it('caps pagination and rejects a next-link loop', async () => {
+    const fetchFn = vi.fn(async () => {
+      return makeResponse(200, {
+        results: [{ id: 'A', title: 'x', version: { number: 1 }, _links: { webui: '/z' } }],
+        _links: { next: 'https://x/wiki/api/v2/pages?cursor=loop' },
+      }) as Response;
+    });
+    const client = new ConfluenceClient({
+      baseUrl: 'https://x/wiki',
+      username: 'u',
+      apiToken: 't',
+      fetch: fetchFn as unknown as typeof fetch,
+      maxRetries: 0,
+    });
+    await expect(client.getPagesByTitle('S1', 'x')).rejects.toMatchObject({ name: 'ConfluenceApiError' });
+  });
+
+  it('rejects cross-origin pagination next links', async () => {
+    const fetchFn = vi.fn(async () => {
+      return makeResponse(200, {
+        results: [],
+        _links: { next: 'https://evil.example/api/v2/pages' },
+      }) as Response;
+    });
+    const client = new ConfluenceClient({
+      baseUrl: 'https://x/wiki',
+      username: 'u',
+      apiToken: 't',
+      fetch: fetchFn as unknown as typeof fetch,
+    });
+    await expect(client.getPagesByTitle('S1', 'x')).rejects.toThrowError(/cross-origin/);
   });
 });

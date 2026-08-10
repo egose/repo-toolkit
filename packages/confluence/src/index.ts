@@ -140,6 +140,8 @@ export async function syncConfluenceToDocs(options: ConfluenceSyncOptions = {}):
     return;
   }
 
+  validateLocalHierarchy(tree.entries);
+
   if (plan.dryRun) {
     for (const entry of tree.entries) {
       log(`[dry-run] would sync ${entry.segments.join('/')}`);
@@ -204,7 +206,10 @@ async function syncEntry(
       }
       LOCAL_IMAGE_PLACEHOLDER_RE.lastIndex = 0;
       if (LOCAL_IMAGE_PLACEHOLDER_RE.test(body)) {
-        const result = await rewriteImagesToAttachments(body, pageId, client, { markdownDir });
+        const result = await rewriteImagesToAttachments(body, pageId, client, {
+          markdownDir,
+          allowedRoot: plan.folder,
+        });
         body = result.html;
       }
 
@@ -257,7 +262,15 @@ class PageTitleCache {
       return existing;
     }
 
-    let page = await this.client.getPageByTitle(this.spaceId, title);
+    const matches = (await this.client.getPagesByTitle(this.spaceId, title)).filter(
+      (page) => page.parentId === parentId,
+    );
+
+    let page = matches[0];
+    if (matches.length > 1) {
+      throw new Error(`Multiple Confluence pages matched title ${title} under parent ${parentId}`);
+    }
+
     if (!page) {
       page = await this.client.createPage({
         spaceId: this.spaceId,
@@ -278,6 +291,30 @@ function resolveInputPath(baseDir: string, inputPath: string): string {
     return inputPath;
   }
   return resolve(baseDir, inputPath);
+}
+
+function validateLocalHierarchy(entries: ReadonlyArray<DocEntry>): void {
+  const seen = new Map<string, 'file' | 'dir'>();
+
+  for (const entry of entries) {
+    let parentKey = '';
+
+    for (let index = 0; index < entry.segments.length; index += 1) {
+      const segment = entry.segments[index] ?? '';
+      const isLast = index === entry.segments.length - 1;
+      const title = isMarkdownName(segment) ? titleFromSegment(segment) : segment;
+      const kind: 'file' | 'dir' = isLast && isMarkdownName(segment) ? 'file' : 'dir';
+      const key = `${parentKey}::${title}`;
+      const existing = seen.get(key);
+
+      if (existing && existing !== kind) {
+        throw new Error(`Local documentation tree contains conflicting page titles under the same parent: ${title}`);
+      }
+
+      seen.set(key, existing ?? kind);
+      parentKey = key;
+    }
+  }
 }
 
 export { resolveConfluenceSyncPlan as resolveSyncPlan };

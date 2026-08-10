@@ -1,6 +1,8 @@
-import { createWriteStream } from 'node:fs';
-import { mkdir } from 'node:fs/promises';
+import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { dirname, isAbsolute, resolve } from 'node:path';
+import { randomUUID } from 'node:crypto';
+import { Readable } from 'node:stream';
+import { isPlainObject } from '@repo-toolkit/publish-package';
 import { ConventionalChangelog, type Options as ChangelogOptions } from 'conventional-changelog';
 import createConventionalCommitsPreset from 'conventional-changelog-conventionalcommits';
 
@@ -14,13 +16,6 @@ const PIPELINE_OPTION_KEYS = [
   'tagPrefix',
   'firstRelease',
 ] as const;
-
-type PipelineOptions = Pick<
-  GenerateChangelogOptions,
-  'append' | 'releaseCount' | 'skipUnstable' | 'outputUnreleased' | 'tagPrefix' | 'firstRelease'
->;
-
-type ExtendedChangelogOptions = ChangelogOptions & PipelineOptions;
 
 function splitPresetOptions(options: GenerateChangelogOptions): CreatePresetOptions {
   const presetOptions: Record<string, unknown> = {};
@@ -37,7 +32,7 @@ export interface ChangelogType {
   type: string;
   section?: string;
   scope?: string;
-  effect?: 'bump' | 'changelog' | 'hidden';
+  effect?: 'hidden';
   hidden?: boolean;
 }
 
@@ -66,10 +61,11 @@ export interface ConventionalCommitsPresetOptions {
   scope?: string | ReadonlyArray<string>;
   scopeOnly?: boolean;
   preMajor?: boolean;
-  formatIssueUrl?: (context: ChangelogContext, reference: ChangelogReference) => string;
-  formatCommitUrl?: (context: ChangelogContext, commit: ChangelogCommit) => string;
-  formatCompareUrl?: (context: ChangelogContext) => string;
-  formatUserUrl?: (context: ChangelogContext, user: string) => string;
+  issueUrlFormat?: string;
+  commitUrlFormat?: string;
+  compareUrlFormat?: string;
+  userUrlFormat?: string;
+  bumpStrict?: boolean;
 }
 
 export type CreatePresetOptions = ConventionalCommitsPresetOptions;
@@ -87,65 +83,71 @@ export interface GenerateChangelogOptions extends CreatePresetOptions {
 
 export type ChangelogConfig = GenerateChangelogOptions;
 
-export const DEFAULT_TYPES: ReadonlyArray<ChangelogType> = [
-  {
-    type: 'feat',
-    section: 'Features',
-  },
-  {
-    type: 'fix',
-    scope: 'deps',
-    effect: 'hidden',
-  },
-  {
-    type: 'fix',
-    section: 'Bug Fixes',
-  },
-  {
-    type: 'revert',
-    section: 'Reverts',
-  },
-  {
-    type: 'docs',
-    section: 'Documentation',
-  },
-  {
-    type: 'refactor',
-    section: 'Code Refactoring',
-  },
-  {
-    type: 'perf',
-    section: 'Performance Improvements',
-  },
-  {
-    type: 'build',
-    section: 'Build System',
-  },
-  {
-    type: 'e2e',
-    section: 'End-to-end Testing',
-  },
-  {
-    type: 'ci',
-    effect: 'hidden',
-  },
-  {
-    type: 'chore',
-    effect: 'hidden',
-  },
-  {
-    type: 'style',
-    effect: 'hidden',
-  },
-  {
-    type: 'test',
-    effect: 'hidden',
-  },
-  {
-    type: 'release',
-    effect: 'hidden',
-  },
-];
+export const DEFAULT_TYPES: ReadonlyArray<Readonly<ChangelogType>> = Object.freeze(
+  [
+    {
+      type: 'feat',
+      section: 'Features',
+    },
+    {
+      type: 'fix',
+      scope: 'deps',
+      effect: 'hidden',
+    },
+    {
+      type: 'fix',
+      section: 'Bug Fixes',
+    },
+    {
+      type: 'revert',
+      section: 'Reverts',
+    },
+    {
+      type: 'docs',
+      section: 'Documentation',
+    },
+    {
+      type: 'refactor',
+      section: 'Code Refactoring',
+    },
+    {
+      type: 'perf',
+      section: 'Performance Improvements',
+    },
+    {
+      type: 'build',
+      section: 'Build System',
+    },
+    {
+      type: 'e2e',
+      section: 'End-to-end Testing',
+    },
+    {
+      type: 'ci',
+      effect: 'hidden',
+    },
+    {
+      type: 'chore',
+      effect: 'hidden',
+    },
+    {
+      type: 'style',
+      effect: 'hidden',
+    },
+    {
+      type: 'test',
+      effect: 'hidden',
+    },
+    {
+      type: 'release',
+      effect: 'hidden',
+    },
+  ].map((entry) => Object.freeze(entry)) as ReadonlyArray<Readonly<ChangelogType>>,
+);
+
+export function getDefaultTypes(): ReadonlyArray<Readonly<ChangelogType>> {
+  return DEFAULT_TYPES;
+}
 
 function normalizeTypes(types: ReadonlyArray<ChangelogType>) {
   return types.map((entry) => ({
@@ -161,37 +163,250 @@ function resolvePresetOptions(options: CreatePresetOptions = {}) {
   };
 }
 
+function resolveTagOptions(options: GenerateChangelogOptions) {
+  const tags: { prefix?: string; skipUnstable?: boolean } = {};
+
+  if (options.tagPrefix !== undefined) {
+    tags.prefix = options.tagPrefix;
+  }
+
+  if (options.skipUnstable !== undefined) {
+    tags.skipUnstable = options.skipUnstable;
+  }
+
+  return tags;
+}
+
+function resolveGeneratorOptions(options: GenerateChangelogOptions): ChangelogOptions {
+  const resolvedOptions: ChangelogOptions = {
+    append: options.append ?? false,
+    outputUnreleased: options.outputUnreleased ?? true,
+  };
+
+  if (options.firstRelease === true) {
+    resolvedOptions.releaseCount = 0;
+  } else if (options.releaseCount !== undefined) {
+    resolvedOptions.releaseCount = validateReleaseCount(options.releaseCount);
+  }
+
+  return resolvedOptions;
+}
+
+function validateGenerateChangelogOptions(options: GenerateChangelogOptions): void {
+  if (options.releaseCount !== undefined) {
+    validateReleaseCount(options.releaseCount);
+  }
+
+  validatePresetOptions(splitPresetOptions(options));
+}
+
+function validateReleaseCount(value: number): number {
+  if (!Number.isSafeInteger(value) || value < 0) {
+    throw new Error(`releaseCount must be a non-negative safe integer, got: ${value}`);
+  }
+
+  return value;
+}
+
+const PRESET_OPTION_KEYS = [
+  'types',
+  'ignoreCommits',
+  'issuePrefixes',
+  'scope',
+  'scopeOnly',
+  'preMajor',
+  'issueUrlFormat',
+  'commitUrlFormat',
+  'compareUrlFormat',
+  'userUrlFormat',
+  'bumpStrict',
+] as const;
+
+const STRING_FORMAT_KEYS = ['issueUrlFormat', 'commitUrlFormat', 'compareUrlFormat', 'userUrlFormat'] as const;
+
+function validatePresetOptions(options: CreatePresetOptions): void {
+  for (const key of Object.keys(options) as readonly string[]) {
+    if (!(PRESET_OPTION_KEYS as readonly string[]).includes(key)) {
+      throw new Error(`Unknown changelog config option: ${key}`);
+    }
+  }
+
+  if (options.types !== undefined) {
+    validateTypes(options.types);
+  }
+
+  if (options.ignoreCommits !== undefined && !(options.ignoreCommits instanceof RegExp)) {
+    throw new Error('ignoreCommits must be a RegExp');
+  }
+
+  if (options.issuePrefixes !== undefined) {
+    validateStringArray(options.issuePrefixes, 'issuePrefixes');
+  }
+
+  if (options.scope !== undefined) {
+    if (typeof options.scope !== 'string' && !Array.isArray(options.scope)) {
+      throw new Error('scope must be a string or an array of strings');
+    }
+    if (Array.isArray(options.scope)) {
+      validateStringArray(options.scope, 'scope');
+    }
+  }
+
+  if (options.scopeOnly !== undefined && typeof options.scopeOnly !== 'boolean') {
+    throw new Error('scopeOnly must be a boolean');
+  }
+
+  if (options.preMajor !== undefined && typeof options.preMajor !== 'boolean') {
+    throw new Error('preMajor must be a boolean');
+  }
+
+  for (const key of STRING_FORMAT_KEYS) {
+    const value = options[key];
+    if (value !== undefined && typeof value !== 'string') {
+      throw new Error(`${key} must be a string`);
+    }
+  }
+
+  if (options.bumpStrict !== undefined && typeof options.bumpStrict !== 'boolean') {
+    throw new Error('bumpStrict must be a boolean');
+  }
+}
+
+function validateTypes(types: unknown): void {
+  if (!Array.isArray(types)) {
+    throw new Error('types must be an array');
+  }
+
+  types.forEach((entry, index) => {
+    if (!isPlainObject(entry)) {
+      throw new Error(`types[${index}] must be an object`);
+    }
+
+    if (typeof entry.type !== 'string' || entry.type.length === 0) {
+      throw new Error(`types[${index}].type must be a non-empty string`);
+    }
+
+    if (entry.section !== undefined && typeof entry.section !== 'string') {
+      throw new Error(`types[${index}].section must be a string`);
+    }
+
+    if (entry.scope !== undefined && typeof entry.scope !== 'string') {
+      throw new Error(`types[${index}].scope must be a string`);
+    }
+
+    if (entry.effect !== undefined && entry.effect !== 'hidden') {
+      throw new Error(`types[${index}].effect must be 'hidden'`);
+    }
+
+    if (entry.hidden !== undefined && typeof entry.hidden !== 'boolean') {
+      throw new Error(`types[${index}].hidden must be a boolean`);
+    }
+
+    const knownKeys = new Set(['type', 'section', 'scope', 'effect', 'hidden']);
+    for (const key of Object.keys(entry)) {
+      if (!knownKeys.has(key)) {
+        throw new Error(`types[${index}] has unknown field: ${key}`);
+      }
+    }
+  });
+}
+
+function validateStringArray(value: unknown, label: string): void {
+  if (!Array.isArray(value)) {
+    throw new Error(`${label} must be an array of strings`);
+  }
+
+  value.forEach((entry, index) => {
+    if (typeof entry !== 'string') {
+      throw new Error(`${label}[${index}] must be a string`);
+    }
+  });
+}
+
 function resolveOutputPath(cwd: string, outputFile: string) {
   return isAbsolute(outputFile) ? outputFile : resolve(cwd, outputFile);
 }
 
-function pipeGeneratorToFile(generator: ConventionalChangelog, outputPath: string) {
+async function pipeGeneratorToFile(generator: ConventionalChangelog, outputPath: string, append: boolean) {
+  const tempPath = `${outputPath}.${randomUUID()}.tmp`;
+  const generated = await readGeneratorOutput(generator.writeStream());
+  const existing = await readExistingOutput(outputPath);
+  const contents = combineChangelogContents(existing, generated, append);
+
+  try {
+    await writeFile(tempPath, contents, 'utf8');
+    await rename(tempPath, outputPath);
+  } catch (error) {
+    await rm(tempPath, { force: true });
+    throw error;
+  }
+
+  return outputPath;
+}
+
+function readGeneratorOutput(stream: Readable): Promise<string> {
   return new Promise<string>((resolvePromise, reject) => {
-    const generatorStream = generator.writeStream();
-    const fileStream = createWriteStream(outputPath);
+    const chunks: Buffer[] = [];
+
+    const onData = (chunk: string | Buffer) => {
+      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+    };
 
     const onError = (error: Error) => {
-      generatorStream.off('error', onError);
-      fileStream.off('error', onError);
-      fileStream.off('finish', onFinish);
+      cleanup();
       reject(error);
     };
 
-    const onFinish = () => {
-      generatorStream.off('error', onError);
-      fileStream.off('error', onError);
-      fileStream.off('finish', onFinish);
-      resolvePromise(outputPath);
+    const onEnd = () => {
+      cleanup();
+      resolvePromise(Buffer.concat(chunks).toString('utf8'));
     };
 
-    generatorStream.on('error', onError);
-    fileStream.on('error', onError);
-    fileStream.on('finish', onFinish);
-    generatorStream.pipe(fileStream);
+    const cleanup = () => {
+      stream.off('data', onData);
+      stream.off('error', onError);
+      stream.off('end', onEnd);
+    };
+
+    stream.on('data', onData);
+    stream.on('error', onError);
+    stream.on('end', onEnd);
   });
 }
 
+async function readExistingOutput(outputPath: string): Promise<string | undefined> {
+  try {
+    return await readFile(outputPath, 'utf8');
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+      return undefined;
+    }
+
+    throw error;
+  }
+}
+
+function combineChangelogContents(existing: string | undefined, generated: string, append: boolean): string {
+  const next = trimTrailingNewlines(generated);
+  const current = trimTrailingNewlines(existing ?? '');
+
+  if (current.length === 0) {
+    return `${next}\n`;
+  }
+
+  if (next.length === 0) {
+    return `${current}\n`;
+  }
+
+  return append ? `${current}\n\n${next}\n` : `${next}\n\n${current}\n`;
+}
+
+function trimTrailingNewlines(value: string): string {
+  return value.replace(/\n+$/u, '');
+}
+
 export async function createPreset(options: CreatePresetOptions = {}) {
+  validatePresetOptions(options);
   const preset = await createConventionalCommitsPreset(resolvePresetOptions(options));
 
   return {
@@ -202,25 +417,26 @@ export async function createPreset(options: CreatePresetOptions = {}) {
 
 export async function createGenerator(options: GenerateChangelogOptions = {}) {
   const cwd = resolve(options.cwd ?? process.cwd());
+  validateGenerateChangelogOptions(options);
   const presetOptions = splitPresetOptions(options);
   const preset = await createPreset(presetOptions);
   const generator = new ConventionalChangelog(cwd);
 
-  const generatorOptions: ExtendedChangelogOptions = {
-    append: options.append ?? false,
-    releaseCount: options.releaseCount ?? 0,
-    skipUnstable: options.skipUnstable ?? true,
-    outputUnreleased: options.outputUnreleased ?? true,
-    tagPrefix: options.tagPrefix ?? 'v',
-    firstRelease: options.firstRelease ?? false,
-  };
-
-  generator.readPackage(resolve(cwd, 'package.json')).loadPreset(preset).options(generatorOptions).config({
-    tags: preset.tags,
-    commits: preset.commits,
-    parser: preset.parser,
-    writer: preset.writer,
-  });
+  generator
+    .readPackage(resolve(cwd, 'package.json'))
+    .loadPreset(preset)
+    .options(resolveGeneratorOptions(options))
+    .tags(
+      resolveTagOptions({
+        tagPrefix: options.tagPrefix ?? 'v',
+        skipUnstable: options.skipUnstable ?? true,
+      }),
+    )
+    .config({
+      commits: preset.commits,
+      parser: preset.parser,
+      writer: preset.writer,
+    });
 
   return generator;
 }
@@ -232,5 +448,5 @@ export async function generateChangelog(options: GenerateChangelogOptions = {}) 
   await mkdir(dirname(outputPath), { recursive: true });
 
   const generator = await createGenerator({ ...options, cwd });
-  return await pipeGeneratorToFile(generator, outputPath);
+  return await pipeGeneratorToFile(generator, outputPath, options.append ?? false);
 }

@@ -1,5 +1,5 @@
-import { existsSync } from 'node:fs';
-import { normalize, isAbsolute, resolve } from 'node:path';
+import { existsSync, lstatSync, realpathSync } from 'node:fs';
+import { normalize, isAbsolute, relative, resolve } from 'node:path';
 
 import type { ConfluenceClient, Attachment } from './confluence-client';
 import { escapeAttachmentFilename, escapeXmlAttribute, isRemoteUrl, LOCAL_IMAGE_PLACEHOLDER_RE } from './markdown';
@@ -12,7 +12,16 @@ export interface RewriteResult {
 export interface RewriteOptions {
   /** Directory used to resolve relative image src values. The markdown file's own dir. */
   markdownDir: string;
+  /** Documentation root used to confine local file reads. */
+  allowedRoot: string;
+  /** Maximum size accepted for an individual attachment source. */
+  maxAttachmentBytes?: number;
+  /** Maximum total size accepted across all uploaded sources in one document. */
+  maxTotalAttachmentBytes?: number;
 }
+
+const DEFAULT_MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
+const DEFAULT_MAX_TOTAL_ATTACHMENT_BYTES = 50 * 1024 * 1024;
 
 export async function rewriteImagesToAttachments(
   html: string,
@@ -43,6 +52,9 @@ async function resolvePlaceholders(
 
   const collected: { src: string; abs: string }[] = [];
   const seen = new Set<string>();
+  const maxAttachmentBytes = options.maxAttachmentBytes ?? DEFAULT_MAX_ATTACHMENT_BYTES;
+  const maxTotalAttachmentBytes = options.maxTotalAttachmentBytes ?? DEFAULT_MAX_TOTAL_ATTACHMENT_BYTES;
+  let totalBytes = 0;
   let m: RegExpExecArray | null;
   LOCAL_IMAGE_PLACEHOLDER_RE.lastIndex = 0;
   while ((m = LOCAL_IMAGE_PLACEHOLDER_RE.exec(html)) !== null) {
@@ -51,9 +63,17 @@ async function resolvePlaceholders(
       continue;
     }
     seen.add(rawSrc);
-    const abs = resolveImageForUpload(options.markdownDir, rawSrc);
-    if (!existsSync(abs)) {
-      continue;
+    const abs = resolveImageForUpload(options.markdownDir, options.allowedRoot, rawSrc);
+    const sourceInfo = lstatSync(abs);
+    if (!sourceInfo.isFile()) {
+      throw new Error(`Attachment source must be a regular file: ${rawSrc}`);
+    }
+    if (sourceInfo.size > maxAttachmentBytes) {
+      throw new Error(`Attachment source exceeds the size limit: ${rawSrc}`);
+    }
+    totalBytes += sourceInfo.size;
+    if (totalBytes > maxTotalAttachmentBytes) {
+      throw new Error(`Attachment sources exceed the total size limit for this document`);
     }
     collected.push({ src: rawSrc, abs });
   }
@@ -86,14 +106,27 @@ function renderAttachmentMacro(filename: string): string {
   return `<ac:image><ri:attachment ri:filename="${escapeXmlAttribute(safe)}" /></ac:image>`;
 }
 
-function resolveImageForUpload(markdownDir: string, src: string): string {
+function resolveImageForUpload(markdownDir: string, allowedRoot: string, src: string): string {
   if (isRemoteUrl(src)) {
     throw new Error(`Remote image should not be uploaded: ${src}`);
   }
   if (isAbsolute(src)) {
-    return normalize(src);
+    throw new Error(`Attachment source must be relative to the documentation root: ${src}`);
   }
-  return normalize(resolve(markdownDir, src));
+
+  const resolvedPath = normalize(resolve(markdownDir, src));
+  if (!existsSync(resolvedPath)) {
+    throw new Error(`Attachment source not found: ${src}`);
+  }
+
+  const resolvedRoot = realpathSync(allowedRoot);
+  const realSourcePath = realpathSync(resolvedPath);
+  const relativePath = relative(resolvedRoot, realSourcePath);
+  if (relativePath.startsWith('..') || isAbsolute(relativePath)) {
+    throw new Error(`Attachment source escapes the documentation root: ${src}`);
+  }
+
+  return realSourcePath;
 }
 
 function basenameLocal(absPath: string): string {

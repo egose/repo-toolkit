@@ -14,6 +14,23 @@ import {
 
 const internalNames = new Set(['@repo-toolkit/changelog', '@repo-toolkit/publish-packages']);
 
+async function createWorkspacePackage(
+  rootDir: string,
+  dirName: string,
+  packageJson: unknown,
+  extraFiles: Record<string, string> = {},
+): Promise<void> {
+  const packageDir = join(rootDir, 'packages', dirName);
+  await mkdir(packageDir, { recursive: true });
+  await writeFile(join(packageDir, 'package.json'), `${JSON.stringify(packageJson, null, 2)}\n`);
+
+  for (const [relativePath, contents] of Object.entries(extraFiles)) {
+    const targetPath = join(packageDir, relativePath);
+    await mkdir(join(targetPath, '..'), { recursive: true });
+    await writeFile(targetPath, contents);
+  }
+}
+
 describe('inferNpmTag', () => {
   it('derives the preid from a prerelease version', () => {
     expect(inferNpmTag('1.2.3-beta.1')).toBe('beta');
@@ -62,6 +79,30 @@ describe('sortPackagesByInternalDependencies', () => {
     expect(() => sortPackagesByInternalDependencies(packages, names)).toThrowError(
       /Circular internal dependency detected: a -> b -> a/,
     );
+  });
+
+  it('includes internal devDependencies in build order and uses a lexical tie-breaker', () => {
+    const names = new Set(['a', 'b', 'c']);
+    const packages = [
+      {
+        dir: '/repo/packages/c',
+        packageJson: { name: 'c', devDependencies: { a: 'workspace:*' } },
+      },
+      {
+        dir: '/repo/packages/b',
+        packageJson: { name: 'b' },
+      },
+      {
+        dir: '/repo/packages/a',
+        packageJson: { name: 'a' },
+      },
+    ];
+
+    expect(sortPackagesByInternalDependencies(packages, names).map((pkg) => pkg.packageJson.name)).toEqual([
+      'a',
+      'b',
+      'c',
+    ]);
   });
 });
 
@@ -139,6 +180,111 @@ describe('resolvePublishPackagesPlan', () => {
     expect(plan.provenance).toBe(true);
     expect(plan.dryRun).toBe(true);
   });
+
+  it('returns defensive array copies for plan fields', () => {
+    const plan = resolvePublishPackagesPlan({
+      version: 'v1.2.3',
+      cwd: repoRoot,
+      filters: ['publish-packages'],
+    });
+
+    expect(() => (plan.packageFiles as string[] as string[]).push('extra.md')).toThrowError();
+    expect(
+      resolvePublishPackagesPlan({ version: 'v1.2.3', cwd: repoRoot, filters: ['publish-packages'] }).packageFiles,
+    ).toEqual(['README.md', 'CHANGELOG.md', 'llms.txt']);
+  });
+
+  it('suppresses default package and root files when the no-default flags are set', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'repo-toolkit-publish-packages-plan-'));
+
+    try {
+      await writeFile(
+        join(rootDir, 'package.json'),
+        `${JSON.stringify({ name: 'monorepo', private: true }, null, 2)}\n`,
+      );
+      await createWorkspacePackage(rootDir, 'pkg-a', { name: '@example/pkg-a', version: '1.2.3' });
+
+      const plan = resolvePublishPackagesPlan({
+        version: '1.2.3',
+        cwd: rootDir,
+        filters: ['pkg-a'],
+        noDefaultPackageFiles: true,
+        noDefaultRootFiles: true,
+      });
+
+      expect(plan.packageFiles).toEqual([]);
+      expect(plan.rootFiles).toEqual([]);
+    } finally {
+      await rm(rootDir, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects private workspace packages during discovery', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'repo-toolkit-publish-packages-private-'));
+
+    try {
+      await writeFile(
+        join(rootDir, 'package.json'),
+        `${JSON.stringify({ name: 'monorepo', private: true }, null, 2)}\n`,
+      );
+      await createWorkspacePackage(rootDir, 'pkg-a', { name: '@example/pkg-a', version: '1.2.3', private: true });
+
+      expect(() => resolvePublishPackagesPlan({ version: '1.2.3', cwd: rootDir })).toThrowError(
+        /Refusing to publish private workspace package/,
+      );
+    } finally {
+      await rm(rootDir, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects duplicate workspace package names and reports every manifest path', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'repo-toolkit-publish-packages-duplicates-'));
+
+    try {
+      await writeFile(
+        join(rootDir, 'package.json'),
+        `${JSON.stringify({ name: 'monorepo', private: true }, null, 2)}\n`,
+      );
+      await createWorkspacePackage(rootDir, 'pkg-a', { name: '@example/pkg-a', version: '1.2.3' });
+      await createWorkspacePackage(rootDir, 'pkg-b', { name: '@example/pkg-a', version: '1.2.3' });
+
+      expect(() => resolvePublishPackagesPlan({ version: '1.2.3', cwd: rootDir })).toThrowError(/pkg-a\/package.json/);
+      expect(() => resolvePublishPackagesPlan({ version: '1.2.3', cwd: rootDir })).toThrowError(/pkg-b\/package.json/);
+    } finally {
+      await rm(rootDir, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects unknown config-style option keys and invalid selector arrays', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'repo-toolkit-publish-packages-validation-'));
+
+    try {
+      await writeFile(
+        join(rootDir, 'package.json'),
+        `${JSON.stringify({ name: 'monorepo', private: true }, null, 2)}\n`,
+      );
+      await createWorkspacePackage(rootDir, 'pkg-a', { name: '@example/pkg-a', version: '1.2.3' });
+
+      expect(() =>
+        resolvePublishPackagesPlan({
+          version: '1.2.3',
+          cwd: rootDir,
+          filters: ['pkg-a'],
+          unknownKey: true,
+        } as unknown as Parameters<typeof resolvePublishPackagesPlan>[0]),
+      ).toThrowError(/Unknown publish-packages option/);
+
+      expect(() =>
+        resolvePublishPackagesPlan({
+          version: '1.2.3',
+          cwd: rootDir,
+          filters: [''],
+        }),
+      ).toThrowError(/filters must be an array of non-empty strings/);
+    } finally {
+      await rm(rootDir, { recursive: true, force: true });
+    }
+  });
 });
 
 describe('publishPackages (integration, dry-run)', () => {
@@ -183,4 +329,35 @@ describe('publishPackages (integration, dry-run)', () => {
       await rm(rootDir, { recursive: true, force: true });
     }
   }, 30_000);
+
+  it('preflights every selected package before the first publish side effect', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'repo-toolkit-publish-packages-preflight-'));
+
+    try {
+      await writeFile(
+        join(rootDir, 'package.json'),
+        `${JSON.stringify({ name: 'monorepo', private: true, license: 'MIT' }, null, 2)}\n`,
+      );
+      await createWorkspacePackage(
+        rootDir,
+        'pkg-a',
+        { name: '@example/pkg-a', version: '1.2.3', main: 'dist/index.js' },
+        { 'dist/index.js': 'export {}\n', 'README.md': '# pkg-a\n' },
+      );
+      await createWorkspacePackage(rootDir, 'pkg-b', { name: '@example/pkg-b', version: '1.2.3', private: true });
+      await writeFile(join(rootDir, 'LICENSE'), 'MIT\n');
+
+      expect(() =>
+        publishPackages({
+          version: '1.2.3',
+          cwd: rootDir,
+          skipBuild: true,
+          dryRun: true,
+        }),
+      ).toThrowError(/Refusing to publish private workspace package/);
+      expect(existsSync(join(rootDir, 'packages', 'pkg-a', 'dist', 'package.json'))).toBe(false);
+    } finally {
+      await rm(rootDir, { recursive: true, force: true });
+    }
+  });
 });

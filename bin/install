@@ -6,7 +6,6 @@ install_type="$ASDF_INSTALL_TYPE"
 version="$ASDF_INSTALL_VERSION"
 install_path="$ASDF_INSTALL_PATH"
 download_path="$ASDF_DOWNLOAD_PATH"
-manifest_path="$install_path/artifact-manifest.json"
 
 if [ "$install_type" != "version" ]; then
   echo "asdf-${tool_name} supports install type 'version' only (got: ${install_type})" >&2
@@ -28,49 +27,224 @@ fi
 
 echo "Installing ${tool_name} v${version} from $(basename "${archives[0]}") ..."
 
+validated_manifest_file=$(mktemp)
+trap 'rm -f "$validated_manifest_file"' EXIT
+
+node - "${archives[0]}" "$version" "$tool_name" >"$validated_manifest_file" <<'EOF'
+const { execFileSync } = require('node:child_process');
+const path = require('node:path');
+
+const SCHEMA_VERSION = 1;
+const MAX_ARCHIVE_MEMBER_COUNT = 20000;
+const MAX_ARCHIVE_PATH_LENGTH = 512;
+const MAX_ARCHIVE_EXPANDED_BYTES = 512 * 1024 * 1024;
+const SAFE_FILENAME_COMPONENT_RE = /^[A-Za-z0-9][A-Za-z0-9._+-]*$/u;
+const SAFE_COMMAND_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/u;
+
+function normalizeRelativePosixPath(value, label) {
+  if (typeof value !== 'string' || value.length === 0) {
+    throw new Error(`${label} must be a non-empty string`);
+  }
+  if (
+    value.includes('\\') ||
+    value.includes('\0') ||
+    value.includes('\n') ||
+    value.includes('\r') ||
+    /^[A-Za-z]:/u.test(value) ||
+    value.startsWith('/')
+  ) {
+    throw new Error(`${label} must be a normalized relative POSIX path: ${value}`);
+  }
+  const normalized = path.posix.normalize(value).replace(/^\.\//u, '');
+  if (normalized.length === 0 || normalized === '.' || normalized.split('/').includes('..')) {
+    throw new Error(`${label} must be a normalized relative POSIX path: ${value}`);
+  }
+  return normalized;
+}
+
+function parseArchiveEntry(line) {
+  const match = /^([A-Za-z-])\S*\s+\d+\/\d+\s+(\d+)\s+\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}(?:\.\d+)?\s+(.*)$/u.exec(line);
+  if (!match) {
+    throw new Error(`Unable to parse tar listing entry: ${line}`);
+  }
+  const [, type, size, rest] = match;
+  if (type === 'l') {
+    const linkMatch = /^(.*) -> (.*)$/u.exec(rest);
+    if (!linkMatch) {
+      throw new Error(`Unable to parse symlink tar entry: ${line}`);
+    }
+    return { type, size: Number(size), path: linkMatch[1].replace(/\/$/u, ''), linkTarget: linkMatch[2] };
+  }
+  if (type === 'h') {
+    const linkMatch = /^(.*) link to (.*)$/u.exec(rest);
+    if (!linkMatch) {
+      throw new Error(`Unable to parse hardlink tar entry: ${line}`);
+    }
+    return { type, size: Number(size), path: linkMatch[1].replace(/\/$/u, ''), linkTarget: linkMatch[2] };
+  }
+  return { type, size: Number(size), path: rest.replace(/\/$/u, '') };
+}
+
+function validateArchive(archivePath) {
+  const output = execFileSync('tar', ['-tvzf', archivePath, '--full-time', '--numeric-owner'], { encoding: 'utf8' });
+  const entries = output.split('\n').map((line) => line.trimEnd()).filter(Boolean).map(parseArchiveEntry);
+  if (entries.length === 0) {
+    throw new Error(`Release artifact is empty: ${archivePath}`);
+  }
+  if (entries.length > MAX_ARCHIVE_MEMBER_COUNT) {
+    throw new Error(`Release artifact exceeds the member limit: ${entries.length}`);
+  }
+
+  let expandedBytes = 0;
+  const seenPaths = new Set();
+  const topLevelNames = new Set();
+
+  for (const entry of entries) {
+    if (entry.path.length > MAX_ARCHIVE_PATH_LENGTH) {
+      throw new Error(`Release artifact member path is too long: ${entry.path}`);
+    }
+    expandedBytes += entry.size;
+    if (expandedBytes > MAX_ARCHIVE_EXPANDED_BYTES) {
+      throw new Error(`Release artifact exceeds the expanded size limit: ${archivePath}`);
+    }
+    const normalizedPath = normalizeRelativePosixPath(entry.path, 'archive member');
+    if (seenPaths.has(normalizedPath)) {
+      throw new Error(`Release artifact contains duplicate member paths: ${normalizedPath}`);
+    }
+    seenPaths.add(normalizedPath);
+    const topLevelName = normalizedPath.split('/')[0] || normalizedPath;
+    topLevelNames.add(topLevelName);
+    if (topLevelNames.size > 1) {
+      throw new Error('Release artifact must contain exactly one top-level directory.');
+    }
+    if (!['-', 'd', 'l', 'h'].includes(entry.type)) {
+      throw new Error(`Release artifact contains unsupported archive member type for ${normalizedPath}`);
+    }
+    if (!normalizedPath.includes('/') && entry.type !== 'd') {
+      throw new Error(`Release artifact contains a top-level file: ${normalizedPath}`);
+    }
+    if (entry.type === 'l' || entry.type === 'h') {
+      const target = entry.linkTarget;
+      if (!target || target.startsWith('/') || target.includes('\\') || /^[A-Za-z]:/u.test(target)) {
+        throw new Error(`Release artifact contains an escaping link: ${normalizedPath} -> ${target}`);
+      }
+      const resolvedTarget = path.posix.normalize(path.posix.join(path.posix.dirname(normalizedPath), target));
+      if (resolvedTarget === '.' || (resolvedTarget !== topLevelName && !resolvedTarget.startsWith(`${topLevelName}/`))) {
+        throw new Error(`Release artifact contains an escaping link: ${normalizedPath} -> ${target}`);
+      }
+    }
+  }
+
+  const [topLevelDirName] = [...topLevelNames];
+  if (!topLevelDirName) {
+    throw new Error(`Release artifact is missing a top-level directory: ${archivePath}`);
+  }
+  return { archiveFileName: path.basename(archivePath), topLevelDirName };
+}
+
+function validateManifest(raw, topLevelDirName, archiveFileName, version, toolName) {
+  const manifest = JSON.parse(raw);
+  if (!manifest || typeof manifest !== 'object' || Array.isArray(manifest)) {
+    throw new Error('artifact-manifest.json must be an object.');
+  }
+  if (manifest.schemaVersion !== SCHEMA_VERSION) {
+    throw new Error(`artifact-manifest.json schemaVersion must be ${SCHEMA_VERSION}.`);
+  }
+  if (manifest.toolName !== toolName || !SAFE_FILENAME_COMPONENT_RE.test(manifest.toolName)) {
+    throw new Error(`artifact-manifest.json toolName mismatch: ${manifest.toolName}`);
+  }
+  if (manifest.version !== version) {
+    throw new Error(`artifact-manifest.json version mismatch: ${manifest.version} (expected ${version})`);
+  }
+  if (manifest.artifactDirName !== topLevelDirName) {
+    throw new Error(`artifact-manifest.json artifactDirName mismatch: ${manifest.artifactDirName} (expected ${topLevelDirName})`);
+  }
+  if (manifest.archiveFileName !== archiveFileName) {
+    throw new Error(`artifact-manifest.json archiveFileName mismatch: ${manifest.archiveFileName} (expected ${archiveFileName})`);
+  }
+  if (!Array.isArray(manifest.commands) || manifest.commands.length === 0) {
+    throw new Error('artifact-manifest.json must contain at least one command.');
+  }
+  if (!Array.isArray(manifest.requiredFiles)) {
+    throw new Error('artifact-manifest.json must contain requiredFiles.');
+  }
+
+  const commandNames = new Set();
+  for (const command of manifest.commands) {
+    if (!command || typeof command !== 'object' || Array.isArray(command)) {
+      throw new Error('artifact-manifest.json commands must contain objects.');
+    }
+    if (typeof command.name !== 'string' || !SAFE_COMMAND_NAME_RE.test(command.name)) {
+      throw new Error('artifact-manifest.json commands must contain safe command names.');
+    }
+    if (commandNames.has(command.name)) {
+      throw new Error(`artifact-manifest.json contains duplicate command: ${command.name}`);
+    }
+    commandNames.add(command.name);
+    if (typeof command.packageDir !== 'string' || typeof command.entry !== 'string') {
+      throw new Error(`artifact-manifest.json command paths must be strings for ${command.name}`);
+    }
+    normalizeRelativePosixPath(command.packageDir, `command packageDir for ${command.name}`);
+    normalizeRelativePosixPath(command.entry, `command entry for ${command.name}`);
+  }
+
+  const requiredFiles = [];
+  const seenRequiredFiles = new Set();
+  for (const requiredFile of manifest.requiredFiles) {
+    if (typeof requiredFile !== 'string') {
+      throw new Error('artifact-manifest.json requiredFiles entries must be strings.');
+    }
+    const normalized = normalizeRelativePosixPath(requiredFile, 'requiredFiles');
+    if (seenRequiredFiles.has(normalized)) {
+      throw new Error(`artifact-manifest.json contains duplicate requiredFiles entry: ${normalized}`);
+    }
+    seenRequiredFiles.add(normalized);
+    requiredFiles.push(normalized);
+  }
+
+  return { requiredFiles };
+}
+
+const archivePath = process.argv[2];
+const version = process.argv[3];
+const toolName = process.argv[4];
+const normalizedVersion = version.startsWith('v') ? version.slice(1) : version;
+const validatedArchive = validateArchive(archivePath);
+const manifestPathInArchive = `${validatedArchive.topLevelDirName}/artifact-manifest.json`;
+const manifestRaw = execFileSync('tar', ['-xOzf', archivePath, manifestPathInArchive], { encoding: 'utf8' });
+const validatedManifest = validateManifest(
+  manifestRaw,
+  validatedArchive.topLevelDirName,
+  validatedArchive.archiveFileName,
+  normalizedVersion,
+  toolName,
+);
+process.stdout.write(
+  `${JSON.stringify({ topLevelDirName: validatedArchive.topLevelDirName, requiredFiles: validatedManifest.requiredFiles })}\n`,
+);
+EOF
+
 mkdir -p "$install_path"
 tar -xzf "${archives[0]}" -C "$install_path" --strip-components=1
 
-if [ ! -f "$manifest_path" ]; then
-  echo "Error: release archive is missing artifact-manifest.json." >&2
-  exit 1
-fi
-
-required_paths_file=$(mktemp)
-trap 'rm -f "$required_paths_file"' EXIT
-
-node - "$manifest_path" >"$required_paths_file" <<'EOF' || exit_code=$?
+node - "$validated_manifest_file" "$install_path" <<'EOF'
 const fs = require('node:fs');
-const manifestPath = process.argv[2];
-const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+const path = require('node:path');
 
-if (!Array.isArray(manifest.commands) || manifest.commands.length === 0) {
-  throw new Error('artifact-manifest.json must contain at least one command');
-}
+const validatedManifest = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+const installPath = path.resolve(process.argv[3]);
 
-if (!Array.isArray(manifest.requiredFiles)) {
-  throw new Error('artifact-manifest.json must contain requiredFiles');
-}
-
-for (const requiredFile of manifest.requiredFiles) {
-  process.stdout.write(`${requiredFile}\n`);
+for (const relativePath of validatedManifest.requiredFiles) {
+  const absolutePath = path.resolve(installPath, relativePath);
+  const relativeCheck = path.relative(installPath, absolutePath);
+  if (relativeCheck.startsWith('..') || path.isAbsolute(relativeCheck)) {
+    throw new Error(`Required file escapes install root: ${relativePath}`);
+  }
+  if (!fs.existsSync(absolutePath) || !fs.statSync(absolutePath).isFile()) {
+    throw new Error(`Release archive is missing ${relativePath}.`);
+  }
 }
 EOF
-exit_code=${exit_code:-0}
-
-if [ "$exit_code" -ne 0 ]; then
-  echo "Error: failed to read required files from manifest." >&2
-  exit "$exit_code"
-fi
-
-mapfile -t required_paths < "$required_paths_file"
-
-for relative_path in "${required_paths[@]}"; do
-  if [ ! -f "$install_path/$relative_path" ]; then
-    echo "Error: release archive is missing $relative_path." >&2
-    exit 1
-  fi
-done
 
 chmod +x "$install_path/bin"/* 2>/dev/null || true
 

@@ -1,11 +1,19 @@
 import { Buffer } from 'node:buffer';
-import { readFileSync } from 'node:fs';
+import { randomBytes } from 'node:crypto';
+import { statSync, createReadStream } from 'node:fs';
 import { basename } from 'node:path';
+import { Readable } from 'node:stream';
 
 const V2_PATH = '/api/v2';
 const V1_PATH = '/rest/api';
 const DEFAULT_USER_AGENT = 'repo-toolkit-confluence/1.0 (+node)';
 const MAX_LIMIT = 250;
+const MAX_ERROR_BODY_LENGTH = 8_192;
+const MAX_PAGES_PER_QUERY = 100;
+export const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
+export const DEFAULT_MAX_RETRIES = 3;
+export const DEFAULT_MAX_UPLOAD_BYTES = 50 * 1024 * 1024;
+const SAFE_METHODS: ReadonlySet<string> = new Set(['GET', 'HEAD', 'OPTIONS']);
 
 export interface ConfluenceClientOptions {
   baseUrl: string;
@@ -13,6 +21,12 @@ export interface ConfluenceClientOptions {
   apiToken: string;
   fetch?: typeof fetch;
   userAgent?: string;
+  /** Timeout (ms) applied to every HTTP request. Default 30000. */
+  requestTimeoutMs?: number;
+  /** Retries for 429 / 5xx on safe methods (GET/HEAD/OPTIONS). Default 3; never applied to writes. */
+  maxRetries?: number;
+  /** Per-file maximum attachment upload size in bytes. Default 50 MB. */
+  maxUploadBytes?: number;
 }
 
 export interface PageBody {
@@ -69,12 +83,27 @@ interface PaginatedResult<T> {
   _links?: { next?: string };
 }
 
+export class ConfluenceUploadError extends Error {
+  readonly status: number;
+  readonly endpoint: string;
+  readonly responseBody: string;
+
+  constructor(message: string, status: number, endpoint: string, responseBody: string) {
+    super(`${message} (status=${status}, endpoint=${endpoint})`);
+    this.name = 'ConfluenceUploadError';
+    this.status = status;
+    this.endpoint = endpoint;
+    this.responseBody = responseBody;
+  }
+}
+
 const STATUS_CODES = {
   BAD_REQUEST: 400,
   UNAUTHORIZED: 401,
   FORBIDDEN: 403,
   NOT_FOUND: 404,
   CONFLICT: 409,
+  TOO_MANY_REQUESTS: 429,
 } as const;
 
 export class ConfluenceApiError extends Error {
@@ -93,9 +122,13 @@ export class ConfluenceApiError extends Error {
 
 export class ConfluenceClient {
   private readonly baseUrl: string;
+  private readonly baseUrlOrigin: string;
   private readonly authHeader: string;
   private readonly fetchFn: typeof fetch;
   private readonly userAgent: string;
+  private readonly requestTimeoutMs: number;
+  private readonly maxRetries: number;
+  private readonly maxUploadBytes: number;
 
   constructor(options: ConfluenceClientOptions) {
     if (!options.baseUrl) {
@@ -105,10 +138,15 @@ export class ConfluenceClient {
       throw new Error('ConfluenceClient: username and apiToken are required');
     }
 
-    this.baseUrl = normalizeBaseUrl(options.baseUrl);
+    const normalized = normalizeBaseUrl(options.baseUrl);
+    this.baseUrl = normalized;
+    this.baseUrlOrigin = new URL(normalized).origin;
     this.authHeader = 'Basic ' + Buffer.from(`${options.username}:${options.apiToken}`, 'utf8').toString('base64');
     this.fetchFn = options.fetch ?? globalThis.fetch;
     this.userAgent = options.userAgent ?? DEFAULT_USER_AGENT;
+    this.requestTimeoutMs = options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
+    this.maxRetries = options.maxRetries ?? DEFAULT_MAX_RETRIES;
+    this.maxUploadBytes = options.maxUploadBytes ?? DEFAULT_MAX_UPLOAD_BYTES;
   }
 
   async getSpaceIdByKey(spaceKey: string): Promise<string> {
@@ -124,17 +162,36 @@ export class ConfluenceClient {
     return result.id;
   }
 
-  async getPageByTitle(spaceId: string, title: string): Promise<Page | undefined> {
-    const query = new URLSearchParams({
-      'space-id': spaceId,
-      title: title,
-      limit: '1',
-      'body-format': 'storage',
-    });
-    const data = await this.requestJson<PaginatedResult<Page>>(this.v2Url(`/pages?${query.toString()}`), {
-      method: 'GET',
-    });
-    return data.results[0];
+  async getPagesByTitle(spaceId: string, title: string): Promise<Page[]> {
+    const pages: Page[] = [];
+    const visited = new Set<string>();
+    let pageCount = 0;
+    const startUrl = this.v2Url(
+      `/pages?${new URLSearchParams({
+        'space-id': spaceId,
+        title,
+        limit: String(MAX_LIMIT),
+        'body-format': 'storage',
+      }).toString()}`,
+    );
+
+    let nextUrl: string | undefined = startUrl;
+    while (nextUrl) {
+      pageCount += 1;
+      if (pageCount > MAX_PAGES_PER_QUERY) {
+        throw new ConfluenceApiError(`Pagination limit (${MAX_PAGES_PER_QUERY}) exceeded`, 0, nextUrl, '');
+      }
+      if (visited.has(nextUrl)) {
+        throw new ConfluenceApiError('Confluence pagination loop detected', 0, nextUrl, '');
+      }
+      visited.add(nextUrl);
+
+      const data = await this.requestJson<PaginatedResult<Page>>(nextUrl, { method: 'GET' });
+      pages.push(...data.results);
+      nextUrl = resolveNextUrl(this.baseUrl, this.baseUrlOrigin, data._links?.next);
+    }
+
+    return pages;
   }
 
   async getPage(pageId: string): Promise<Page> {
@@ -181,21 +238,32 @@ export class ConfluenceClient {
 
   async getAttachments(pageId: string): Promise<Attachment[]> {
     const results: Attachment[] = [];
-    let cursor: string | undefined;
-    do {
-      const query = new URLSearchParams({ limit: String(MAX_LIMIT) });
-      if (cursor) {
-        query.set('cursor', cursor);
+    const visited = new Set<string>();
+    let pageCount = 0;
+    let nextUrl: string | undefined = this.v2Url(
+      `/pages/${encodeURIComponent(pageId)}/attachments?${new URLSearchParams({
+        limit: String(MAX_LIMIT),
+      }).toString()}`,
+    );
+
+    while (nextUrl) {
+      pageCount += 1;
+      if (pageCount > MAX_PAGES_PER_QUERY) {
+        throw new ConfluenceApiError(`Pagination limit (${MAX_PAGES_PER_QUERY}) exceeded`, 0, nextUrl, '');
       }
-      const data = await this.requestJson<PaginatedResult<Attachment> & { meta?: { hasMore?: boolean } }>(
-        this.v2Url(`/pages/${encodeURIComponent(pageId)}/attachments?${query.toString()}`),
-        { method: 'GET' },
-      );
+      if (visited.has(nextUrl)) {
+        throw new ConfluenceApiError('Confluence pagination loop detected', 0, nextUrl, '');
+      }
+      visited.add(nextUrl);
+
+      const data = await this.requestJson<PaginatedResult<Attachment> & { meta?: { hasMore?: boolean } }>(nextUrl, {
+        method: 'GET',
+      });
       for (const item of data.results) {
         results.push(item);
       }
-      cursor = data._links?.next;
-    } while (cursor);
+      nextUrl = resolveNextUrl(this.baseUrl, this.baseUrlOrigin, data._links?.next);
+    }
     return results;
   }
 
@@ -218,31 +286,75 @@ export class ConfluenceClient {
     filePath: string,
     comment?: string,
   ): Promise<Attachment> {
-    const fileBuffer = readFileSync(filePath);
-    const filename = basename(filePath);
-    const boundary = '----repo-toolkit-confluence-' + Math.random().toString(16).slice(2);
-    const parts: Buffer[] = [];
-
-    parts.push(multipartField(boundary, 'file', filename, fileBuffer));
-    if (comment) {
-      parts.push(multipartField(boundary, 'comment', undefined, Buffer.from(comment, 'utf8')));
+    const info = statSync(filePath);
+    if (!info.isFile()) {
+      throw new ConfluenceApiError(`Attachment source must be a regular file: ${filePath}`, 0, filePath, '');
     }
-    parts.push(Buffer.from(`--${boundary}--\r\n`));
+    if (info.size > this.maxUploadBytes) {
+      throw new ConfluenceApiError(
+        `Attachment exceeds upload size limit (${this.maxUploadBytes} bytes): ${filePath}`,
+        0,
+        filePath,
+        '',
+      );
+    }
 
+    const filename = sanitizeFilename(basename(filePath));
     const endpoint = attachmentId
       ? this.v1Url(`/content/${encodeURIComponent(pageId)}/child/attachment/${encodeURIComponent(attachmentId)}/data`)
       : this.v1Url(`/content/${encodeURIComponent(pageId)}/child/attachment`);
 
-    const data = await this.requestJson<Attachment | PaginatedResult<Attachment>>(endpoint, {
-      method: 'POST',
-      headers: {
-        'Content-Type': `multipart/form-data; boundary=${boundary}`,
-        'X-Atlassian-Token': 'no-check',
-      },
-      body: Buffer.concat(parts) as unknown as BodyInit,
-    });
+    const boundary = '----repo-toolkit-confluence-' + randomBytes(16).toString('hex');
 
-    return normalizeAttachmentResult(data);
+    const fileStream = createReadStream(filePath);
+    const commentBuffer = comment ? multipartField(boundary, 'comment', undefined, Buffer.from(comment, 'utf8')) : null;
+    const body = Readable.from(
+      (async function* () {
+        const fileHeader = Buffer.from(
+          `--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="${filename}"\r\nContent-Type: application/octet-stream\r\n\r\n`,
+          'utf8',
+        );
+        yield fileHeader;
+        for await (const chunk of fileStream) {
+          yield Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk as Uint8Array);
+        }
+        yield Buffer.from('\r\n', 'utf8');
+        if (commentBuffer) {
+          yield commentBuffer;
+        }
+        yield Buffer.from(`--${boundary}--\r\n`, 'utf8');
+      })(),
+    );
+
+    try {
+      const data = await this.requestJson<Attachment | PaginatedResult<Attachment>>(endpoint, {
+        method: 'POST',
+        headers: {
+          'Content-Type': `multipart/form-data; boundary=${boundary}`,
+          'X-Atlassian-Token': 'no-check',
+        },
+        body: body as unknown as BodyInit,
+        uploadKind: 'attachment',
+        contentTypeExplicit: true,
+      });
+
+      return normalizeAttachmentResult(data);
+    } catch (cause) {
+      if (cause instanceof ConfluenceApiError) {
+        const status = cause.status;
+        if (
+          status === STATUS_CODES.UNAUTHORIZED ||
+          status === STATUS_CODES.FORBIDDEN ||
+          status === STATUS_CODES.TOO_MANY_REQUESTS ||
+          status >= 500
+        ) {
+          const uploadErr = new ConfluenceUploadError(cause.message, status, cause.endpoint, cause.responseBody);
+          uploadErr.stack = cause.stack;
+          throw uploadErr;
+        }
+      }
+      throw cause;
+    }
   }
 
   private async requestJson<T>(
@@ -251,48 +363,97 @@ export class ConfluenceClient {
       method: string;
       headers?: Record<string, string>;
       body?: BodyInit;
+      uploadKind?: 'attachment';
+      contentTypeExplicit?: boolean;
     },
   ): Promise<T> {
+    void init.uploadKind;
+    void init.contentTypeExplicit;
     const headers: Record<string, string> = {
       Authorization: this.authHeader,
       Accept: 'application/json',
       'User-Agent': this.userAgent,
     };
-    if (init.headers) {
-      for (const [k, v] of Object.entries(init.headers)) {
-        headers[k] = v;
+
+    for (const [k, v] of Object.entries(init.headers ?? {})) {
+      headers[k] = v;
+    }
+
+    const method = init.method.toUpperCase();
+    const isSafe = SAFE_METHODS.has(method);
+    const maxRetries = isSafe ? this.maxRetries : 0;
+
+    let attempt = 0;
+    let lastError: unknown;
+    while (attempt <= maxRetries) {
+      const signal = this.makeTimeoutSignal();
+      try {
+        const response = await this.fetchFn(endpoint, {
+          method,
+          headers,
+          body: init.body as BodyInit,
+          redirect: 'manual',
+          signal,
+        });
+
+        if (response.status >= 300 && response.status < 400) {
+          throw new ConfluenceApiError('Redirect responses are not allowed', response.status, endpoint, '');
+        }
+
+        const text = await readBodyBounded(response, MAX_ERROR_BODY_LENGTH);
+        if (!response.ok) {
+          if (isSafe && shouldRetryStatus(response.status) && attempt < maxRetries) {
+            attempt += 1;
+            lastError = new ConfluenceApiError(describeStatus(response.status), response.status, endpoint, text);
+            await sleepBackoff(response, endpoint);
+            continue;
+          }
+          throw new ConfluenceApiError(describeStatus(response.status), response.status, endpoint, text);
+        }
+
+        if (text.length === 0) {
+          return {} as T;
+        }
+        try {
+          return JSON.parse(text) as T;
+        } catch {
+          throw new ConfluenceApiError('Response was not valid JSON', response.status, endpoint, text);
+        }
+      } catch (cause) {
+        if (cause instanceof ConfluenceApiError || cause instanceof ConfluenceUploadError) {
+          throw cause;
+        }
+        const reason = cause instanceof Error ? cause : undefined;
+        if (isSafe && reason && reason.name !== 'AbortError' && attempt < maxRetries) {
+          attempt += 1;
+          lastError = cause;
+          await sleepBackoff(undefined, endpoint, reason);
+          continue;
+        }
+        throw new ConfluenceApiError(reason ? `Network error: ${reason.message}` : 'Network error', 0, endpoint, '');
       }
     }
 
-    let response: Response;
-    try {
-      response = await this.fetchFn(endpoint, {
-        method: init.method,
-        headers,
-        body: init.body as BodyInit,
-      });
-    } catch (cause) {
-      throw new ConfluenceApiError(
-        cause instanceof Error ? `Network error: ${cause.message}` : 'Network error',
-        0,
-        endpoint,
-        '',
-      );
+    if (lastError instanceof Error) {
+      throw new ConfluenceApiError(`Network error: ${lastError.message}`, 0, endpoint, '');
     }
+    throw new ConfluenceApiError('Network error', 0, endpoint, '');
+  }
 
-    const text = await response.text();
-    if (!response.ok) {
-      throw new ConfluenceApiError(describeStatus(response.status), response.status, endpoint, text);
+  private makeTimeoutSignal(): AbortSignal {
+    const ms = this.requestTimeoutMs;
+    if (ms <= 0) {
+      return new AbortController().signal;
     }
-
-    if (text.length === 0) {
-      return {} as T;
+    if (typeof (AbortSignal as unknown as { timeout?: (ms: number) => AbortSignal }).timeout === 'function') {
+      return AbortSignal.timeout(ms);
     }
-    try {
-      return JSON.parse(text) as T;
-    } catch {
-      throw new ConfluenceApiError('Response was not valid JSON', response.status, endpoint, text);
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(new Error(`Request timed out after ${ms}ms`)), ms);
+    if (typeof (timer as unknown as { unref?: () => void }).unref === 'function') {
+      (timer as unknown as { unref: () => void }).unref();
     }
+    return controller.signal;
   }
 
   private v2Url(path: string): string {
@@ -302,6 +463,109 @@ export class ConfluenceClient {
   private v1Url(path: string): string {
     return this.baseUrl + V1_PATH + path;
   }
+}
+
+function shouldRetryStatus(status: number): boolean {
+  return status === STATUS_CODES.TOO_MANY_REQUESTS || status >= 500;
+}
+
+async function sleepBackoff(response: Response | undefined, endpoint: string, cause?: Error): Promise<void> {
+  let delayMs = 0;
+  if (response) {
+    const retryAfter = response.headers.get('Retry-After');
+    if (retryAfter) {
+      delayMs = parseRetryAfter(retryAfter, endpoint);
+    }
+  }
+  if (delayMs <= 0) {
+    const base = cause ? 200 : 500;
+    const jitter = Math.floor(Math.random() * 250);
+    delayMs = base + jitter;
+  }
+  const boundedDelay = Math.min(delayMs, 30_000);
+  await delay(boundedDelay);
+}
+
+function parseRetryAfter(value: string, endpoint: string): number {
+  if (!value) {
+    return 0;
+  }
+  if (/^\d+$/.test(value.trim())) {
+    const seconds = Number(value);
+    if (!Number.isFinite(seconds) || seconds < 0) {
+      return 0;
+    }
+    return Math.min(seconds * 1000, 30_000);
+  }
+  const date = Date.parse(value);
+  if (!Number.isNaN(date)) {
+    return Math.max(0, Math.min(date - Date.now(), 30_000));
+  }
+  void endpoint;
+  return 0;
+}
+
+function delay(ms: number): Promise<void> {
+  if (ms <= 0) {
+    return Promise.resolve();
+  }
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
+async function readBodyBounded(response: Response, maxBytes: number): Promise<string> {
+  let total = 0;
+  const chunks: Buffer[] = [];
+  const reader = (response.body as unknown as AsyncIterable<Buffer> | undefined)?.[Symbol.asyncIterator]?.();
+  if (reader) {
+    let oversized = false;
+    while (true) {
+      const step = await reader.next();
+      if (step.done) {
+        break;
+      }
+      const chunk = Buffer.isBuffer(step.value) ? step.value : Buffer.from(step.value);
+      if (total + chunk.length > maxBytes) {
+        oversized = true;
+        chunks.push(chunk.subarray(0, Math.max(0, maxBytes - total)));
+        break;
+      }
+      total += chunk.length;
+      chunks.push(chunk);
+    }
+    let body = Buffer.concat(chunks).toString('utf8');
+    if (oversized) {
+      body = body + '...';
+    }
+    return body;
+  }
+
+  const text = await response.text();
+  if (text.length > maxBytes) {
+    return text.slice(0, maxBytes) + '...';
+  }
+  return text;
+}
+
+function sanitizeFilename(name: string): string {
+  if (name === '' || name === '.' || name === '..') {
+    throw new ConfluenceApiError('Invalid attachment filename', 0, 'attachment', '');
+  }
+  let cleaned = '';
+  for (let i = 0; i < name.length; i += 1) {
+    const code = name.charCodeAt(i);
+    if (code === 0x22 || code === 0x27 || code === 0xd || code === 0xa || code === 0x00) {
+      cleaned += '_';
+      continue;
+    }
+    cleaned += name[i] ?? '';
+  }
+  cleaned = cleaned.replace(/[/\\]/g, '_');
+  if (cleaned === '' || cleaned === '.' || cleaned === '..') {
+    throw new ConfluenceApiError('Invalid attachment filename', 0, 'attachment', '');
+  }
+  return cleaned;
 }
 
 function multipartField(boundary: string, name: string, filename: string | undefined, value: Buffer): Buffer {
@@ -334,11 +598,51 @@ function normalizeBaseUrl(baseUrl: string): string {
   if (trimmed.length === 0) {
     throw new Error('baseUrl must not be empty');
   }
-  let url = trimmed;
-  while (url.endsWith('/')) {
-    url = url.slice(0, -1);
+
+  let url: URL;
+
+  try {
+    url = new URL(trimmed);
+  } catch {
+    throw new Error(`Invalid baseUrl: ${baseUrl}`);
   }
-  return url;
+
+  if (url.protocol !== 'https:') {
+    throw new Error(`baseUrl must use https: ${baseUrl}`);
+  }
+
+  if (url.username || url.password) {
+    throw new Error('baseUrl must not include embedded credentials');
+  }
+
+  if (url.search || url.hash) {
+    throw new Error('baseUrl must not include query or fragment components');
+  }
+
+  const normalizedPath = url.pathname.replace(/\/+$/u, '') || '/';
+  if (normalizedPath !== '/' && normalizedPath !== '/wiki') {
+    throw new Error(`baseUrl path must be empty or /wiki: ${baseUrl}`);
+  }
+
+  return normalizedPath === '/' ? url.origin : `${url.origin}${normalizedPath}`;
+}
+
+function resolveNextUrl(baseUrl: string, baseUrlOrigin: string, next: string | undefined): string | undefined {
+  if (!next) {
+    return undefined;
+  }
+
+  let resolved: URL;
+  try {
+    resolved = new URL(next, baseUrl);
+  } catch {
+    throw new ConfluenceApiError(`Confluence pagination returned a malformed next link`, 0, next, '');
+  }
+  if (resolved.origin !== baseUrlOrigin) {
+    throw new ConfluenceApiError(`Confluence pagination returned a cross-origin next link: ${next}`, 0, next, '');
+  }
+
+  return resolved.toString();
 }
 
 function describeStatus(status: number): string {
@@ -351,6 +655,8 @@ function describeStatus(status: number): string {
       return 'Resource not found';
     case STATUS_CODES.CONFLICT:
       return 'Version conflict (page was updated concurrently)';
+    case STATUS_CODES.TOO_MANY_REQUESTS:
+      return 'Rate limited by Confluence';
     default:
       if (status >= STATUS_CODES.BAD_REQUEST && status < 500) {
         return `Client error (${status})`;
