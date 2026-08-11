@@ -49,7 +49,7 @@ Completion evidence:
 
 ### Task PPARC-02: Isolate side effects and fake npm/build execution
 
-Status: pending
+Status: completed
 
 Priority: P1
 
@@ -80,9 +80,15 @@ Acceptance criteria:
 - Dry-run, registry, access, tag, provenance, and failure paths assert exact invocations.
 - The minimum supported platform contract is explicit and tested.
 
+Completion evidence:
+
+- Changed: `packages/publish-package/src/index.ts`, `packages/publish-package/src/runner.ts`, `packages/publish-package/src/plan.ts`, `packages/publish-package/src/publish.ts`, `packages/publish-package/test/index.test.ts`
+- Verified: `pnpm --filter @repo-toolkit/publish-package test` (103 tests), `pnpm lint`, `pnpm typecheck`, `pnpm test`
+- Result: a `ProcessRunner` interface (`{ run, runShell }`) plus `defaultProcessRunner` and `ProcessRunOptions` are exported from the package root. `PublishPackageOptions.runner?: ProcessRunner` threads through `resolvePublishPackagePlan` into the plan; `publishPackage` invokes the build via `runner.runShell` and `npm publish` via `runner.run` with exact argument arrays. The shell requirement is explicit: `runShell` documents that it spawns `bash -c` and the minimum platform contract is Node 20 with `bash` on `PATH`. The OTP is forwarded via `npm_config_otp` env (never `--otp` argv) and any OTP leaking into a runner error message is redacted via `wrapRunnerErrors`/`redactSensitive` (the original error is preserved via `cause` property mutation, matching the `publish-packages` pattern and avoiding the ES2022 `Error` constructor options under the ES2018 target). A `createFakeRunner` test helper records every invocation (executable, args, cwd, env) and supports a fail-after counter for failure sequencing; 10 new fake-runner tests assert build invocation shape, npm `--access`/`--tag`/`--registry`/`--provenance`/`--dry-run` invocations, OTP-via-env contract, multi-name publishing order, build-failure-skips-npm sequencing, first-npm-failure-stops-later-names sequencing, OTP redaction, and the default-runner contract. The previous integration test that contacted `registry.npmjs.org` was converted to use the fake runner; the publish-package test suite now makes zero npm network requests (verified: `pnpm --filter @repo-toolkit/publish-package test 2>&1 | grep -c registry.npmjs.org` → `0`). Suite duration dropped from ~1.0s to ~250ms.
+
 ### Task PPARC-03: Split internal responsibilities and document public helpers
 
-Status: pending
+Status: completed
 
 Priority: P2
 
@@ -111,6 +117,12 @@ Acceptance criteria:
 - Public declarations and documentation agree.
 - CLI tests cover every spec and config precedence.
 - `pnpm lint`, `pnpm typecheck`, `pnpm test`, build, and pack smoke checks pass.
+
+Completion evidence:
+
+- Changed: `packages/publish-package/src/index.ts`, `packages/publish-package/src/cli.ts`, `packages/publish-package/README.md`, `packages/publish-package/test/cli.test.ts`; added `packages/publish-package/src/{flags,prompt,runner,helpers,manifest,plan,publish}.ts`
+- Verified: `pnpm --filter @repo-toolkit/publish-package test` (103 tests), `pnpm test` (440 tests across publish-package + changelog + publish-packages + release-artifact + confluence), `pnpm lint`, `pnpm typecheck`, `pnpm --filter @repo-toolkit/publish-package build`, pack smoke (in `test/cli.test.ts`)
+- Result: the 1136-line `src/index.ts` is now a 77-line pure barrel that re-exports from seven focused internal modules — `flags.ts` (parser), `prompt.ts` (config loader + interactive prompts), `runner.ts` (injectable subprocess runner), `helpers.ts` (`isPlainObject`/`inferNpmTag`/`normalizeVersion`), `manifest.ts` (manifest rewrite/validation + defaults), `plan.ts` (`resolvePublishPackagePlan` + path-containment + `toRootMetadata`), `publish.ts` (`publishPackage` + runner wrappers + copy/collision helpers). The public API surface is preserved byte-for-byte: every named export the original `index.ts` had is re-exported (`parseFlags`, `readValue`, `splitListArg`, `loadConfigFile`, `resolveCliOptions`, `promptText`, `promptForRequiredValue`, `INTERACTIVE_FLAG`, `canPrompt`, `ProcessRunner`, `ProcessRunOptions`, `defaultProcessRunner`, `isPlainObject`, `inferNpmTag`, `normalizeVersion`, `PackageJson`, `RootMetadata`, `PublishRewriteOptions`, `CreatePublishPackageJsonOptions`, `DEPENDENCY_FIELDS`, `DEFAULT_*` constants, `createPublishPackageJson`, `validateSourceManifest`, `validateRootManifest`, `PublishPackageOptions`, `PublishPackagePlan`, `resolvePublishPackagePlan`, `ensurePathWithinRoot`, `assertPathWithinRoot`, `publishPackage`); `mergeRepository` stays private (now `toRootMetadata` in `plan.ts`). The README now documents every supported helper contract, the `ProcessRunner` mechanism, the new `runner` option, and the OTP-via-env channel — a `help README parity` test cross-references every README flag against `printHelp()` output, and a `SPECS entries` test verifies the spec table matches the canonical flag names. `SPECS`, `printHelp`, and `buildOptions` are exported from `src/cli.ts` to enable 29 new CLI tests (`test/cli.test.ts`) covering every spec, `--flag=value`/dash-leading-value forms, boolean negation, list/repeatable accumulation, `--` terminator (strict and non-strict), and three config-precedence cases (CLI overrides config, config fills gaps, relative config resolved against `--cwd`). A pack-smoke test runs `pnpm pack` and verifies the tarball contains `package.json`, `README.md`, `dist/index.js`, `dist/index.d.ts`, `dist/cli.js` and excludes `src/`, `test/`, `tsup.config.ts`, `vitest.config.ts`. No new package.json `exports` subpaths were introduced (consumers continue to import only from the package root, which re-exports everything).
 
 ## Definition Of Done
 

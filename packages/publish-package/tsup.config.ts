@@ -11,6 +11,16 @@ export default defineConfig([
   },
   {
     entry: {
+      helpers: 'src/helpers.ts',
+    },
+    format: ['esm'],
+    dts: true,
+    target: 'node20',
+    outDir: 'dist',
+    clean: false,
+  },
+  {
+    entry: {
       cli: 'src/cli.ts',
     },
     format: ['esm'],

@@ -1,5 +1,7 @@
 node_modules/
+dist
 packages/*/dist/
 *.tsbuildinfo
 id_ed25519*
 _tmp*
+*.tgz

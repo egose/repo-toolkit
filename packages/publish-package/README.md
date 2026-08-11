@@ -60,11 +60,45 @@ publishPackage({
 
 ### Exports
 
+Supported public helpers consumed by the sibling CLIs and external consumers:
+
 - `createPublishPackageJson(...)` — rewrite a package manifest for publish.
 - `resolvePublishPackagePlan(options)` — resolve file/version/publish metadata without publishing.
 - `publishPackage(options)` — run the build/copy/npm-publish pipeline for one package.
 - `inferNpmTag(version)` — derive the npm dist-tag from a version string.
 - `isPlainObject(value)` — shared object guard used by the config loaders and manifest rewriters.
+- `normalizeVersion(rawVersion)` — strip a leading `v` and reject empty input.
+- `parseFlags(argv, specs, options?)` — the shared hand-rolled CLI parser. Throws on unknown arguments in strict mode (default), returns `null` for `-h` / `--help`, and treats `--` as a real parsing terminator that stops further flag parsing silently.
+- `readValue(argv, index, flag)`, `splitListArg(value)` — building blocks for `parseFlags`.
+- `loadConfigFile<T>(path, cwd?)`, `resolveConfigPath(path, cwd?)` — JSON / ESM / CJS config loader.
+- `resolveCliOptions<T>({ result, buildOptions, cwd })` — merge a parsed CLI result with a `config` file, CLI values win.
+- `canPrompt()`, `promptText(opts)`, `promptForRequiredValue(opts)` — interactive prompt helpers; `INTERACTIVE_FLAG` is the canonical `--interactive`/`-i` spec.
+- `ProcessRunner`, `ProcessRunOptions`, `defaultProcessRunner` — injectable subprocess runner (see below).
+- `DEPENDENCY_FIELDS`, `DEFAULT_VERSION_PLACEHOLDER`, `DEFAULT_PUBLISH_DIR`, `DEFAULT_PACKAGE_FILES`, `DEFAULT_ROOT_FILES`, `DEFAULT_BUILD_COMMAND`, `DEFAULT_ACCESS`, `DEFAULT_PUBLISH_FILES_FIELD` — the package's defaults, exported so downstream packages reuse them rather than hard-coding.
+- `validateSourceManifest`, `validateRootManifest` — manifest shape validators used by `resolvePublishPackagePlan`.
+
+The implementation lives in focused internal modules (`./flags`, `./prompt`, `./runner`, `./helpers`, `./manifest`, `./plan`, `./publish`) and is re-exported from the package root. Downstream packages import only via `@repo-toolkit/publish-package`.
+
+### Process runner
+
+`publishPackage` executes the build command and `npm publish` through a `ProcessRunner`. The default runner spawns via `execFileSync` and inherits stdio; tests inject a fake runner to assert exact invocations without contacting a real npm registry.
+
+```ts
+import { publishPackage, defaultProcessRunner, type ProcessRunner } from '@repo-toolkit/publish-package';
+
+const runner: ProcessRunner = {
+  run(executable, args, options) {
+    /* ... */
+  },
+  runShell(command, options) {
+    /* ... */
+  },
+};
+
+publishPackage({ cwd: '/pkg', version: '1.2.3', dryRun: true, runner });
+```
+
+The minimum supported platform contract is Node 20 with `bash` available on `PATH` (the runner's `runShell` invokes `bash -c`). The npm OTP is forwarded through npm's `npm_config_otp` environment variable so it does not appear in argv / process listings, and any OTP value that leaks into a runner error message is redacted.
 
 ### Options
 
@@ -85,10 +119,11 @@ publishPackage({
 - `skipBuild` _(boolean)_ Skip the build step.
 - `access` _(string)_ npm publish access level (default: `public`).
 - `registry` _(string)_ npm registry URL.
-- `otp` _(string)_ npm OTP code.
+- `otp` _(string)_ npm OTP code. Forwarded to npm through its environment (`npm_config_otp`), never as a `--otp` argument.
 - `provenance` _(boolean)_ Request npm provenance attestation.
 - `dryRun` _(boolean)_ Forward `--dry-run` to `npm publish`.
 - `internalPackageNames` _(string[] | Set\<string>)_ Names treated as internal workspace packages for dependency-range rewriting.
+- `runner` _(ProcessRunner)_ Injectable subprocess runner (see [Process runner](#process-runner)). Defaults to `defaultProcessRunner`, which spawns via `execFileSync` with inherited stdio.
 
 ## Docs
 

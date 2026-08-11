@@ -40,6 +40,25 @@ function buildFetchSequence(responses: Array<{ status: number; body: unknown }>)
   return { fetchFn, calls };
 }
 
+function makeStreamingResponse(status: number, bodyBuffer: Buffer): Response {
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      const chunkSize = 1024;
+      for (let off = 0; off < bodyBuffer.length; off += chunkSize) {
+        controller.enqueue(bodyBuffer.subarray(off, Math.min(off + chunkSize, bodyBuffer.length)));
+      }
+      controller.close();
+    },
+  });
+  const headers = new Headers();
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    headers,
+    body: stream as unknown as BodyInit,
+  } as Response;
+}
+
 describe('ConfluenceClient construction', () => {
   it('requires baseUrl, username, apiToken', () => {
     expect(() => new ConfluenceClient({ baseUrl: '', username: 'u', apiToken: 't' })).toThrowError(/baseUrl/);
@@ -356,6 +375,43 @@ describe('ConfluenceClient.uploadAttachment (multipart)', () => {
     await expect(client.uploadAttachment('P1', file)).rejects.toThrowError(/upload size limit/);
     expect(calls).toHaveLength(0);
   });
+
+  it('streams large uploads in bounded chunks without buffering the whole file', async () => {
+    const fileBytes = Buffer.alloc(3 * 1024 * 1024, 7);
+    const file = join(tmpDir, 'large.bin');
+    await writeFile(file, fileBytes);
+    const { fetchFn, calls } = buildFetchSequence([
+      { status: 200, body: { results: [{ id: 'A6', version: { number: 1 }, _links: { webui: '/a6' } }] } },
+    ]);
+    const client = new ConfluenceClient({
+      baseUrl: 'https://x/wiki',
+      username: 'u',
+      apiToken: 't',
+      fetch: fetchFn as unknown as typeof fetch,
+      maxUploadBytes: 64 * 1024 * 1024,
+    });
+    await client.uploadAttachment('P1', file);
+
+    const body = calls[0]?.init.body;
+    expect(typeof (body as AsyncIterable<Buffer>)[Symbol.asyncIterator]).toBe('function');
+    expect(Buffer.isBuffer(body)).toBe(false);
+
+    const chunks: Buffer[] = [];
+    for await (const chunk of body as AsyncIterable<Buffer>) {
+      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk as Uint8Array));
+    }
+    const totalBody = Buffer.concat(chunks);
+
+    const tooLarge = chunks.some((c) => c.length > fileBytes.length);
+    expect(tooLarge).toBe(false);
+
+    const maxReadStreamChunk = 1024 * 1024;
+    const streamingChunks = chunks.filter((c) => c.length <= maxReadStreamChunk);
+    expect(streamingChunks.length).toBeGreaterThan(1);
+
+    expect(totalBody.toString('utf8')).toMatch(/------repo-toolkit-confluence-/);
+    expect(totalBody.includes(fileBytes)).toBe(true);
+  });
 });
 
 describe('ConfluenceClient network controls (timeout, retry, pagination)', () => {
@@ -450,5 +506,72 @@ describe('ConfluenceClient network controls (timeout, retry, pagination)', () =>
       fetch: fetchFn as unknown as typeof fetch,
     });
     await expect(client.getPagesByTitle('S1', 'x')).rejects.toThrowError(/cross-origin/);
+  });
+
+  it('truncates oversized streaming response bodies surfaced in errors', async () => {
+    const oversized = Buffer.from('0'.repeat(20_000), 'utf8');
+    const fetchFn = vi.fn(async () => makeStreamingResponse(404, oversized) as Response);
+    const client = new ConfluenceClient({
+      baseUrl: 'https://x/wiki',
+      username: 'u',
+      apiToken: 't',
+      fetch: fetchFn as unknown as typeof fetch,
+    });
+    const err = (await client.getPage('P1').catch((e) => e)) as ConfluenceApiError;
+    expect(err).toBeInstanceOf(ConfluenceApiError);
+    expect(err.responseBody.endsWith('...')).toBe(true);
+    expect(err.responseBody.length).toBeLessThan(oversized.length);
+  });
+
+  it('accumulates getAttachments across pagination exactly once and terminates', async () => {
+    const responses = [
+      {
+        status: 200,
+        body: {
+          results: [
+            { id: 'A1', title: 'a.png', version: { number: 1 }, _links: { webui: '/a1' } },
+            { id: 'A2', title: 'b.png', version: { number: 1 }, _links: { webui: '/a2' } },
+          ],
+          _links: { next: '/wiki/api/v2/pages/P1/attachments?cursor=2' },
+        },
+      },
+      {
+        status: 200,
+        body: {
+          results: [{ id: 'A3', title: 'c.png', version: { number: 1 }, _links: { webui: '/a3' } }],
+        },
+      },
+    ];
+    const { fetchFn, calls } = buildFetchSequence(responses);
+    const client = new ConfluenceClient({
+      baseUrl: 'https://x/wiki',
+      username: 'u',
+      apiToken: 't',
+      fetch: fetchFn as unknown as typeof fetch,
+    });
+    const attachments = await client.getAttachments('P1');
+    expect(attachments.map((a) => a.id)).toEqual(['A1', 'A2', 'A3']);
+    expect(calls).toHaveLength(2);
+  });
+
+  it('rejects a getAttachments next-link cycle before the page cap is hit', async () => {
+    const seen = new Set<string>();
+    let callCount = 0;
+    const fetchFn = vi.fn(async (endpoint: string) => {
+      callCount += 1;
+      seen.add(endpoint);
+      return makeResponse(200, {
+        results: [{ id: 'A1', title: 'x', version: { number: 1 }, _links: { webui: '/z' } }],
+        _links: { next: callCount < 2 ? 'https://x/wiki/api/v2/pages/P1/attachments?cursor=2' : endpoint },
+      }) as Response;
+    });
+    const client = new ConfluenceClient({
+      baseUrl: 'https://x/wiki',
+      username: 'u',
+      apiToken: 't',
+      fetch: fetchFn as unknown as typeof fetch,
+    });
+    await expect(client.getAttachments('P1')).rejects.toMatchObject({ name: 'ConfluenceApiError' });
+    expect(callCount).toBeLessThan(5);
   });
 });

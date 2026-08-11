@@ -30,8 +30,12 @@ Useful flags:
 - `--npm-tag <dist-tag>` npm dist-tag (defaults to the prerelease `preid`).
 - `--filter <name>[,<name>]` Only publish matching packages (by name or directory). Applied before `--from`.
 - `--from <name>` Start publishing from the first package matching this selector, computed against the post-`--filter` list.
-- `--package-files <file>[,<file>]` Files copied from each package root into the publish dir.
-- `--root-files <file>[,<file>]` Files to copy from the monorepo root into each publish dir (default: `['LICENSE']`). Missing files are skipped.
+- `--package-files <file>[,<file>]` Files copied from each package root into the publish dir (replaces defaults).
+- `--include-package-file <path>` Additional file copied from each package root (repeatable, additive).
+- `--no-default-package-files` Skip copying default package files.
+- `--root-files <file>[,<file>]` Files to copy from the monorepo root into each publish dir (replaces defaults; default: `['LICENSE']`). Missing files are skipped.
+- `--include-root-file <path>` Additional file copied from the monorepo root (repeatable, additive).
+- `--no-default-root-files` Skip copying default root files.
 - `--publish-dir <path>` Publish directory inside each package (default: `dist`).
 - `--version-placeholder <text>` Placeholder rewritten to the target version (default: `0.0.0-PLACEHOLDER`).
 - `--build-command <command>` Command used to build each publish dir (default: `pnpm build`).
@@ -41,6 +45,8 @@ Useful flags:
 - `--otp <code>` npm OTP code.
 - `--provenance` Request npm provenance attestation.
 - `--dry-run` Forward `--dry-run` to `npm publish`.
+- `-i, --interactive` Prompt for missing required values interactively.
+- `-h, --help` Show help.
 
 ## Config File
 
@@ -104,8 +110,12 @@ For generic single-package manifest rewriting and npm publish plumbing, use
 - `npmTag` _(string)_ npm dist-tag. Defaults to the prerelease `preid`.
 - `filters` _(string[])_ Only publish matching packages (by name or directory).
 - `from` _(string)_ Start publishing from the first matching package.
-- `packageFiles` _(string[])_ Files copied from each package root into the publish dir.
-- `rootFiles` _(string[])_ Files to copy from the monorepo root into each publish dir (default: `['LICENSE']`). Missing files are skipped.
+- `packageFiles` _(string[])_ Files copied from each package root into the publish dir (replaces the defaults).
+- `includePackageFiles` _(string[])_ Additional files appended to `packageFiles` (additive, does not replace defaults).
+- `noDefaultPackageFiles` _(boolean)_ Skip copying default package files.
+- `rootFiles` _(string[])_ Files to copy from the monorepo root into each publish dir (replaces the defaults; default: `['LICENSE']`). Missing files are skipped.
+- `includeRootFiles` _(string[])_ Additional files appended to `rootFiles` (additive, does not replace defaults).
+- `noDefaultRootFiles` _(boolean)_ Skip copying default root files.
 - `publishDir` _(string)_ Publish directory inside each package (default: `dist`).
 - `versionPlaceholder` _(string)_ Placeholder rewritten to the target version (default: `0.0.0-PLACEHOLDER`).
 - `buildCommand` _(string)_ Command used to build each publish dir (default: `pnpm build`).
@@ -115,6 +125,7 @@ For generic single-package manifest rewriting and npm publish plumbing, use
 - `otp` _(string)_ npm OTP code.
 - `provenance` _(boolean)_ Request npm provenance attestation.
 - `dryRun` _(boolean)_ Forward `--dry-run` to `npm publish`.
+- `runner` _(ProcessRunner)_ Injectable subprocess runner used for build commands and `npm publish`. Defaults to inheriting stdio via `execFileSync`. Tests inject a fake runner to assert exact invocations without contacting npm.
 
 ## Version Placeholders
 
@@ -122,5 +133,12 @@ Dependency ranges set to `0.0.0-PLACEHOLDER` are replaced with the target
 version by default. Override this with `versionPlaceholder` /
 `--version-placeholder` when your workspace uses a different sentinel value.
 
-`workspace:` ranges on internal packages are resolved to the target version
-(or kept verbatim when pinned to an explicit version).
+`workspace:` ranges on internal packages are resolved as follows at publish
+time:
+
+- `workspace:*` and `workspace:` → the exact target version (e.g. `1.2.3`)
+- `workspace:^` and `workspace:~` → `^<version>` and `~<version>`
+- `workspace:^1.2.3` and any other concrete range → the range with the
+  `workspace:` prefix stripped (e.g. `^1.2.3`)
+
+The `workspace:` prefix is dropped in every published manifest.

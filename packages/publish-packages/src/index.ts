@@ -14,10 +14,14 @@ import {
   publishPackage,
   resolvePublishPackagePlan,
   type PackageJson,
+  type ProcessRunner,
   type PublishPackageOptions,
+  defaultProcessRunner,
 } from '@repo-toolkit/publish-package';
 
 export { inferNpmTag, isPlainObject, normalizeVersion };
+
+export type { ProcessRunner };
 
 const PUBLISH_PACKAGES_OPTION_KEYS = new Set([
   'version',
@@ -40,6 +44,7 @@ const PUBLISH_PACKAGES_OPTION_KEYS = new Set([
   'registry',
   'otp',
   'provenance',
+  'runner',
 ]);
 
 const BUILD_ORDER_DEPENDENCY_FIELDS = [...DEPENDENCY_FIELDS, 'devDependencies'] as const;
@@ -90,6 +95,13 @@ export interface PublishPackagesOptions {
   otp?: string;
   /** Request npm provenance attestation. */
   provenance?: boolean;
+  /**
+   * Process runner used to execute build commands and `npm publish` for every
+   * selected package. Defaults to {@link defaultProcessRunner}, which spawns
+   * child processes via `execFileSync` and inherits stdio. Tests inject a fake
+   * runner to assert exact invocations without contacting a real npm registry.
+   */
+  runner?: ProcessRunner;
 }
 
 export interface PublishPackagesPlan {
@@ -113,6 +125,7 @@ export interface PublishPackagesPlan {
   dryRun: boolean;
   internalPackageNames: Set<string>;
   packages: PackageEntry[];
+  runner: ProcessRunner;
 }
 
 export function sortPackagesByInternalDependencies(
@@ -206,6 +219,7 @@ export function resolvePublishPackagesPlan(options: PublishPackagesOptions): Pub
     dryRun: options.dryRun ?? false,
     internalPackageNames: new Set(internalPackageNames),
     packages: orderedPackages.map((pkg) => ({ ...pkg, packageJson: { ...pkg.packageJson } })),
+    runner: options.runner ?? defaultProcessRunner,
   };
 }
 
@@ -387,6 +401,10 @@ function validatePublishPackagesOptions(options: PublishPackagesOptions): void {
   if (options.from !== undefined && (typeof options.from !== 'string' || options.from.length === 0)) {
     throw new Error('from must be a non-empty string');
   }
+
+  if (options.runner !== undefined && (typeof options.runner !== 'object' || options.runner === null)) {
+    throw new Error('runner must be a ProcessRunner object');
+  }
 }
 
 function validateOptionalStringArray(value: ReadonlyArray<string> | undefined, label: string): void {
@@ -443,6 +461,7 @@ function toPublishPackageOptions(plan: PublishPackagesPlan, cwd: string): Publis
     otp: plan.otp,
     provenance: plan.provenance,
     internalPackageNames: plan.internalPackageNames,
+    runner: plan.runner,
   } satisfies PublishPackageOptions;
 }
 

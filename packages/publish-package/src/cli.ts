@@ -37,7 +37,9 @@ const SPECS: FlagSpec[] = [
   INTERACTIVE_FLAG,
 ];
 
-function printHelp(): void {
+export { SPECS };
+
+export function printHelp(): void {
   console.log(`repo-toolkit-publish-package
 
 Usage:
@@ -71,7 +73,7 @@ Options:
 `);
 }
 
-function buildOptions(result: ReturnType<typeof parseFlags>): Partial<PublishPackageOptions> {
+export function buildOptions(result: ReturnType<typeof parseFlags>): Partial<PublishPackageOptions> {
   if (!result) {
     return {};
   }

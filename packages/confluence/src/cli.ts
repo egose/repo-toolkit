@@ -1,13 +1,29 @@
-import { parseFlags, type FlagSpec, resolveCliOptions, INTERACTIVE_FLAG } from '@repo-toolkit/publish-package';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+
+import {
+  parseFlags,
+  type FlagSpec,
+  INTERACTIVE_FLAG,
+  canPrompt,
+  promptForRequiredValue,
+  loadConfigFile,
+  isPlainObject,
+} from '@repo-toolkit/publish-package';
 
 import { syncConfluenceToDocs, type ConfluenceSyncOptions } from './index';
 
-const SPECS: FlagSpec[] = [
+export interface ConfluenceCliOptions extends ConfluenceSyncOptions {
+  apiTokenFile?: string;
+}
+
+export const SPECS: FlagSpec[] = [
   { name: 'config' },
   { name: 'cwd' },
   { name: 'folder' },
   { name: 'username' },
   { name: 'api-token', aliases: ['password'] },
+  { name: 'api-token-file', aliases: ['password-file'] },
   { name: 'confluence-base-url', aliases: ['base-url'] },
   { name: 'space-key' },
   { name: 'parent-page-id' },
@@ -18,6 +34,28 @@ const SPECS: FlagSpec[] = [
   INTERACTIVE_FLAG,
 ];
 
+const ENV_TRUTHY = new Set(['true', '1', 'yes', 'on']);
+const ENV_FALSY = new Set(['false', '0', 'no', 'off', '']);
+
+const BOOLEAN_ENV_KEYS = new Set(['skipUnchanged', 'dryRun', 'renderHtmlBlocks']);
+
+function isBooleanOption(key: keyof ConfluenceCliOptions): key is 'skipUnchanged' | 'dryRun' | 'renderHtmlBlocks' {
+  return BOOLEAN_ENV_KEYS.has(key as string);
+}
+
+function parseBooleanEnv(value: string, envName: string): boolean {
+  const v = value.toLowerCase();
+  if (ENV_TRUTHY.has(v)) {
+    return true;
+  }
+  if (ENV_FALSY.has(v)) {
+    return false;
+  }
+  throw new Error(
+    `Invalid boolean value for ${envName}: ${JSON.stringify(value)}. Use one of true|false|1|0|yes|no|on|off.`,
+  );
+}
+
 function printHelp(): void {
   console.log(`repo-toolkit-confluence
 
@@ -25,9 +63,27 @@ Usage:
   repo-toolkit-confluence [options]
 
 Synchronizes a folder of markdown documentation to Confluence pages and
-attachments. When run with no flags, reads configuration from the GitHub
-Action INPUT_* environment variables (folder, username, api-token,
-confluence-base-url, space-key, parent-page-id).
+attachments.
+
+Configuration is resolved per option with the following precedence:
+  CLI flag > config file > environment > built-in default
+
+Environment variables (CLI form; GitHub Action INPUT_* form is also read):
+  CONFLUENCE_FOLDER                    Documentation folder
+  CONFLUENCE_USERNAME                  Confluence username/email
+  CONFLUENCE_API_TOKEN                 Confluence API token (prefers a secret file)
+  CONFLUENCE_API_TOKEN_FILE            Path to a file containing the API token
+  CONFLUENCE_BASE_URL                  Confluence base URL (with /wiki)
+  CONFLUENCE_SPACE_KEY                 Confluence space key
+  CONFLUENCE_PARENT_PAGE_ID            Numeric parent page id
+  CONFLUENCE_VERSION_MESSAGE            Version-message suffix for every PUT
+  CONFLUENCE_SKIP_UNCHANGED            true|false (default: true)
+  CONFLUENCE_DRY_RUN                   true|false (default: false)
+  CONFLUENCE_RENDER_HTML_BLOCKS        true|false (default: false)
+  INPUT_<UPPER-FLAG>                   GitHub Actions input form (lower precedence)
+
+Note: prefer CONFLUENCE_API_TOKEN_FILE or CONFLUENCE_API_TOKEN over
+--api-token to avoid placing the token in argv / process listings.
 
 Options:
   --config <path>               Config file (JSON, .mjs, or .cjs default export)
@@ -35,6 +91,7 @@ Options:
   --folder <path>               Folder containing the documentation to publish (required)
   --username <value>            Confluence username or email (required)
   --api-token <value>           Confluence API token (required). Alias: --password
+  --api-token-file <path>       File whose contents are the API token. Alias: --password-file
   --confluence-base-url <url>   Confluence URL with /wiki (required). Alias: --base-url
   --space-key <key>             Confluence space key (required). Resolved to a spaceId via the API
   --parent-page-id <id>         Numeric page id under which docs will be published (required)
@@ -44,67 +101,238 @@ Options:
   --dry-run                     Walk the doc tree and print the plan without API calls
   --render-html-blocks          Render \`\`\`html fenced blocks as inline HTML via the
                                 Confluence html macro (default: false; emits as code box)
-  -i, --interactive             (reserved; not currently interactive)
+  -i, --interactive             Prompt interactively for missing non-secret required values
   -h, --help                    Show this help message
 `);
 }
 
-const ENV_INPUT_MAP: ReadonlyArray<[string, keyof ConfluenceSyncOptions]> = [
-  ['INPUT_FOLDER', 'folder'],
-  ['INPUT_USERNAME', 'username'],
-  ['INPUT_API-TOKEN', 'apiToken'],
-  ['INPUT_PASSWORD', 'apiToken'],
-  ['INPUT_CONFLUENCE-BASE-URL', 'baseUrl'],
-  ['INPUT_SPACE-KEY', 'spaceKey'],
-  ['INPUT_PARENT-PAGE-ID', 'parentPageId'],
-  ['INPUT_VERSION-MESSAGE', 'versionMessage'],
-  ['INPUT_RENDER-HTML-BLOCKS', 'renderHtmlBlocks'],
+type StringOptionKey =
+  | 'folder'
+  | 'username'
+  | 'apiToken'
+  | 'apiTokenFile'
+  | 'baseUrl'
+  | 'spaceKey'
+  | 'parentPageId'
+  | 'versionMessage'
+  | 'cwd';
+
+const STRING_OPTION_KEYS: ReadonlyArray<StringOptionKey> = [
+  'cwd',
+  'folder',
+  'username',
+  'apiToken',
+  'apiTokenFile',
+  'baseUrl',
+  'spaceKey',
+  'parentPageId',
+  'versionMessage',
 ];
 
-function buildOptions(result: ReturnType<typeof parseFlags>): Partial<ConfluenceSyncOptions> {
+function setIfString(options: Record<string, unknown>, key: StringOptionKey, value: string | undefined): void {
+  if (typeof value === 'string' && value.length > 0) {
+    options[key] = value;
+  }
+}
+
+function isStringOptionKey(key: string): key is StringOptionKey {
+  return (STRING_OPTION_KEYS as ReadonlyArray<string>).includes(key);
+}
+
+interface EnvBinding {
+  envName: string;
+  key: keyof ConfluenceCliOptions;
+  kind: 'string' | 'boolean';
+}
+
+const ENV_BINDINGS: ReadonlyArray<EnvBinding> = [
+  { envName: 'INPUT_FOLDER', key: 'folder', kind: 'string' },
+  { envName: 'INPUT_USERNAME', key: 'username', kind: 'string' },
+  { envName: 'INPUT_API-TOKEN', key: 'apiToken', kind: 'string' },
+  { envName: 'INPUT_PASSWORD', key: 'apiToken', kind: 'string' },
+  { envName: 'INPUT_API-TOKEN-FILE', key: 'apiTokenFile', kind: 'string' },
+  { envName: 'INPUT_PASSWORD-FILE', key: 'apiTokenFile', kind: 'string' },
+  { envName: 'INPUT_CONFLUENCE-BASE-URL', key: 'baseUrl', kind: 'string' },
+  { envName: 'INPUT_SPACE-KEY', key: 'spaceKey', kind: 'string' },
+  { envName: 'INPUT_PARENT-PAGE-ID', key: 'parentPageId', kind: 'string' },
+  { envName: 'INPUT_VERSION-MESSAGE', key: 'versionMessage', kind: 'string' },
+  { envName: 'INPUT_DRY-RUN', key: 'dryRun', kind: 'boolean' },
+  { envName: 'INPUT_SKIP-UNCHANGED', key: 'skipUnchanged', kind: 'boolean' },
+  { envName: 'INPUT_RENDER-HTML-BLOCKS', key: 'renderHtmlBlocks', kind: 'boolean' },
+  { envName: 'CONFLUENCE_FOLDER', key: 'folder', kind: 'string' },
+  { envName: 'CONFLUENCE_USERNAME', key: 'username', kind: 'string' },
+  { envName: 'CONFLUENCE_API_TOKEN', key: 'apiToken', kind: 'string' },
+  { envName: 'CONFLUENCE_API_TOKEN_FILE', key: 'apiTokenFile', kind: 'string' },
+  { envName: 'CONFLUENCE_BASE_URL', key: 'baseUrl', kind: 'string' },
+  { envName: 'CONFLUENCE_SPACE_KEY', key: 'spaceKey', kind: 'string' },
+  { envName: 'CONFLUENCE_PARENT_PAGE_ID', key: 'parentPageId', kind: 'string' },
+  { envName: 'CONFLUENCE_VERSION_MESSAGE', key: 'versionMessage', kind: 'string' },
+  { envName: 'CONFLUENCE_DRY_RUN', key: 'dryRun', kind: 'boolean' },
+  { envName: 'CONFLUENCE_SKIP_UNCHANGED', key: 'skipUnchanged', kind: 'boolean' },
+  { envName: 'CONFLUENCE_RENDER_HTML_BLOCKS', key: 'renderHtmlBlocks', kind: 'boolean' },
+];
+
+export function optionsFromEnv(env: Record<string, string | undefined> = process.env): Partial<ConfluenceCliOptions> {
+  const options: Record<string, unknown> = {};
+
+  for (const { envName, key, kind } of ENV_BINDINGS) {
+    const raw = env[envName];
+    if (raw === undefined) {
+      continue;
+    }
+
+    if (kind === 'string') {
+      if (!isStringOptionKey(key as string)) {
+        continue;
+      }
+      setIfString(options, key as StringOptionKey, raw);
+    } else if (isBooleanOption(key as keyof ConfluenceCliOptions)) {
+      options[key as string] = parseBooleanEnv(raw, envName);
+    }
+  }
+
+  return options as Partial<ConfluenceCliOptions>;
+}
+
+export function buildOptions(result: ReturnType<typeof parseFlags>): Partial<ConfluenceCliOptions> {
   if (!result) {
     return {};
   }
 
-  const { values, repeat: _repeat } = result;
-  void _repeat;
-  const options: Partial<ConfluenceSyncOptions> = {};
+  const { values } = result;
+  const options: Record<string, unknown> = {};
 
-  if (values.cwd) options.cwd = values.cwd;
-  if (values.folder) options.folder = values.folder;
-  if (values.username) options.username = values.username;
-  if (values['api-token']) options.apiToken = values['api-token'];
-  if (values['password']) options.apiToken = values['password'];
-  if (values['confluence-base-url']) options.baseUrl = values['confluence-base-url'];
-  if (values['base-url']) options.baseUrl = values['base-url'];
-  if (values['space-key']) options.spaceKey = values['space-key'];
-  if (values['parent-page-id']) options.parentPageId = values['parent-page-id'];
-  if (values['version-message']) options.versionMessage = values['version-message'];
-  if (values['skip-unchanged'] !== undefined) options.skipUnchanged = values['skip-unchanged'] === 'true';
-  if (values['dry-run'] !== undefined) options.dryRun = true;
-  if (values['render-html-blocks'] !== undefined) options.renderHtmlBlocks = true;
+  setIfString(options, 'cwd', values.cwd);
+  setIfString(options, 'folder', values.folder);
+  setIfString(options, 'username', values.username);
+  setIfString(options, 'apiToken', values['api-token'] ?? values.password);
+  setIfString(options, 'apiTokenFile', values['api-token-file'] ?? values['password-file']);
+  setIfString(options, 'baseUrl', values['confluence-base-url'] ?? values['base-url']);
+  setIfString(options, 'spaceKey', values['space-key']);
+  setIfString(options, 'parentPageId', values['parent-page-id']);
+  setIfString(options, 'versionMessage', values['version-message']);
 
-  return options;
+  if (values['skip-unchanged'] !== undefined) {
+    options.skipUnchanged = values['skip-unchanged'] === 'true';
+  }
+  if (values['dry-run'] !== undefined) {
+    options.dryRun = true;
+  }
+  if (values['render-html-blocks'] !== undefined) {
+    options.renderHtmlBlocks = true;
+  }
+
+  return options as Partial<ConfluenceCliOptions>;
 }
 
-function optionsFromEnv(): Partial<ConfluenceSyncOptions> {
-  const options: Partial<ConfluenceSyncOptions> = {};
-  for (const [envName, key] of ENV_INPUT_MAP) {
-    const value = process.env[envName];
-    if (typeof value === 'string' && value.length > 0) {
-      if (key === 'renderHtmlBlocks') {
-        (options as Record<string, unknown>)[key] = value === 'true' || value === '1';
-      } else {
-        (options as Record<string, unknown>)[key] = value;
-      }
+interface ResolveOptionsArgs {
+  result: Exclude<ReturnType<typeof parseFlags>, null>;
+  cwd?: string;
+}
+
+export async function resolveConfluenceOptions(args: ResolveOptionsArgs): Promise<Partial<ConfluenceCliOptions>> {
+  const cliOptions = buildOptions(args.result);
+  const configPath = args.result.values.config;
+  const config = configPath
+    ? await loadConfigFile<Partial<ConfluenceCliOptions>>(configPath, args.cwd ?? cliOptions.cwd)
+    : {};
+
+  if (!isPlainObject(config)) {
+    throw new Error(`Config file must export an object: ${configPath}`);
+  }
+
+  const envOptions = optionsFromEnv();
+
+  return { ...envOptions, ...config, ...cliOptions };
+}
+
+interface RequiredFields {
+  field: 'folder' | 'username' | 'baseUrl' | 'spaceKey' | 'parentPageId';
+  message: string;
+}
+
+const REQUIRED_PRESETS: ReadonlyArray<RequiredFields> = [
+  { field: 'folder', message: 'folder is required.' },
+  { field: 'username', message: 'username is required.' },
+  { field: 'baseUrl', message: 'baseUrl is required (CONFLUENCE_BASE_URL or --confluence-base-url).' },
+  { field: 'spaceKey', message: 'spaceKey is required (CONFLUENCE_SPACE_KEY or --space-key).' },
+  {
+    field: 'parentPageId',
+    message: 'parentPageId is required (CONFLUENCE_PARENT_PAGE_ID or --parent-page-id).',
+  },
+];
+
+const TOKEN_GUIDANCE =
+  'apiToken is required. Provide it via --api-token-file, INPUT_API-TOKEN-FILE, CONFLUENCE_API_TOKEN_FILE, or the CONFLUENCE_API_TOKEN / INPUT_API-TOKEN environment variable. Tokens are never prompted interactively to avoid entering them on screen.';
+
+export async function resolveSecretFile(opts: Partial<ConfluenceCliOptions>, cwd?: string): Promise<void> {
+  if (!opts.apiTokenFile) {
+    return;
+  }
+  if (opts.apiToken) {
+    return;
+  }
+  const path = resolve(cwd ?? process.cwd(), opts.apiTokenFile);
+  let raw: string;
+  try {
+    raw = readFileSync(path, 'utf8');
+  } catch (error) {
+    const wrappedError = new Error(`Failed to read apiTokenFile at ${path}`) as Error & {
+      cause?: unknown;
+    };
+    wrappedError.cause = error;
+    throw wrappedError;
+  }
+  const token = raw.replace(/\r?\n$/, '').trim();
+  if (token.length === 0) {
+    throw new Error(`apiTokenFile at ${path} is empty.`);
+  }
+  opts.apiToken = token;
+}
+
+async function promptForMissing(merged: Partial<ConfluenceCliOptions>, interactive: boolean): Promise<void> {
+  if (!interactive) {
+    return;
+  }
+  if (merged.dryRun === true) {
+    return;
+  }
+  if (!canPrompt()) {
+    return;
+  }
+
+  for (const { field, message } of REQUIRED_PRESETS) {
+    merged[field] = await promptForRequiredValue({
+      value: merged[field] as string | undefined,
+      interactive,
+      canPromptNow: true,
+      message: `${field}:`,
+      missingMessage: message,
+      validate: (v) => (v.length === 0 ? message : undefined),
+    });
+  }
+
+  if (!merged.apiToken) {
+    throw new Error(TOKEN_GUIDANCE);
+  }
+}
+
+function ensureRequired(merged: Partial<ConfluenceCliOptions>): void {
+  if (merged.dryRun === true) {
+    return;
+  }
+  for (const { field, message } of REQUIRED_PRESETS) {
+    if (!merged[field]) {
+      throw new Error(message);
     }
   }
-  return options;
+  if (!merged.apiToken) {
+    throw new Error(TOKEN_GUIDANCE);
+  }
 }
 
 async function main(): Promise<void> {
   const argv = process.argv.slice(2);
-  const hasFlags = argv.length > 0;
   const result = parseFlags(argv, SPECS);
 
   if (!result) {
@@ -112,13 +340,14 @@ async function main(): Promise<void> {
     return;
   }
 
-  const cliOptions = await resolveCliOptions<ConfluenceSyncOptions>({
-    result,
-    buildOptions,
-  });
+  const interactive = result.values.interactive === 'true';
+  const merged = await resolveConfluenceOptions({ result });
 
-  const envOptions = hasFlags ? {} : optionsFromEnv();
-  const merged: ConfluenceSyncOptions = { ...envOptions, ...cliOptions };
+  await resolveSecretFile(merged, merged.cwd);
+
+  await promptForMissing(merged, interactive);
+
+  ensureRequired(merged);
 
   await syncConfluenceToDocs(merged);
 }
