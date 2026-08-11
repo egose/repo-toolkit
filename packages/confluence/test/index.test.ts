@@ -3,7 +3,17 @@ import { mkdtemp, mkdir, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { resolveConfluenceSyncPlan, syncConfluenceToDocs, type ConfluenceSyncOptions, type Page } from '../src/index';
+import {
+  resolveConfluenceSyncPlan,
+  syncConfluenceToDocs,
+  validateLocalSync,
+  LocalSyncValidationAggregateError,
+  SyncMutationError,
+  validateAttachmentSources,
+  type ConfluenceSyncOptions,
+  type Page,
+  type SyncChange,
+} from '../src/index';
 
 function pageFixture(id: string, title: string, versionNumber = 1, bodyValue = '', parentId = 'PARENT'): Page {
   return {
@@ -41,7 +51,24 @@ function buildFakeClient(opts: {
     },
     async getPagesByTitle(_spaceId: string, title: string): Promise<Page[]> {
       calls.push({ method: 'getPagesByTitle', args: [_spaceId, title] });
-      return (opts.existingPages ?? []).filter((page) => page.title === title).map((page) => ({ ...page }));
+      const fromExisting = (opts.existingPages ?? [])
+        .filter((page) => page.title === title)
+        .map((page) => ({ ...page }));
+      const fromCreated: Page[] = [];
+      for (const page of pages.values()) {
+        if (page.title === title) {
+          fromCreated.push({ ...page });
+        }
+      }
+      const seen = new Set<string>();
+      const merged: Page[] = [];
+      for (const page of [...fromExisting, ...fromCreated]) {
+        if (page.id !== undefined && !seen.has(page.id)) {
+          seen.add(page.id);
+          merged.push(page);
+        }
+      }
+      return merged;
     },
     async getPage(pageId: string): Promise<Page> {
       calls.push({ method: 'getPage', args: [pageId] });
@@ -56,12 +83,16 @@ function buildFakeClient(opts: {
       }
       return pageFixture(pageId, 'unknown', 1, '');
     },
-    async createPage(input: { title: string; parentId: string }): Promise<Page> {
+    async createPage(input: { title: string; parentId: string; body?: { value: string } }): Promise<Page> {
       calls.push({ method: 'createPage', args: [input] });
       const id = String(pageIdCounter);
       pageIdCounter += 1;
-      const created = pageFixture(id, input.title, 1, '');
-      pages.set(id, created);
+      const bodyValue = input.body?.value ?? '';
+      const created = pageFixture(id, input.title, 1, bodyValue, input.parentId);
+      pages.set(id, {
+        ...created,
+        body: bodyValue ? { storage: { value: bodyValue, representation: 'storage' } } : undefined,
+      });
       return created;
     },
     async updatePage(input: {
@@ -71,7 +102,9 @@ function buildFakeClient(opts: {
       version: { number: number };
     }): Promise<Page> {
       calls.push({ method: 'updatePage', args: [input] });
-      const next = pageFixture(input.id, input.title, input.version.number, input.body.value);
+      const existing = pages.get(input.id);
+      const parentId = existing?.parentId ?? 'PARENT';
+      const next = pageFixture(input.id, input.title, input.version.number, input.body.value, parentId);
       pages.set(input.id, { ...next, body: { storage: { value: input.body.value, representation: 'storage' } } });
       return next;
     },
@@ -87,18 +120,26 @@ function buildFakeClient(opts: {
     async uploadAttachment(
       pageId: string,
       filePath: string,
+      comment?: string,
+      filenameOverride?: string,
     ): Promise<{
       id: string;
       filename?: string;
       title: string;
-      version: { number: number };
+      version: { number: number; message?: string };
       _links: { webui: string };
     }> {
-      calls.push({ method: 'uploadAttachment', args: [pageId, filePath] });
+      calls.push({ method: 'uploadAttachment', args: [pageId, filePath, comment, filenameOverride] });
       const map = attachmentsByPage.get(pageId) ?? new Map();
       const id = 'att-' + pageId + '-' + (map.size + 1);
-      const filename = filePath.split(/[\\/]/).pop() ?? 'unknown';
-      const att = { id, filename, title: filename, version: { number: 1 }, _links: { webui: '/x' } };
+      const filename = filenameOverride ?? filePath.split(/[\\/]/).pop() ?? 'unknown';
+      const att = {
+        id,
+        filename,
+        title: filename,
+        version: { number: 1, message: comment },
+        _links: { webui: '/x' },
+      };
       map.set(filename, att);
       attachmentsByPage.set(pageId, map);
       return att;
@@ -107,16 +148,28 @@ function buildFakeClient(opts: {
       pageId: string,
       attachmentId: string,
       filePath: string,
+      comment?: string,
+      filenameOverride?: string,
     ): Promise<{
       id: string;
       filename?: string;
       title: string;
-      version: { number: number };
+      version: { number: number; message?: string };
       _links: { webui: string };
     }> {
-      calls.push({ method: 'updateAttachmentData', args: [pageId, attachmentId, filePath] });
-      const filename = filePath.split(/[\\/]/).pop() ?? 'unknown';
-      return { id: attachmentId, filename, title: filename, version: { number: 2 }, _links: { webui: '/u' } };
+      calls.push({ method: 'updateAttachmentData', args: [pageId, attachmentId, filePath, comment, filenameOverride] });
+      const filename = filenameOverride ?? filePath.split(/[\\/]/).pop() ?? 'unknown';
+      const att = {
+        id: attachmentId,
+        filename,
+        title: filename,
+        version: { number: 2, message: comment },
+        _links: { webui: '/u' },
+      };
+      const map = attachmentsByPage.get(pageId) ?? new Map();
+      map.set(filename, att);
+      attachmentsByPage.set(pageId, map);
+      return att;
     },
   };
   return { client, calls };
@@ -210,12 +263,19 @@ describe('syncConfluenceToDocs', () => {
     expect(methods).toContain('getSpaceIdByKey');
     expect(methods).toContain('getPagesByTitle');
     expect(methods).toContain('createPage');
-    expect(methods).toContain('updatePage');
     const createTitles = calls
       .filter((c) => c.method === 'createPage')
       .map((c) => (c.args[0] as { title: string }).title);
     expect(createTitles).toContain('guide');
     expect(createTitles).toContain('intro');
+    // CFARC-03: leaf pages whose body needs no attachment uploads are created
+    // in a single POST with the final rendered body — no follow-up updatePage.
+    const introCreate = calls.find(
+      (c) => c.method === 'createPage' && (c.args[0] as { title: string }).title === 'intro',
+    )?.args[0] as { body?: { value: string } } | undefined;
+    expect(introCreate?.body).toBeDefined();
+    expect(introCreate?.body?.value).toBe('<h1>Intro</h1>');
+    expect(methods).not.toContain('updatePage');
   });
 
   it('uploads local images as attachments and rewrites the placeholder macro', async () => {
@@ -239,7 +299,9 @@ describe('syncConfluenceToDocs', () => {
     const updateCalls = calls.filter((c) => c.method === 'updatePage');
     expect(updateCalls).toHaveLength(1);
     const body = (updateCalls[0].args[0] as { body: { value: string } }).body.value;
-    expect(body).toContain('<ac:image><ri:attachment ri:filename="logo.png" /></ac:image>');
+    // The attachment filename is content-addressed: <stem>-<sha256[:16]>.<ext>,
+    // so identical content always maps to a stable, insertion-order-independent name.
+    expect(body).toMatch(/<ac:image><ri:attachment ri:filename="logo-[0-9a-f]{16}\.png" \/><\/ac:image>/);
     expect(body).not.toContain('data-local-src');
   });
 
@@ -257,9 +319,12 @@ describe('syncConfluenceToDocs', () => {
       client: client as unknown as Parameters<typeof syncConfluenceToDocs>[0]['client'],
       log: logSpy,
     });
-    const updateCall = calls.find((c) => c.method === 'updatePage');
-    expect(updateCall).toBeDefined();
-    const body = (updateCall!.args[0] as { body: { value: string } }).body.value;
+    // CFARC-03: a leaf page with no local uploads is created with its final
+    // body in a single POST (no follow-up PUT). The body is therefore carried
+    // by createPage, not updatePage.
+    const createCall = calls.find((c) => c.method === 'createPage');
+    expect(createCall).toBeDefined();
+    const body = (createCall!.args[0] as { body?: { value: string } }).body?.value ?? '';
     expect(body).toContain('<ri:url ri:value="https://cdn.example/logo.png"');
     expect(body).not.toContain('data-local-src');
   });
@@ -416,10 +481,12 @@ describe('syncConfluenceToDocs', () => {
       client: client as unknown as Parameters<typeof syncConfluenceToDocs>[0]['client'],
       log: () => {},
     });
-    const update = calls.find((c) => c.method === 'updatePage')?.args[0] as { body: { value: string } } | undefined;
-    expect(update).toBeDefined();
-    expect(update?.body.value).toContain('<ac:structured-macro ac:name="html"');
-    expect(update?.body.value).not.toContain('ac:name="code"');
+    // CFARC-03: leaf with no attachments is created in one POST with its
+    // final rendered body — the body is on createPage, not updatePage.
+    const created = calls.find((c) => c.method === 'createPage')?.args[0] as { body?: { value: string } } | undefined;
+    expect(created?.body?.value).toBeDefined();
+    expect(created?.body?.value).toContain('<ac:structured-macro ac:name="html"');
+    expect(created?.body?.value).not.toContain('ac:name="code"');
   });
 
   it('renders ```html fenced blocks as a code macro by default', async () => {
@@ -435,9 +502,453 @@ describe('syncConfluenceToDocs', () => {
       client: client as unknown as Parameters<typeof syncConfluenceToDocs>[0]['client'],
       log: () => {},
     });
-    const update = calls.find((c) => c.method === 'updatePage')?.args[0] as { body: { value: string } } | undefined;
-    expect(update).toBeDefined();
-    expect(update?.body.value).toContain('<ac:structured-macro ac:name="code"');
-    expect(update?.body.value).toContain('<ac:parameter ac:name="language">html</ac:parameter>');
+    const created = calls.find((c) => c.method === 'createPage')?.args[0] as { body?: { value: string } } | undefined;
+    expect(created?.body?.value).toBeDefined();
+    expect(created?.body?.value).toContain('<ac:structured-macro ac:name="code"');
+    expect(created?.body?.value).toContain('<ac:parameter ac:name="language">html</ac:parameter>');
+  });
+});
+
+describe('CFARC-02: content-addressed attachments and no-op second sync', () => {
+  let tmp: string;
+
+  beforeEach(async () => {
+    tmp = await mkdtemp(join(tmpdir(), 'rt-sync-cfarc02-'));
+  });
+  afterEach(async () => {
+    await rm(tmp, { recursive: true, force: true });
+  });
+
+  it('a second identical sync performs no page PUT, no attachment mutation, and no upload', async () => {
+    await mkdir(join(tmp, 'img'));
+    await writeFile(join(tmp, 'img', 'logo.png'), Buffer.from([1, 2, 3]));
+    await writeFile(join(tmp, 'page.md'), '# Page\n\n![logo](./img/logo.png)');
+
+    // pre-populate the existing-pages fixture so the leaf page already exists
+    // (the first sync will PUT its body; the second sync must NOT)
+    const initialPage = pageFixture('P1', 'page', 1, 'STALE_BODY', '123');
+
+    const { client, calls } = buildFakeClient({
+      spaceId: 'SPACE',
+      existingPages: [initialPage],
+    });
+
+    // First sync — should put the page (real upload + PUT)
+    await syncConfluenceToDocs({
+      folder: tmp,
+      username: 'u',
+      apiToken: 't',
+      baseUrl: 'https://x/wiki',
+      spaceKey: 'ENG',
+      parentPageId: '123',
+      client: client as unknown as Parameters<typeof syncConfluenceToDocs>[0]['client'],
+      log: () => {},
+    });
+
+    const firstRunGetAtt = calls.filter((c) => c.method === 'getAttachments').length;
+    const firstRunUploads = calls.filter((c) => c.method === 'uploadAttachment').length;
+    const firstRunUpdates = calls.filter((c) => c.method === 'updateAttachmentData').length;
+    const firstRunPuts = calls.filter((c) => c.method === 'updatePage').length;
+
+    expect(firstRunUploads).toBe(1);
+    expect(firstRunPuts).toBe(1);
+
+    // Second identical sync — call counts must not advance for mutations.
+    // Re-use the same client (its pages/attachments maps persist).
+    await syncConfluenceToDocs({
+      folder: tmp,
+      username: 'u',
+      apiToken: 't',
+      baseUrl: 'https://x/wiki',
+      spaceKey: 'ENG',
+      parentPageId: '123',
+      client: client as unknown as Parameters<typeof syncConfluenceToDocs>[0]['client'],
+      log: () => {},
+    });
+
+    const uploadsAfterSecond = calls.filter((c) => c.method === 'uploadAttachment').length;
+    const updatesAfterSecond = calls.filter((c) => c.method === 'updateAttachmentData').length;
+    const putsAfterSecond = calls.filter((c) => c.method === 'updatePage').length;
+
+    expect(uploadsAfterSecond).toBe(firstRunUploads);
+    expect(updatesAfterSecond).toBe(firstRunUpdates);
+    expect(putsAfterSecond).toBe(firstRunPuts);
+
+    // The second sync should have called getAttachments once (during preflight)
+    // but no upload/PUT after that — so total getAttachments = firstRun + 1
+    expect(calls.filter((c) => c.method === 'getAttachments').length).toBe(firstRunGetAtt + 1);
+  });
+
+  it('two same-basename images with different content get distinct content-addressed filenames', async () => {
+    await mkdir(join(tmp, 'a'));
+    await mkdir(join(tmp, 'b'));
+    await writeFile(join(tmp, 'a', 'logo.png'), Buffer.from([1, 2, 3]));
+    await writeFile(join(tmp, 'b', 'logo.png'), Buffer.from([4, 5, 6]));
+    await writeFile(join(tmp, 'page.md'), '![a](./a/logo.png)\n\n![b](./b/logo.png)');
+
+    const { client, calls } = buildFakeClient({ spaceId: 'SPACE' });
+    await syncConfluenceToDocs({
+      folder: tmp,
+      username: 'u',
+      apiToken: 't',
+      baseUrl: 'https://x/wiki',
+      spaceKey: 'ENG',
+      parentPageId: '123',
+      client: client as unknown as Parameters<typeof syncConfluenceToDocs>[0]['client'],
+      log: () => {},
+    });
+
+    const uploadCalls = calls.filter((c) => c.method === 'uploadAttachment');
+    expect(uploadCalls).toHaveLength(2);
+    const filenames = uploadCalls.map((c) => c.args[3] as string | undefined);
+    expect(filenames[0]).toMatch(/^logo-[0-9a-f]{16}\.png$/);
+    expect(filenames[1]).toMatch(/^logo-[0-9a-f]{16}\.png$/);
+    expect(filenames[0]).not.toBe(filenames[1]);
+    const updateCall = calls.find((c) => c.method === 'updatePage')?.args[0] as { body: { value: string } };
+    expect(updateCall.body.value).toContain(`ri:filename="${filenames[0]}"`);
+    expect(updateCall.body.value).toContain(`ri:filename="${filenames[1]}"`);
+  });
+
+  it('inserting an earlier mermaid diagram does not rename the existing diagrams (insertion stability is tested in mermaid.test.ts via rewriteMermaidBlocks)', async () => {
+    // A mermaid-only page (no attachments, no local images) where mmdc is
+    // unavailable (default in the fake environment) falls back to code macros.
+    // Re-syncing the same file must be a no-op (no PUT).
+    await writeFile(join(tmp, 'page.md'), '```mermaid\ngraph TD\nA-->B\n```');
+    const { client, calls } = buildFakeClient({ spaceId: 'SPACE' });
+    await syncConfluenceToDocs({
+      folder: tmp,
+      username: 'u',
+      apiToken: 't',
+      baseUrl: 'https://x/wiki',
+      spaceKey: 'ENG',
+      parentPageId: '123',
+      client: client as unknown as Parameters<typeof syncConfluenceToDocs>[0]['client'],
+      log: () => {},
+    });
+    const firstPuts = calls.filter((c) => c.method === 'updatePage').length;
+    const firstUploads = calls.filter((c) => c.method === 'uploadAttachment').length;
+    expect(firstPuts).toBe(1);
+    expect(firstUploads).toBe(0);
+
+    await syncConfluenceToDocs({
+      folder: tmp,
+      username: 'u',
+      apiToken: 't',
+      baseUrl: 'https://x/wiki',
+      spaceKey: 'ENG',
+      parentPageId: '123',
+      client: client as unknown as Parameters<typeof syncConfluenceToDocs>[0]['client'],
+      log: () => {},
+    });
+    const secondPuts = calls.filter((c) => c.method === 'updatePage').length;
+    const secondUploads = calls.filter((c) => c.method === 'uploadAttachment').length;
+    expect(secondPuts).toBe(firstPuts);
+    expect(secondUploads).toBe(firstUploads);
+  });
+});
+
+describe('CFARC-03: validate locally before remote mutation', () => {
+  let tmp: string;
+
+  beforeEach(async () => {
+    tmp = await mkdtemp(join(tmpdir(), 'rt-sync-cfarc03-'));
+  });
+  afterEach(async () => {
+    await rm(tmp, { recursive: true, force: true });
+  });
+
+  function mutationMethods(calls: RecordedCall[]): string[] {
+    const MUTATION_METHODS = new Set(['createPage', 'updatePage', 'uploadAttachment', 'updateAttachmentData']);
+    return calls.map((c) => c.method).filter((m) => MUTATION_METHODS.has(m));
+  }
+
+  it('rejects an attachment source that escapes the doc root before any API call (no client constructed)', async () => {
+    const outsideDir = await mkdtemp(join(tmpdir(), 'rt-cfarc03-outside-'));
+    try {
+      await mkdir(join(tmp, 'img'), { recursive: true });
+      await writeFile(join(outsideDir, 'secret.png'), Buffer.from([1]));
+      await symlink(join(outsideDir, 'secret.png'), join(tmp, 'img', 'secret.png'));
+      await writeFile(join(tmp, 'page.md'), '![logo](./img/secret.png)');
+      const { client, calls } = buildFakeClient({ spaceId: 'SPACE' });
+
+      await expect(
+        syncConfluenceToDocs({
+          folder: tmp,
+          username: 'u',
+          apiToken: 't',
+          baseUrl: 'https://x/wiki',
+          spaceKey: 'ENG',
+          parentPageId: '123',
+          client: client as unknown as Parameters<typeof syncConfluenceToDocs>[0]['client'],
+          log: () => {},
+        }),
+      ).rejects.toBeInstanceOf(LocalSyncValidationAggregateError);
+      // Criterion 1: every local validation failure causes zero API mutation calls.
+      // Stronger: no API call of ANY kind runs when local validation fails,
+      // because validation occurs before the client is constructed/used.
+      expect(mutationMethods(calls)).toHaveLength(0);
+      expect(calls.some((c) => c.method === 'getSpaceIdByKey')).toBe(false);
+    } finally {
+      await rm(outsideDir, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects a missing attachment source before any API call', async () => {
+    await writeFile(join(tmp, 'page.md'), '![logo](./img/missing.png)');
+    const { client, calls } = buildFakeClient({ spaceId: 'SPACE' });
+
+    await expect(
+      syncConfluenceToDocs({
+        folder: tmp,
+        username: 'u',
+        apiToken: 't',
+        baseUrl: 'https://x/wiki',
+        spaceKey: 'ENG',
+        parentPageId: '123',
+        client: client as unknown as Parameters<typeof syncConfluenceToDocs>[0]['client'],
+        log: () => {},
+      }),
+    ).rejects.toBeInstanceOf(LocalSyncValidationAggregateError);
+    expect(mutationMethods(calls)).toHaveLength(0);
+    expect(calls.some((c) => c.method === 'getSpaceIdByKey')).toBe(false);
+  });
+
+  it('aggregates multiple per-entry defects into one LocalSyncValidationAggregateError', async () => {
+    // Two unrelated broken inputs, plus a valid third page:
+    await writeFile(join(tmp, 'bad1.md'), '![nope](./missing-a.png)');
+    await writeFile(join(tmp, 'bad2.md'), '![nope](./missing-b.png)');
+    await writeFile(join(tmp, 'ok.md'), '# OK');
+    const { client, calls } = buildFakeClient({ spaceId: 'SPACE' });
+
+    let thrown: unknown;
+    try {
+      await syncConfluenceToDocs({
+        folder: tmp,
+        username: 'u',
+        apiToken: 't',
+        baseUrl: 'https://x/wiki',
+        spaceKey: 'ENG',
+        parentPageId: '123',
+        client: client as unknown as Parameters<typeof syncConfluenceToDocs>[0]['client'],
+        log: () => {},
+      });
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toBeInstanceOf(LocalSyncValidationAggregateError);
+    const aggregate = thrown as LocalSyncValidationAggregateError;
+    const failingSegments = aggregate.defects.map((d) => d.entry.segments.join('/')).sort();
+    expect(failingSegments).toEqual(['bad1.md', 'bad2.md']);
+    // All defects carry a real error message surfacing the local failure.
+    expect(aggregate.defects.every((d) => /not found|escapes|regular file|size/i.test(d.error.message))).toBe(true);
+    expect(aggregate.message).toMatch(/2 document\(s\)/);
+    expect(mutationMethods(calls)).toHaveLength(0);
+  });
+
+  it('does not aggregate defects across already-validated entries (validateLocalSync returns a plan when all are valid)', async () => {
+    await mkdir(join(tmp, 'img'));
+    await writeFile(join(tmp, 'img', 'logo.png'), Buffer.from([1, 2, 3]));
+    await writeFile(join(tmp, 'page.md'), '# Page\n\n![logo](./img/logo.png)');
+    const plan = resolveConfluenceSyncPlan({
+      folder: tmp,
+      username: 'u',
+      apiToken: 't',
+      baseUrl: 'https://x/wiki',
+      spaceKey: 'ENG',
+      parentPageId: '123',
+    });
+    const localPlan = validateLocalSync(
+      [
+        {
+          segments: ['page.md'],
+          absolute: join(tmp, 'page.md'),
+        },
+      ],
+      plan,
+    );
+    expect(localPlan.entries).toHaveLength(1);
+    const entryPlan = localPlan.entries[0];
+    expect(entryPlan?.hasLocalImages).toBe(true);
+    expect(entryPlan?.attachments).toHaveLength(1);
+    const att = entryPlan?.attachments[0];
+    expect(att?.filename).toMatch(/^logo-[0-9a-f]{16}\.png$/);
+    expect(att?.src).toBe('./img/logo.png');
+  });
+
+  it('exposes validateAttachmentSources standalone for local preflight with no client', () => {
+    const html = '<p>x</p><ac:image data-local-src="missing.png"></ac:image>';
+    expect(() =>
+      validateAttachmentSources(html, {
+        markdownDir: tmp,
+        allowedRoot: tmp,
+      }),
+    ).toThrowError(/not found|escapes|regular file/i);
+  });
+
+  it('dry-run validates locally without credentials or a client', async () => {
+    const outsideDir = await mkdtemp(join(tmpdir(), 'rt-cfarc03-dry-outside-'));
+    try {
+      await mkdir(join(tmp, 'img'), { recursive: true });
+      await writeFile(join(outsideDir, 'secret.png'), Buffer.from([1]));
+      await symlink(join(outsideDir, 'secret.png'), join(tmp, 'img', 'secret.png'));
+      await writeFile(join(tmp, 'page.md'), '![logo](./img/secret.png)');
+
+      // No `client`, no credentials — dry-run must still run the same local
+      // validation plan and reject with LocalSyncValidationAggregateError.
+      await expect(
+        syncConfluenceToDocs({
+          folder: tmp,
+          dryRun: true,
+          log: () => {},
+        } as ConfluenceSyncOptions),
+      ).rejects.toBeInstanceOf(LocalSyncValidationAggregateError);
+    } finally {
+      await rm(outsideDir, { recursive: true, force: true });
+    }
+  });
+
+  it('dry-run with valid docs logs the per-entry plan and makes zero API calls even when a client is supplied', async () => {
+    await mkdir(join(tmp, 'img'));
+    await writeFile(join(tmp, 'img', 'logo.png'), Buffer.from([1, 2, 3]));
+    await writeFile(join(tmp, 'page.md'), '# Page\n\n![logo](./img/logo.png)\n\n```mermaid\ngraph TD\nA-->B\n```');
+    const logSpy = vi.fn();
+    const { client, calls } = buildFakeClient({ spaceId: 'SPACE' });
+
+    await syncConfluenceToDocs({
+      folder: tmp,
+      dryRun: true,
+      // Credentials are accepted but MUST NOT be required and not be used.
+      username: 'u',
+      apiToken: 't',
+      baseUrl: 'https://x/wiki',
+      spaceKey: 'ENG',
+      parentPageId: '123',
+      client: client as unknown as Parameters<typeof syncConfluenceToDocs>[0]['client'],
+      log: logSpy,
+    } as ConfluenceSyncOptions);
+
+    expect(calls).toHaveLength(0);
+    expect(logSpy.mock.calls.some((c) => /\[dry-run\] Walking documentation tree only./.test(c[0]))).toBe(true);
+    const planLine = logSpy.mock.calls.map((c) => c[0]).find((m) => /would sync page\.md/.test(m));
+    expect(planLine).toBeDefined();
+    // The same per-entry plan that a real sync would consume — including the
+    // validated attachment count and parsed mermaid block count.
+    expect(planLine).toMatch(/1 attachment validated/);
+    expect(planLine).toMatch(/1 mermaid block/);
+  });
+
+  it('reports changes, the failing entry, and remaining unprocessed work when a remote failure aborts mid-loop', async () => {
+    // Three valid docs: doc-a (no attachments → createEntry one-POST path),
+    // doc-b (no attachments → createEntry fails on updatePage), doc-c (would
+    // also be created; remaining unprocessed when doc-b aborts). To force
+    // doc-b to fail mid-mutation, we set up an existing page for doc-b so the
+    // flow hits updatePage, then stub updatePage to throw the second time.
+    await writeFile(join(tmp, 'a.md'), '# A');
+    await writeFile(join(tmp, 'b.md'), '# B');
+    await writeFile(join(tmp, 'c.md'), '# C');
+    const logSpy = vi.fn();
+    const { client, calls } = buildFakeClient({
+      spaceId: 'SPACE',
+      existingPages: [pageFixture('P-B', 'b', 1, '<h1>STALE B</h1>', '123')],
+    });
+
+    let updateCount = 0;
+    const originalUpdate = client.updatePage.bind(client);
+    client.updatePage = async (input: {
+      id: string;
+      title: string;
+      body: { value: string };
+      version: { number: number };
+    }): Promise<Page> => {
+      updateCount += 1;
+      if (updateCount === 1) {
+        throw new Error('server 500 during updatePage');
+      }
+      return originalUpdate(input);
+    };
+
+    let thrown: unknown;
+    try {
+      await syncConfluenceToDocs({
+        folder: tmp,
+        username: 'u',
+        apiToken: 't',
+        baseUrl: 'https://x/wiki',
+        spaceKey: 'ENG',
+        parentPageId: '123',
+        client: client as unknown as Parameters<typeof syncConfluenceToDocs>[0]['client'],
+        log: logSpy,
+      } as ConfluenceSyncOptions);
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toBeInstanceOf(SyncMutationError);
+    const syncErr = thrown as SyncMutationError;
+
+    // Criterion 2: changed pages/attachments are reported.
+    expect(calls.some((c) => c.method === 'createPage')).toBe(true);
+
+    // doc-a was created with its final body (no attachments) — recorded as kind:'created'.
+    const createTitles = calls
+      .filter((c) => c.method === 'createPage')
+      .map((c) => (c.args[0] as { title: string }).title);
+    expect(createTitles).toContain('a');
+    const docAChange = syncErr.changes.find((ch: SyncChange) => ch.entry.segments.join('/').startsWith('a'));
+    expect(docAChange).toBeDefined();
+    expect(docAChange?.kind).toBe('created');
+    expect(typeof docAChange?.pageId).toBe('string');
+
+    // The failing entry (doc-b) is captured on `failure` with the underlying error message intact.
+    expect(syncErr.failure.entry.segments.join('/')).toBe('b.md');
+    expect(syncErr.failure.error.message).toMatch(/server 500 during updatePage/);
+
+    // Remaining entries (doc-c) are reported as unprocessed.
+    expect(syncErr.unprocessed.map((e) => e.segments.join('/'))).toEqual(['c.md']);
+
+    // SyncMutationError carries the underlying message so existing .toThrowError(/regex/) keep matching.
+    expect(syncErr.message).toMatch(/server 500 during updatePage/);
+  });
+
+  it('SyncMutationError carries only unprocessed entries after the failing entry (changes is empty when the first entry fails)', async () => {
+    // Single failing entry and a single never-processed entry after it.
+    await writeFile(join(tmp, 'bad.md'), '# Bad');
+    await writeFile(join(tmp, 'later.md'), '# Later');
+    const { client, calls } = buildFakeClient({
+      spaceId: 'SPACE',
+      existingPages: [pageFixture('P-bad', 'bad', 1, '<h1>stale</h1>', '123')],
+    });
+
+    client.updatePage = async (): Promise<Page> => {
+      throw new Error('boom');
+    };
+
+    let thrown: unknown;
+    try {
+      await syncConfluenceToDocs({
+        folder: tmp,
+        username: 'u',
+        apiToken: 't',
+        baseUrl: 'https://x/wiki',
+        spaceKey: 'ENG',
+        parentPageId: '123',
+        client: client as unknown as Parameters<typeof syncConfluenceToDocs>[0]['client'],
+        log: () => {},
+      } as ConfluenceSyncOptions);
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toBeInstanceOf(SyncMutationError);
+    const syncErr = thrown as SyncMutationError;
+    expect(syncErr.changes).toHaveLength(0);
+    expect(syncErr.failure.entry.segments.join('/')).toBe('bad.md');
+    expect(syncErr.unprocessed.map((e) => e.segments.join('/'))).toEqual(['later.md']);
+    // No upload ran for the later (unprocessed) entry; the only API work
+    // before the abort was the local-validation-safe lookup/get.
+    expect(calls.some((c) => c.method === 'uploadAttachment')).toBe(false);
+    // No PUT/POST happened for the later entry.
+    const titlesAfterAbort = calls
+      .filter((c) => c.method === 'createPage')
+      .map((c) => (c.args[0] as { title: string }).title);
+    expect(titlesAfterAbort).not.toContain('later');
   });
 });

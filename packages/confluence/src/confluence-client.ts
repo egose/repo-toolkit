@@ -267,8 +267,8 @@ export class ConfluenceClient {
     return results;
   }
 
-  async uploadAttachment(pageId: string, filePath: string, comment?: string): Promise<Attachment> {
-    return this.sendAttachmentMultipart(pageId, undefined, filePath, comment);
+  async uploadAttachment(pageId: string, filePath: string, comment?: string, filename?: string): Promise<Attachment> {
+    return this.sendAttachmentMultipart(pageId, undefined, filePath, comment, filename);
   }
 
   async updateAttachmentData(
@@ -276,8 +276,9 @@ export class ConfluenceClient {
     attachmentId: string,
     filePath: string,
     comment?: string,
+    filename?: string,
   ): Promise<Attachment> {
-    return this.sendAttachmentMultipart(pageId, attachmentId, filePath, comment);
+    return this.sendAttachmentMultipart(pageId, attachmentId, filePath, comment, filename);
   }
 
   private async sendAttachmentMultipart(
@@ -285,6 +286,7 @@ export class ConfluenceClient {
     attachmentId: string | undefined,
     filePath: string,
     comment?: string,
+    filenameOverride?: string,
   ): Promise<Attachment> {
     const info = statSync(filePath);
     if (!info.isFile()) {
@@ -299,7 +301,7 @@ export class ConfluenceClient {
       );
     }
 
-    const filename = sanitizeFilename(basename(filePath));
+    const filename = sanitizeFilename(filenameOverride ?? basename(filePath));
     const endpoint = attachmentId
       ? this.v1Url(`/content/${encodeURIComponent(pageId)}/child/attachment/${encodeURIComponent(attachmentId)}/data`)
       : this.v1Url(`/content/${encodeURIComponent(pageId)}/child/attachment`);

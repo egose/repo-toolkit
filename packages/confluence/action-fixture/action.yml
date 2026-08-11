@@ -1,0 +1,40 @@
+name: repo-toolkit-confluence-smoke
+description: >
+  Smoke fixture for @repo-toolkit/confluence. Bundles packages/confluence/src/cli.ts
+  (NOT src/index.ts) into action-dist/index.js using @vercel/ncc or equivalent,
+  then runs `node action-dist/index.js` with the INPUT_* inputs below and
+  INPUT_DRY-RUN=true. A passing run must exit 0 and must not echo INPUT_API-TOKEN
+  to stdout or stderr. Run this fixture from packages/confluence/ with the
+  package built (`pnpm --filter @repo-toolkit/confluence build`).
+inputs:
+  folder:
+    description: Documentation folder to sync (the fixture writes one to RUNNER_TEMP).
+    required: false
+    default: fixture-docs
+  username:
+    description: Confluence username/email. The fixture supplies a mock value.
+    required: false
+    default: fixture-user@example.com
+  password:
+    description: Confluence API token. The fixture supplies a mock value and asserts it is never logged.
+    required: false
+    default: fixture-token-do-not-log
+  confluence-base-url:
+    description: Confluence base URL with /wiki. The fixture supplies a mock URL.
+    required: false
+    default: http://fixture.example/wiki
+  space-key:
+    description: Confluence space key. The fixture supplies a mock key.
+    required: false
+    default: FX
+  parent-page-id:
+    description: Numeric parent page id. The fixture supplies a mock id.
+    required: false
+    default: '123456789'
+  dry-run:
+    description: Walk the doc tree and log the plan without API calls. The fixture forces this to 'true'.
+    required: false
+    default: 'true'
+runs:
+  using: node20
+  main: action-dist/index.js

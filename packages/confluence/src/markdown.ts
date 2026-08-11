@@ -16,12 +16,58 @@ export interface MarkdownConvertOptions {
   renderHtmlBlocks?: boolean;
 }
 
-const PROTOCOL_BLOCKLIST = /^(?:javascript|data|file|vbscript):/i;
 const AMP = '&' + 'amp;';
 const LT = '&' + 'lt;';
 const GT = '&' + 'gt;';
 const QUOT = '&' + 'quot;';
 const APOS = '&' + '#' + '39;';
+
+const HTTP_SRE = /^(https?:)?\/\//i;
+const ABSOLUTE_SCHEME_RE = /^[a-zA-Z][a-zA-Z0-9+.-]*:/;
+const BLOCKED_SCHEMES = new Set(['javascript', 'data', 'file', 'vbscript']);
+const ALLOWED_SCHEMES = new Set(['http', 'https', 'mailto', 'tel']);
+
+function schemeOf(url: string): string | null {
+  const match = ABSOLUTE_SCHEME_RE.exec(url);
+  if (!match) {
+    return null;
+  }
+  return match[0].slice(0, -1).toLowerCase();
+}
+
+function decodedSchemeOrNull(url: string): string | null {
+  const match = ABSOLUTE_SCHEME_RE.exec(url);
+  if (!match) {
+    return null;
+  }
+  const rawScheme = match[0].slice(0, -1);
+  try {
+    return decodeURIComponent(rawScheme).toLowerCase();
+  } catch {
+    return rawScheme.toLowerCase();
+  }
+}
+
+export function isAllowedUrl(url: string): boolean {
+  if (url.length === 0) {
+    return false;
+  }
+  for (let i = 0; i < url.length; i += 1) {
+    const code = url.charCodeAt(i);
+    if (code < 0x20 || code === 0x7f) {
+      return false;
+    }
+  }
+  const scheme = schemeOf(url);
+  if (scheme === null) {
+    return HTTP_SRE.test(url) || /^[/?#]/.test(url) || !/:/.test(url);
+  }
+  const decoded = decodedSchemeOrNull(url) ?? scheme;
+  if (BLOCKED_SCHEMES.has(scheme) || BLOCKED_SCHEMES.has(decoded)) {
+    return false;
+  }
+  return ALLOWED_SCHEMES.has(scheme);
+}
 
 const MERMAID_PLACEHOLDER_PREFIX = '<ac:structured-macro ac:name="mermaid-placeholder" data-mermaid-id="';
 const MERMAID_PLACEHOLDER_RE_STRICT =
@@ -209,97 +255,309 @@ function renderList(listLines: string[]): string {
 }
 
 export function renderInline(text: string): string {
-  let s = text;
-  s = escapeHtml(s);
-  s = applyImages(s);
-  s = applyLinks(s);
-  s = applyStrong(s);
-  s = applyInlineCode(s);
-  return s;
+  const out: string[] = [];
+  const tokens = tokenizeInline(text, 0, text.length);
+  renderTokens(text, tokens, out);
+  return out.join('');
 }
 
-function applyLinks(text: string): string {
-  return replaceBalancedSyntax(text, /\[([^\]]+)\]\(/g, (label: string, url: string) => {
-    if (PROTOCOL_BLOCKLIST.test(url)) {
-      return label;
-    }
-    return '<a href="' + escapeXmlAttribute(url) + '">' + label + '</a>';
-  });
+type InlineToken =
+  | { kind: 'text'; start: number; end: number }
+  | { kind: 'code'; contentStart: number; contentEnd: number }
+  | { kind: 'link'; labelStart: number; labelEnd: number; url: string }
+  | { kind: 'image'; labelStart: number; labelEnd: number; url: string }
+  | { kind: 'delimiter'; marker: '*' | '_'; runLength: number; canOpen: boolean; canClose: boolean };
+
+function renderTokens(text: string, tokens: InlineToken[], out: string[]): void {
+  renderTokenRange(text, tokens, 0, tokens.length, out);
 }
 
-function applyImages(text: string): string {
-  return replaceBalancedSyntax(text, /!\[([^\]]*)\]\(/g, (alt: string, src: string) => {
-    if (PROTOCOL_BLOCKLIST.test(src)) {
-      return alt;
-    }
-    if (isRemoteUrl(src)) {
-      return '<ac:image><ri:url ri:value="' + escapeXmlAttribute(src) + '" /></ac:image>';
-    }
-    return '<ac:image data-local-src="' + escapeXmlAttribute(src) + '"></ac:image>';
-  });
-}
-
-function replaceBalancedSyntax(
-  text: string,
-  openerRe: RegExp,
-  render: (captured: string, url: string) => string,
-): string {
-  let out = '';
-  let cursor = 0;
-  let m: RegExpExecArray | null;
-  const re = new RegExp(openerRe.source, 'g');
-  while ((m = re.exec(text)) !== null) {
-    out += text.slice(cursor, m.index);
-    const captured = m[1] ?? '';
-    const after = text.slice(m.index + m[0].length);
-    const scan = scanBalancedUrl(after);
-    if (scan === null) {
-      out += m[0];
-      cursor = m.index + m[0].length;
+function renderTokenRange(text: string, tokens: InlineToken[], from: number, to: number, out: string[]): void {
+  for (let i = from; i < to; i += 1) {
+    const open = tokens[i];
+    if (open.kind !== 'delimiter' || !open.canOpen) {
+      out.push(renderSingleToken(text, open));
       continue;
     }
-    out += render(captured, scan.url);
-    cursor = m.index + m[0].length + scan.consumed;
+    const closeIdx = findEmphasisClose(tokens, i, to, open);
+    if (closeIdx === -1) {
+      out.push(renderSingleToken(text, open));
+      continue;
+    }
+    const tag = open.runLength === 1 ? 'em' : 'strong';
+    const innerOut: string[] = [];
+    renderTokenRange(text, tokens, i + 1, closeIdx, innerOut);
+    out.push('<' + tag + '>' + innerOut.join('') + '</' + tag + '>');
+    i = closeIdx;
   }
-  out += text.slice(cursor);
-  return out;
 }
 
-function scanBalancedUrl(rest: string): { url: string; consumed: number } | null {
+function renderSingleToken(text: string, token: InlineToken): string {
+  if (token.kind === 'text') {
+    return token.end > token.start ? escapeHtml(text.slice(token.start, token.end)) : '';
+  }
+  if (token.kind === 'code') {
+    return '<code>' + escapeHtml(text.slice(token.contentStart, token.contentEnd)) + '</code>';
+  }
+  if (token.kind === 'image') {
+    return renderImageToken(text, token);
+  }
+  if (token.kind === 'link') {
+    return renderLinkToken(text, token);
+  }
+  return escapeHtml(token.marker.repeat(token.runLength));
+}
+
+function renderImageToken(text: string, token: Extract<InlineToken, { kind: 'image' }>): string {
+  const labelRaw = text.slice(token.labelStart, token.labelEnd);
+  if (!isAllowedUrl(token.url)) {
+    return escapeHtml(labelRaw);
+  }
+  if (!isRemoteUrl(token.url)) {
+    return '<ac:image data-local-src="' + escapeXmlAttribute(token.url) + '"></ac:image>';
+  }
+  const alt = renderInline(labelRaw);
+  return '<ac:image><ri:url ri:value="' + escapeXmlAttribute(token.url) + '" />' + alt + '</ac:image>';
+}
+
+function renderLinkToken(text: string, token: Extract<InlineToken, { kind: 'link' }>): string {
+  const labelRaw = text.slice(token.labelStart, token.labelEnd);
+  if (!isAllowedUrl(token.url)) {
+    return renderInline(labelRaw);
+  }
+  return '<a href="' + escapeXmlAttribute(token.url) + '">' + renderInline(labelRaw) + '</a>';
+}
+
+function findEmphasisClose(
+  tokens: InlineToken[],
+  openIdx: number,
+  to: number,
+  open: { marker: '*' | '_'; runLength: number },
+): number {
   let depth = 0;
-  let i = 0;
-  for (; i < rest.length; i += 1) {
-    const ch = rest[i];
-    if (ch === '(') {
+  for (let i = openIdx + 1; i < to; i += 1) {
+    const t = tokens[i];
+    if (t.kind !== 'delimiter') {
+      continue;
+    }
+    const m: '*' | '_' = t.marker;
+    if (m === open.marker && t.runLength === open.runLength && t.canOpen && !t.canClose) {
       depth += 1;
-    } else if (ch === ')') {
+    } else if (m === open.marker && t.runLength === open.runLength && t.canClose) {
       if (depth === 0) {
-        const url = rest.slice(0, i);
+        return i;
+      }
+      depth -= 1;
+    }
+  }
+  return -1;
+}
+
+function tokenizeInline(text: string, start: number, end: number): InlineToken[] {
+  const tokens: InlineToken[] = [];
+  let cursor = start;
+  let textStart = start;
+  const flushText = (stop: number): void => {
+    if (stop > textStart) {
+      tokens.push({ kind: 'text', start: textStart, end: stop });
+    }
+    textStart = stop;
+  };
+
+  while (cursor < end) {
+    const ch = text[cursor];
+
+    if (ch === '\\' && cursor + 1 < end && isAsciiPunctuation(text.charCodeAt(cursor + 1))) {
+      flushText(cursor);
+      tokens.push({ kind: 'text', start: cursor + 1, end: cursor + 2 });
+      cursor += 2;
+      textStart = cursor;
+      continue;
+    }
+
+    if (ch === '`') {
+      const codeSpan = scanInlineCode(text, cursor, end);
+      if (codeSpan) {
+        flushText(cursor);
+        tokens.push({ kind: 'code', contentStart: codeSpan.contentStart, contentEnd: codeSpan.contentEnd });
+        cursor = codeSpan.nextCursor;
+        textStart = cursor;
+        continue;
+      }
+      cursor += 1;
+      continue;
+    }
+
+    if (ch === '!' && cursor + 1 < end && text[cursor + 1] === '[') {
+      const link = tryParseLink(text, cursor + 1, end);
+      if (link) {
+        flushText(cursor);
+        tokens.push({ kind: 'image', labelStart: cursor + 2, labelEnd: link.labelEnd, url: link.url });
+        cursor = link.nextCursor;
+        textStart = cursor;
+        continue;
+      }
+    }
+
+    if (ch === '[') {
+      const link = tryParseLink(text, cursor, end);
+      if (link) {
+        flushText(cursor);
+        tokens.push({ kind: 'link', labelStart: cursor + 1, labelEnd: link.labelEnd, url: link.url });
+        cursor = link.nextCursor;
+        textStart = cursor;
+        continue;
+      }
+    }
+
+    if (ch === '*' || ch === '_') {
+      let runEnd = cursor;
+      while (runEnd < end && text[runEnd] === ch) {
+        runEnd += 1;
+      }
+      const runLength = runEnd - cursor;
+      const beforeCode = cursor === start ? -1 : text.charCodeAt(cursor - 1);
+      const afterCode = runEnd === end ? -1 : text.charCodeAt(runEnd);
+      const beforeIsSpace = beforeCode === -1 || isInlineWhitespace(beforeCode);
+      const afterIsSpace = afterCode === -1 || isInlineWhitespace(afterCode);
+      const leftFlanking = !afterIsSpace;
+      const rightFlanking = !beforeIsSpace;
+      let canOpen: boolean;
+      let canClose: boolean;
+      if (ch === '_') {
+        const beforeIsPunct = beforeCode !== -1 && isAsciiPunctuation(beforeCode);
+        const afterIsPunct = afterCode !== -1 && isAsciiPunctuation(afterCode);
+        canOpen = leftFlanking && (!rightFlanking || afterIsPunct);
+        canClose = rightFlanking && (!leftFlanking || beforeIsPunct);
+      } else {
+        canOpen = leftFlanking;
+        canClose = rightFlanking;
+      }
+      flushText(cursor);
+      const m: '*' | '_' = ch;
+      tokens.push({ kind: 'delimiter', marker: m, runLength, canOpen, canClose });
+      cursor = runEnd;
+      textStart = cursor;
+      continue;
+    }
+
+    cursor += 1;
+  }
+
+  flushText(end);
+  return tokens;
+}
+
+function scanInlineCode(
+  text: string,
+  start: number,
+  end: number,
+): { contentStart: number; contentEnd: number; nextCursor: number } | null {
+  let openEnd = start;
+  while (openEnd < end && text[openEnd] === '`') {
+    openEnd += 1;
+  }
+  const openRun = openEnd - start;
+  let closeStart = -1;
+  let search = openEnd;
+  while (search < end) {
+    if (text[search] !== '`') {
+      search += 1;
+      continue;
+    }
+    let runEnd = search;
+    while (runEnd < end && text[runEnd] === '`') {
+      runEnd += 1;
+    }
+    if (runEnd - search === openRun) {
+      closeStart = search;
+      break;
+    }
+    search = runEnd;
+  }
+  if (closeStart === -1) {
+    return null;
+  }
+  let contentStart = openEnd;
+  let contentEnd = closeStart;
+  if (contentEnd - contentStart >= 2 && text[contentStart] === ' ' && text[contentEnd - 1] === ' ') {
+    contentStart += 1;
+    contentEnd -= 1;
+  }
+  return { contentStart, contentEnd, nextCursor: closeStart + openRun };
+}
+
+function isInlineWhitespace(code: number): boolean {
+  return code === 0x20 || code === 0x09 || code === 0x0a || code === 0x0d;
+}
+
+function isAsciiPunctuation(code: number): boolean {
+  return (
+    (code >= 0x21 && code <= 0x2f) ||
+    (code >= 0x3a && code <= 0x40) ||
+    (code >= 0x5b && code <= 0x60) ||
+    (code >= 0x7b && code <= 0x7e)
+  );
+}
+
+function tryParseLink(
+  text: string,
+  bracketStart: number,
+  end: number,
+): { labelEnd: number; url: string; nextCursor: number } | null {
+  let depth = 0;
+  let i = bracketStart + 1;
+  while (i < end) {
+    const c = text[i];
+    if (c === '\\') {
+      i += 2;
+      continue;
+    }
+    if (c === '[') {
+      depth += 1;
+    } else if (c === ']') {
+      if (depth === 0) {
+        break;
+      }
+      depth -= 1;
+    }
+    i += 1;
+  }
+  if (i >= end || text[i] !== ']' || depth !== 0) {
+    return null;
+  }
+  const labelEnd = i;
+  if (i + 1 >= end || text[i + 1] !== '(') {
+    return null;
+  }
+  let j = i + 2;
+  let parenDepth = 0;
+  while (j < end) {
+    const c = text[j];
+    if (c === '\\') {
+      j += 2;
+      continue;
+    }
+    if (c === '(') {
+      parenDepth += 1;
+    } else if (c === ')') {
+      if (parenDepth === 0) {
+        const url = text.slice(i + 2, j).trim();
         if (url.length === 0) {
           return null;
         }
-        return { url, consumed: i + 1 };
+        return { labelEnd, url, nextCursor: j + 1 };
       }
-      depth -= 1;
-    } else if (ch === ' ' || ch === '\t' || ch === '\n') {
+      parenDepth -= 1;
+    } else if (c === ' ' || c === '\t' || c === '\n') {
       return null;
     }
+    j += 1;
   }
   return null;
 }
 
 export const LOCAL_IMAGE_PLACEHOLDER_RE = /<ac:image\s+data-local-src="([^"]*)"\s*><\/ac:image>/g;
-
-function applyStrong(text: string): string {
-  let s = text.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
-  s = s.replace(/\*([^*]+)\*/g, '<em>$1</em>');
-  s = s.replace(/__([^_]+)__/g, '<strong>$1</strong>');
-  return s.replace(/_([^_]+)_/g, '<em>$1</em>');
-}
-
-function applyInlineCode(text: string): string {
-  return text.replace(/`([^`]+)`/g, (_m, code: string) => `<code>${code}</code>`);
-}
 
 export function collectLocalImagePaths(markdown: string, baseDir: string): { src: string; abs: string }[] {
   const refs: { src: string; abs: string }[] = [];
