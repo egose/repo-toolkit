@@ -1,3 +1,25 @@
+## [0.10.0](https://github.com/egose/repo-toolkit/compare/v0.9.0...v0.10.0) (2026-08-11)
+
+### Features
+
+* add typed gateway support for custom Confluence sync clients ([f3ffec2](https://github.com/egose/repo-toolkit/commit/f3ffec2229ad70c8ac35fbad33d0e2984389a5cc))
+* **changelog:** harden changelog config validation and default types ([59f1d71](https://github.com/egose/repo-toolkit/commit/59f1d71439230e067106a752399b5f1144675dee))
+* extend publish package helpers and publish-packages CLI contracts ([18c2693](https://github.com/egose/repo-toolkit/commit/18c2693a7489931671615518f482fb003557557d))
+* harden release artifact execution and validation ([a2fb6e2](https://github.com/egose/repo-toolkit/commit/a2fb6e22897837ea50db0decefc8f1508441a74f))
+* harden release artifact installation with atomic shared verification ([2469c93](https://github.com/egose/repo-toolkit/commit/2469c9364922d3449c04be1e55356a581d99d8d6))
+* harden release artifacts, changelog generation, and confluence sync ([1cb2867](https://github.com/egose/repo-toolkit/commit/1cb2867b3f1b9f4c16005792931f003564f771e4))
+* stream multipart uploads and bound render and sync operations ([c45bfc7](https://github.com/egose/repo-toolkit/commit/c45bfc7ac2ca061db41297e732d796f4bd48fbb9))
+
+### Documentation
+
+* **changelog:** expand changelog CLI and API documentation ([75108ae](https://github.com/egose/repo-toolkit/commit/75108ae8e7d606bc568f7bec895201cf3c8349c5))
+* **publish-package:** document public helpers and runner contract ([4fcdd6f](https://github.com/egose/repo-toolkit/commit/4fcdd6fee30108f8351b923da871247f7221d953))
+* update release artifact usage guidance ([b11ad57](https://github.com/egose/repo-toolkit/commit/b11ad57da9d69badd8c2a188c632e5e456b783b2))
+
+### Code Refactoring
+
+* **publish-package:** split package internals into focused modules ([9fd85ec](https://github.com/egose/repo-toolkit/commit/9fd85ec385edbb69359d2fda639d563dcd8c0554))
+
 ## [0.9.0](https://github.com/egose/repo-toolkit/compare/v0.8.0...v0.9.0) (2026-08-02)
 
 ### Features
