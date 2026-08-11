@@ -20,6 +20,88 @@ import { basename, dirname, isAbsolute, join, posix as pathPosix, relative, reso
 import { tmpdir } from 'node:os';
 import { isPlainObject, normalizeVersion } from '@repo-toolkit/publish-package/helpers';
 
+/**
+ * Resolved node-modules content mode for the artifact.
+ *
+ * - `production`: materialise a transitive clos/deduplicated production
+ *   dependency tree inside the artifact via `pnpm install --prod` against a
+ *   generated lockfile, so the tarball is portable and reproducible. Default.
+ * - `copy`: copy the workspace `node_modules` verbatim (symlinks preserved).
+ *   Not portable across machines; tests typically disable this.
+ * - `none`: ship no `node_modules`; commands rely on an external runtime to
+ *   resolve dependencies.
+ */
+export type NodeModulesMode = 'production' | 'copy' | 'none';
+
+/**
+ * Injectable subprocess runner for every external binary the builder/verifier
+ * invokes (tar, pnpm, bash, generated wrappers). The default implementation
+ * spawns via `execFileSync` with bounded timeout, maxBuffer, and killSignal so
+ * a hang is surfaced as a clear error rather than an indefinite stall. Tests
+ * inject a fake runner to assert exact invocations without touching the host
+ * toolchain.
+ */
+export interface ArtifactRunner {
+  /**
+   * Run an executable with an explicit argument list. Never invokes a shell,
+   * so it is safe for arbitrary values (paths, version strings).
+   */
+  run(executable: string, args: ReadonlyArray<string>, options: ArtifactRunOptions): void;
+  /**
+   * Capture an executable's stdout, bounded by {@link ArtifactRunOptions.maxOutputBytes}.
+   * Throws on nonzero exit, timeout, or output overflow.
+   */
+  capture(executable: string, args: ReadonlyArray<string>, options: ArtifactRunOptions): string;
+}
+
+export interface ArtifactRunOptions {
+  cwd: string;
+  stdio?: 'inherit' | 'pipe' | 'ignore';
+  env?: Record<string, string>;
+  /** Kill the child process after this many milliseconds. Defaults to 60s. */
+  timeoutMs?: number;
+  /** Reject captured output larger than this many bytes. Defaults to 8 MiB. */
+  maxOutputBytes?: number;
+  /** Signal sent when the timeout fires. Defaults to `SIGTERM`. */
+  killSignal?: NodeJS.Signals;
+}
+
+const DEFAULT_RUN_TIMEOUT_MS = 60_000;
+const DEFAULT_MAX_OUTPUT_BYTES = 8 * 1024 * 1024;
+const DEFAULT_KILL_SIGNAL: NodeJS.Signals = 'SIGTERM';
+
+export const defaultArtifactRunner: ArtifactRunner = {
+  run(executable, args, options) {
+    const timeoutMs = options.timeoutMs ?? DEFAULT_RUN_TIMEOUT_MS;
+    const killSignal = options.killSignal ?? DEFAULT_KILL_SIGNAL;
+    execFileSync(executable, [...args], {
+      cwd: options.cwd,
+      stdio: options.stdio ?? 'inherit',
+      env: options.env ? { ...process.env, ...options.env } : process.env,
+      timeout: timeoutMs,
+      killSignal,
+    });
+  },
+  capture(executable, args, options) {
+    const timeoutMs = options.timeoutMs ?? DEFAULT_RUN_TIMEOUT_MS;
+    const killSignal = options.killSignal ?? DEFAULT_KILL_SIGNAL;
+    const maxOutputBytes = options.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES;
+    const result = execFileSync(executable, [...args], {
+      cwd: options.cwd,
+      stdio: ['ignore', 'pipe', 'pipe'],
+      env: options.env ? { ...process.env, ...options.env } : process.env,
+      encoding: 'utf8',
+      timeout: timeoutMs,
+      killSignal,
+      maxBuffer: maxOutputBytes,
+    });
+    if (Buffer.byteLength(result, 'utf8') > maxOutputBytes) {
+      throw new Error(`${executable} produced more than ${maxOutputBytes} bytes of output.`);
+    }
+    return result;
+  },
+};
+
 const DEFAULT_TOOL_NAME = 'repo-toolkit';
 const DEFAULT_VERSION_FILE = 'VERSION';
 const DEFAULT_PACKAGES_DIR = 'packages';
@@ -99,6 +181,10 @@ export interface VerifyExtractedArtifactOptions {
   helpFlag?: string;
   /** Skip executing the wrappers (only check manifest, required files, symlink safety, x_OK, and `bash -n`). */
   skipExec?: boolean;
+  /** Injectable subprocess runner. Defaults to {@link defaultArtifactRunner}. */
+  runner?: ArtifactRunner;
+  /** Override the default per-process timeout (ms) for external commands. */
+  runTimeoutMs?: number;
 }
 
 export interface BuildArtifactOptions {
@@ -108,27 +194,45 @@ export interface BuildArtifactOptions {
   cwd?: string;
   /** Tool name used in artifact directory and tarball filenames (default: `repo-toolkit`). */
   toolName?: string;
-  /** Root file(s) copied into the artifact root (default: `['VERSION']`). Missing files are skipped. */
+  /**
+   * Root file(s) copied into the artifact root (default: `['VERSION']`). Each
+   * entry is a path relative to the workspace root; the configured subpath is
+   * preserved (e.g. `config/version.txt` is copied to `config/version.txt`
+   * under the artifact root). Missing sources fail the build.
+   */
   versionFiles?: ReadonlyArray<string>;
-  /** Additional root files copied into the artifact root. */
+  /**
+   * Additional root files copied into the artifact root. Missing files fail
+   * the build. The configured subpath is preserved.
+   */
   rootFiles?: ReadonlyArray<string>;
   /** Directory under the workspace root holding packages (default: `packages`). */
   packagesDir?: string;
   /** Directory under the workspace root where the tarball is written (default: `dist`). */
   distDir?: string;
-  /** Copy `node_modules` into the artifact so commands run without an install (default: `false`). */
-  includeNodeModules?: boolean;
   /**
-   * Install only production dependencies into the artifact via `pnpm install --prod`
-   * instead of copying the workspace `node_modules` verbatim (default: `true`).
-   * Requires `pnpm` on PATH at build time. Produces a portable tarball whose
-   * internal workspace symlinks stay inside the artifact root.
+   * Resolved node-modules content mode (default: `production`).
+   *
+   * - `production`: install a transitive, deduplicated production dep tree.
+   * - `copy`: copy the workspace `node_modules` verbatim.
+   * - `none`: ship no `node_modules`.
+   *
+   * Replaces the legacy `includeNodeModules` / `productionNodeModules`
+   * booleans; passing both is rejected.
    */
+  nodeModulesMode?: NodeModulesMode;
+  /** @deprecated Use {@link BuildArtifactOptions.nodeModulesMode} = `copy`. */
+  includeNodeModules?: boolean;
+  /** @deprecated Use {@link BuildArtifactOptions.nodeModulesMode} = `production` / `none`. */
   productionNodeModules?: boolean;
   /** Node interpreter used in generated bash wrappers (default: `node`). */
   nodeCommand?: string;
   /** Glob patterns excluded from each copied package directory. Replaces the defaults. */
   excludes?: ReadonlyArray<string>;
+  /** Injectable subprocess runner. Defaults to {@link defaultArtifactRunner}. */
+  runner?: ArtifactRunner;
+  /** Override the default per-process timeout (ms) for external commands. */
+  runTimeoutMs?: number;
 }
 
 export interface BuildArtifactPlan {
@@ -144,11 +248,19 @@ export interface BuildArtifactPlan {
   rootFiles: ReadonlyArray<string>;
   packagesDirs: string[];
   nodeModulesDir: string;
-  includeNodeModules: boolean;
-  productionNodeModules: boolean;
+  nodeModulesMode: NodeModulesMode;
   nodeCommand: string;
   excludes: ReadonlyArray<string>;
   commands: ArtifactCommand[];
+  /** Resolved transitive closure of command-owning package directory names. */
+  commandPackageDirs: ReadonlyArray<string>;
+  /** Injectable runner shared by build and verify pipelines. */
+  runner: ArtifactRunner;
+  runTimeoutMs: number;
+  /** Resolved relative destinations for {@link BuildArtifactPlan.versionFiles}. */
+  versionFileDestinations: ReadonlyArray<string>;
+  /** Resolved relative destinations for {@link BuildArtifactPlan.rootFiles}. */
+  rootFileDestinations: ReadonlyArray<string>;
 }
 
 export interface VerifyArtifactOptions {
@@ -166,6 +278,108 @@ export interface VerifyArtifactOptions {
   helpFlag?: string;
   /** Skip executing the wrappers (only check manifest, required files, symlink safety, and `bash -n`). */
   skipExec?: boolean;
+  /** Injectable subprocess runner. Defaults to {@link defaultArtifactRunner}. */
+  runner?: ArtifactRunner;
+  /** Override the default per-process timeout (ms) for external commands. */
+  runTimeoutMs?: number;
+}
+
+// ---------------------------------------------------------------------------
+// Mode / runner / runner-options resolution (pure helpers, exported for tests)
+// ---------------------------------------------------------------------------
+
+/**
+ * Resolve a single {@link NodeModulesMode} preserving the documented legacy
+ * boolean semantics:
+ *
+ * - When `productionNodeModules === true` (the original default), the build
+ *   always ran a production install and `includeNodeModules` was ignored. So
+ *   `productionNodeModules: true` ⇒ `'production'` regardless of
+ *   `includeNodeModules`.
+ * - When `productionNodeModules === false`, `includeNodeModules` decided
+ *   between copy and none: `includeNodeModules: true` ⇒ `'copy'`,
+ *   `includeNodeModules: false|undefined` ⇒ `'none'`.
+ * - When only `includeNodeModules` is set, `true` ⇒ `'copy'`, `false` ⇒ `'none'`.
+ * - All undefined ⇒ `'production'`.
+ *
+ * The only contradictory combination this surface ever rejected was
+ * `productionNodeModules: true` paired with `includeNodeModules: true`
+ * because the documented default already forces a production install and the
+ * old code never reached the copy branch in that state — but older runtimes
+ * silently ignored `includeNodeModules: true` when production was on, so we
+ * preserve that behaviour. The legacy booleans therefore never conflict; a
+ * contradiction only surfaces when an explicit `nodeModulesMode` is supplied
+ * alongside booleans that disagree with it.
+ */
+export function resolveNodeModulesMode(
+  mode: NodeModulesMode | undefined,
+  includeNodeModules: boolean | undefined,
+  productionNodeModules: boolean | undefined,
+): NodeModulesMode {
+  if (mode !== undefined) {
+    if (mode !== 'production' && mode !== 'copy' && mode !== 'none') {
+      throw new Error(`Invalid nodeModulesMode: ${mode as string}`);
+    }
+
+    const legacy = legacyNodeModulesMode(includeNodeModules, productionNodeModules);
+    if (legacy !== undefined && legacy !== mode) {
+      throw new Error(`Conflicting node-modules options: nodeModulesMode=${mode} contradicts the legacy booleans`);
+    }
+  }
+
+  return mode ?? legacyNodeModulesMode(includeNodeModules, productionNodeModules) ?? 'production';
+}
+
+function legacyNodeModulesMode(
+  includeNodeModules: boolean | undefined,
+  productionNodeModules: boolean | undefined,
+): NodeModulesMode | undefined {
+  if (productionNodeModules === true) {
+    return 'production';
+  }
+
+  if (productionNodeModules === false) {
+    return includeNodeModules ? 'copy' : 'none';
+  }
+
+  if (includeNodeModules === undefined) {
+    return undefined;
+  }
+
+  return includeNodeModules ? 'copy' : 'none';
+}
+
+export function validateArtifactRunner(runner: unknown): asserts runner is ArtifactRunner {
+  if (typeof runner !== 'object' || runner === null) {
+    throw new Error('runner must be an ArtifactRunner object');
+  }
+
+  const r = runner as Partial<ArtifactRunner>;
+  if (typeof r.run !== 'function' || typeof r.capture !== 'function') {
+    throw new Error('runner must implement run() and capture()');
+  }
+}
+
+export function resolveRunTimeoutMs(value: number | undefined): number {
+  if (value === undefined) {
+    return DEFAULT_RUN_TIMEOUT_MS;
+  }
+
+  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) {
+    throw new Error(`runTimeoutMs must be a positive finite number: ${value as unknown as string}`);
+  }
+
+  return value;
+}
+
+/**
+ * Resolve the relative destination for a root/version file. The source path
+ * is interpreted relative to the workspace root and the configured subpath is
+ * preserved under the artifact root (e.g. `config/x.txt` ⇒ `config/x.txt`).
+ * Rejects absolute, Windows-drive, escaped, NUL/newline, and backslash paths.
+ */
+export function resolveRootFileDestination(value: string, label: string): string {
+  return normalizeRelativePosixPath(value, label);
 }
 
 // ---------------------------------------------------------------------------
@@ -385,8 +599,14 @@ export function resolveBuildArtifactPlan(options: BuildArtifactOptions): BuildAr
   const artifactPath = `${artifactRoot}.tar.gz`;
   const versionFiles = options.versionFiles ?? [DEFAULT_VERSION_FILE];
   const rootFiles = options.rootFiles ?? [];
-  const productionNodeModules = options.productionNodeModules ?? true;
-  const includeNodeModules = productionNodeModules ? false : (options.includeNodeModules ?? false);
+  const nodeModulesMode = resolveNodeModulesMode(
+    options.nodeModulesMode,
+    options.includeNodeModules,
+    options.productionNodeModules,
+  );
+  const runTimeoutMs = resolveRunTimeoutMs(options.runTimeoutMs);
+  const runner = options.runner ?? defaultArtifactRunner;
+  validateArtifactRunner(runner);
 
   if (!existsSync(packagesRoot)) {
     throw new Error(`packages directory not found: ${packagesRoot}`);
@@ -408,6 +628,11 @@ export function resolveBuildArtifactPlan(options: BuildArtifactOptions): BuildAr
   assertPathWithinRoot(distRoot, artifactRoot, 'artifact directory');
   assertPathWithinRoot(distRoot, artifactPath, 'artifact archive');
 
+  const commandPackageDirs = collectCommandPackageClosure(packagesRoot, packageDirNames, commands);
+  const versionFileDestinations = resolveRootFileDestinations(versionFiles, 'versionFiles');
+  const rootFileDestinations = resolveRootFileDestinations(rootFiles, 'rootFiles');
+  assertNoRootFileDestinationCollisions(versionFileDestinations, rootFileDestinations);
+
   return {
     repoRoot,
     toolName,
@@ -421,12 +646,130 @@ export function resolveBuildArtifactPlan(options: BuildArtifactOptions): BuildAr
     rootFiles,
     packagesDirs: packageDirNames,
     nodeModulesDir: resolve(repoRoot, 'node_modules'),
-    includeNodeModules,
-    productionNodeModules,
+    nodeModulesMode,
     nodeCommand: options.nodeCommand ?? DEFAULT_NODE_COMMAND,
     excludes: options.excludes ?? DEFAULT_PACKAGE_EXCLUDES,
     commands,
+    commandPackageDirs,
+    runner,
+    runTimeoutMs,
+    versionFileDestinations,
+    rootFileDestinations,
   };
+}
+
+/**
+ * Compute the transitive closure of package directories that actually own a
+ * command (i.e. contribute a `bin` entry). Only these directories contribute
+ * dependencies to the production install so the artifact ships exactly the
+ * runtime needed by the bundled CLIs and nothing else.
+ */
+export function collectCommandPackageClosure(
+  packagesRoot: string,
+  packageDirNames: ReadonlyArray<string>,
+  commands: ReadonlyArray<ArtifactCommand>,
+): string[] {
+  const owners = new Set<string>();
+  for (const command of commands) {
+    owners.add(command.packageDir);
+  }
+
+  const closure = new Set<string>();
+
+  const visit = (dirName: string): void => {
+    if (closure.has(dirName)) {
+      return;
+    }
+    closure.add(dirName);
+
+    const packageJsonPath = join(packagesRoot, dirName, 'package.json');
+    if (!existsSync(packageJsonPath)) {
+      return;
+    }
+    const packageJson = readJson(packageJsonPath);
+    const deps = packageJson.dependencies;
+    if (!isPlainObject(deps)) {
+      return;
+    }
+
+    for (const depName of Object.keys(deps)) {
+      const internalDirName = workspacePackageDirName(depName);
+      if (internalDirName !== null && packageDirNames.includes(internalDirName)) {
+        visit(internalDirName);
+      }
+    }
+  };
+
+  for (const dirName of owners) {
+    visit(dirName);
+  }
+
+  return [...closure].sort();
+}
+
+/**
+ * Resolve a workspace-internal package directory name from a dependency name.
+ * Internal packages use the `@repo-toolkit/<pkg>` form; the directory name is
+ * `<pkg>`. External deps return `null`.
+ */
+export function workspacePackageDirName(depName: string): string | null {
+  const match = /^@repo-toolkit\/([A-Za-z0-9][A-Za-z0-9._-]*)$/u.exec(depName);
+  return match ? match[1] : null;
+}
+
+/**
+ * Resolve and validate the relative destinations for a list of root/version
+ * files. Rejects paths that escape the artifact root, contain backslashes,
+ * NUL/newline, or are absolute/drive-prefixed.
+ */
+export function resolveRootFileDestinations(files: ReadonlyArray<string>, label: string): string[] {
+  const resolved: string[] = [];
+  for (const file of files) {
+    resolved.push(resolveRootFileDestination(file, `${label} entry`));
+  }
+  return resolved;
+}
+
+/**
+ * Reject any destination collision across version files, root files, or
+ * between them. Includes the artifact's own reserved paths
+ * (`artifact-manifest.json`, `bin/`, `packages/`, `node_modules/`).
+ */
+export function assertNoRootFileDestinationCollisions(
+  versionFileDestinations: ReadonlyArray<string>,
+  rootFileDestinations: ReadonlyArray<string>,
+): void {
+  const seen = new Map<string, string>();
+  const reserved = new Set<string>([
+    'artifact-manifest.json',
+    'bin',
+    'packages',
+    'node_modules',
+    'pnpm-workspace.yaml',
+    'package.json',
+  ]);
+
+  const checkOne = (relativePath: string, label: string): void => {
+    if (reserved.has(relativePath)) {
+      throw new Error(`${label} destination is reserved: ${relativePath}`);
+    }
+    const topSegment = relativePath.split('/')[0] ?? relativePath;
+    if (reserved.has(topSegment)) {
+      throw new Error(`${label} destination collides with a reserved path: ${relativePath}`);
+    }
+    const existingLabel = seen.get(relativePath);
+    if (existingLabel) {
+      throw new Error(`${label} destination collides with ${existingLabel}: ${relativePath}`);
+    }
+    seen.set(relativePath, label);
+  };
+
+  for (const dest of versionFileDestinations) {
+    checkOne(dest, 'versionFiles');
+  }
+  for (const dest of rootFileDestinations) {
+    checkOne(dest, 'rootFiles');
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -442,28 +785,17 @@ export function buildReleaseArtifact(options: BuildArtifactOptions): BuildArtifa
   mkdirSync(join(plan.artifactRoot, 'bin'), { recursive: true });
   mkdirSync(join(plan.artifactRoot, 'packages'), { recursive: true });
 
-  for (const versionFile of plan.versionFiles) {
-    const sourcePath = resolve(plan.repoRoot, versionFile);
-    if (existsSync(sourcePath)) {
-      cpSync(sourcePath, join(plan.artifactRoot, basename(versionFile)));
-    }
-  }
-
-  for (const rootFile of plan.rootFiles) {
-    const sourcePath = resolve(plan.repoRoot, rootFile);
-    if (existsSync(sourcePath)) {
-      cpSync(sourcePath, join(plan.artifactRoot, basename(rootFile)));
-    }
-  }
+  copyRootFiles(plan, plan.versionFiles, plan.versionFileDestinations, 'versionFiles');
+  copyRootFiles(plan, plan.rootFiles, plan.rootFileDestinations, 'rootFiles');
 
   for (const packageDirName of plan.packagesDirs) {
     const packageDir = join(plan.packagesRoot, packageDirName);
     copyTree(packageDir, join(plan.artifactRoot, 'packages', packageDirName), plan.excludes);
   }
 
-  if (plan.productionNodeModules) {
+  if (plan.nodeModulesMode === 'production') {
     installProductionNodeModules(plan);
-  } else if (plan.includeNodeModules && existsSync(plan.nodeModulesDir)) {
+  } else if (plan.nodeModulesMode === 'copy' && existsSync(plan.nodeModulesDir)) {
     cpSync(plan.nodeModulesDir, join(plan.artifactRoot, 'node_modules'), {
       recursive: true,
       verbatimSymlinks: true,
@@ -489,11 +821,68 @@ export function buildReleaseArtifact(options: BuildArtifactOptions): BuildArtifa
   writeFileSync(join(plan.artifactRoot, 'artifact-manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`);
 
   mkdirSync(plan.distRoot, { recursive: true });
-  execFileSync('tar', ['-czf', plan.artifactPath, '-C', plan.distRoot, plan.artifactDirName], {
+  plan.runner.run('tar', ['-czf', plan.artifactPath, '-C', plan.distRoot, plan.artifactDirName], {
+    cwd: plan.repoRoot,
     stdio: 'inherit',
+    timeoutMs: plan.runTimeoutMs,
   });
 
   return plan;
+}
+
+/**
+ * Copy a list of root/version files into the artifact root, preserving the
+ * configured subpath. Fails loudly on missing sources, non-regular sources,
+ * and on any destination whose path is already present (cross-category
+ * collisions are rejected up-front by {@link assertNoRootFileDestinationCollisions}).
+ * Directories and escaping symlinks are rejected. Cleanup stays robust on
+ * failure because this is called before any external tool runs.
+ */
+function copyRootFiles(
+  plan: BuildArtifactPlan,
+  sources: ReadonlyArray<string>,
+  destinations: ReadonlyArray<string>,
+  label: string,
+): void {
+  for (let i = 0; i < sources.length; i += 1) {
+    const source = sources[i];
+    const destination = destinations[i];
+    const sourcePath = resolve(plan.repoRoot, source);
+    const destinationPath = resolve(plan.artifactRoot, destination);
+
+    if (!existsSync(sourcePath)) {
+      throw new Error(`${label} source not found: ${source}`);
+    }
+
+    const stat = lstatSync(sourcePath);
+    if (stat.isSymbolicLink()) {
+      const target = readlinkSync(sourcePath);
+      const resolvedTarget = resolve(dirname(sourcePath), target);
+      if (resolvedTarget !== plan.repoRoot && !resolvedTarget.startsWith(`${plan.repoRoot}/`)) {
+        throw new Error(`${label} source symlink escapes the workspace root: ${source} -> ${target}`);
+      }
+      if (!lstatSync(resolvedTarget).isFile()) {
+        throw new Error(`${label} source symlink target is not a regular file: ${source}`);
+      }
+    } else if (stat.isDirectory()) {
+      throw new Error(`${label} source is a directory, not a regular file: ${source}`);
+    } else if (!stat.isFile()) {
+      throw new Error(`${label} source is not a regular file: ${source}`);
+    }
+
+    assertPathWithinRoot(plan.artifactRoot, destinationPath, `${label} destination`);
+
+    const destinationDir = dirname(destinationPath);
+    if (!existsSync(destinationDir)) {
+      mkdirSync(destinationDir, { recursive: true });
+    }
+
+    if (existsSync(destinationPath)) {
+      throw new Error(`${label} destination already exists: ${destination}`);
+    }
+
+    cpSync(sourcePath, destinationPath, { recursive: false });
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -544,17 +933,28 @@ export function verifySymlinks(rootPath: string, currentPath: string = rootPath)
 
 export function verifyReleaseArtifact(options: VerifyArtifactOptions): void {
   const artifactPath = resolveArtifactPath(options);
+  const runner = options.runner ?? defaultArtifactRunner;
+  validateArtifactRunner(runner);
+  const runTimeoutMs = resolveRunTimeoutMs(options.runTimeoutMs);
 
   if (!existsSync(artifactPath)) {
     throw new Error(`Missing release artifact: ${artifactPath}`);
   }
 
-  const validatedArchive = validateReleaseArchive(artifactPath);
+  const validatedArchive = validateReleaseArchive(artifactPath, {
+    runner,
+    runTimeoutMs,
+    cwd: options.cwd ?? dirname(artifactPath),
+  });
 
   const extractRoot = mkdtempSync(join(tmpdir(), 'repo-toolkit-artifact-'));
 
   try {
-    execFileSync('tar', ['-xzf', artifactPath, '-C', extractRoot], { stdio: 'inherit' });
+    runner.run('tar', ['-xzf', artifactPath, '-C', extractRoot], {
+      cwd: dirname(artifactPath),
+      stdio: 'inherit',
+      timeoutMs: runTimeoutMs,
+    });
 
     const installRoot = resolveInstallRoot(extractRoot, validatedArchive.topLevelDirName, options);
 
@@ -565,6 +965,8 @@ export function verifyReleaseArtifact(options: VerifyArtifactOptions): void {
       expectedToolName: options.toolName ?? (options.artifactPath ? undefined : DEFAULT_TOOL_NAME),
       helpFlag: options.helpFlag,
       skipExec: options.skipExec,
+      runner,
+      runTimeoutMs,
     });
   } finally {
     rmIfExists(extractRoot);
@@ -605,13 +1007,16 @@ export function verifyExtractedArtifact(
 
   const helpFlag = options.helpFlag ?? DEFAULT_HELP_FLAG;
   const skipExec = options.skipExec ?? false;
+  const runner = options.runner ?? defaultArtifactRunner;
+  validateArtifactRunner(runner);
+  const runTimeoutMs = resolveRunTimeoutMs(options.runTimeoutMs);
 
   for (const command of manifest.commands) {
     const wrapperPath = resolveContainedPath(installRoot, `bin/${command.name}`, 'command wrapper');
     accessSync(wrapperPath, constants.X_OK);
-    execFileSync('bash', ['-n', wrapperPath], { stdio: 'inherit' });
+    runner.run('bash', ['-n', wrapperPath], { cwd: installRoot, stdio: 'inherit', timeoutMs: runTimeoutMs });
     if (!skipExec) {
-      execFileSync(wrapperPath, [helpFlag], { stdio: 'ignore' });
+      runner.run(wrapperPath, [helpFlag], { cwd: installRoot, stdio: 'ignore', timeoutMs: runTimeoutMs });
     }
   }
 
@@ -635,6 +1040,10 @@ export interface InstallArtifactOptions {
   force?: boolean;
   /** Workspace root directory; accepted for CLI/config compatibility and otherwise unused. */
   cwd?: string;
+  /** Injectable subprocess runner. Defaults to {@link defaultArtifactRunner}. */
+  runner?: ArtifactRunner;
+  /** Override the default per-process timeout (ms) for external commands. */
+  runTimeoutMs?: number;
 }
 
 export interface InstallArtifactResult {
@@ -659,6 +1068,9 @@ export function installReleaseArtifact(options: InstallArtifactOptions): Install
   const expectedDirName = `${toolName}-${validateFilenameComponent(version, 'version')}`;
   const helpFlag = options.helpFlag ?? DEFAULT_HELP_FLAG;
   const skipExec = options.skipExec ?? false;
+  const runner = options.runner ?? defaultArtifactRunner;
+  validateArtifactRunner(runner);
+  const runTimeoutMs = resolveRunTimeoutMs(options.runTimeoutMs);
 
   if (!existsSync(archivePath)) {
     throw new Error(`Missing release artifact: ${archivePath}`);
@@ -677,14 +1089,22 @@ export function installReleaseArtifact(options: InstallArtifactOptions): Install
     }
   }
 
-  const validatedArchive = validateReleaseArchive(archivePath);
+  const validatedArchive = validateReleaseArchive(archivePath, {
+    runner,
+    runTimeoutMs,
+    cwd: dirname(archivePath),
+  });
 
   const installParent = dirname(installPath);
   mkdirSync(installParent, { recursive: true });
   const extractRoot = mkdtempSync(join(installParent, `${toolName}-install-`));
 
   try {
-    execFileSync('tar', ['-xzf', archivePath, '-C', extractRoot], { stdio: 'inherit' });
+    runner.run('tar', ['-xzf', archivePath, '-C', extractRoot], {
+      cwd: dirname(archivePath),
+      stdio: 'inherit',
+      timeoutMs: runTimeoutMs,
+    });
 
     const installRoot = resolveInstallRoot(extractRoot, expectedDirName, { toolName, version });
 
@@ -695,6 +1115,8 @@ export function installReleaseArtifact(options: InstallArtifactOptions): Install
       expectedToolName: toolName,
       helpFlag,
       skipExec,
+      runner,
+      runTimeoutMs,
     });
 
     if (existsSync(installPath)) {
@@ -938,9 +1360,12 @@ function validateUniquePathList(values: unknown[], label: string): string[] {
   return normalizedValues;
 }
 
-export function validateReleaseArchive(artifactPath: string): ValidatedArchive {
+export function validateReleaseArchive(
+  artifactPath: string,
+  options: { runner?: ArtifactRunner; runTimeoutMs?: number; cwd?: string } = {},
+): ValidatedArchive {
   const archiveFileName = basename(artifactPath);
-  const entries = listArchiveEntries(artifactPath);
+  const entries = listArchiveEntries(artifactPath, options);
 
   if (entries.length === 0) {
     throw new Error(`Release artifact is empty: ${artifactPath}`);
@@ -1016,10 +1441,15 @@ export function validateReleaseArchive(artifactPath: string): ValidatedArchive {
   };
 }
 
-function listArchiveEntries(artifactPath: string): ParsedArchiveEntry[] {
-  const output = execFileSync('tar', ['-tvzf', artifactPath, '--full-time', '--numeric-owner'], {
-    encoding: 'utf8',
-    stdio: ['ignore', 'pipe', 'pipe'],
+function listArchiveEntries(
+  artifactPath: string,
+  options: { runner?: ArtifactRunner; runTimeoutMs?: number; cwd?: string } = {},
+): ParsedArchiveEntry[] {
+  const runner = options.runner ?? defaultArtifactRunner;
+  const cwd = options.cwd ?? dirname(artifactPath);
+  const output = runner.capture('tar', ['-tvzf', artifactPath, '--full-time', '--numeric-owner'], {
+    cwd,
+    timeoutMs: options.runTimeoutMs,
   });
 
   return output
@@ -1093,15 +1523,26 @@ function copyTree(sourceRoot: string, destinationRoot: string, excludes: Readonl
 }
 
 /**
- * Synthesize a minimal workspace root inside the artifact and run
- * `pnpm install --prod` so only production dependencies are materialised,
- * then remove the synthesized scaffolding so it is not shipped in the tarball.
+ * Merge the production dependencies of the closure of command-owning packages
+ * into a single dependency map. Rejects incompatible range conflicts: if two
+ * packages specify overlapping, intersecting ranges for the same dependency,
+ * the intersection is computed; if the intersection is empty (e.g. `^1.0.0`
+ * vs `^2.0.0`), the build fails with a clear message.
+ *
+ * Internal `@repo-toolkit/<pkg>` workspace dependencies are kept (so pnpm links
+ * the package from `packages/<pkg>` when `pnpm-workspace.yaml` lists it);
+ * conflicts between `workspace:*` and a pinned range are rejected. External
+ * deps are merged with intersection detection so an incompatible transitive
+ * request fails during planning, not at install time.
  */
-function installProductionNodeModules(plan: BuildArtifactPlan): void {
-  const rootDependencies: Record<string, string> = {};
+export function mergeClosureDependencies(
+  packagesRoot: string,
+  closurePackageDirs: ReadonlyArray<string>,
+): Record<string, string> {
+  const ranges = new Map<string, string[]>();
 
-  for (const packageDirName of plan.packagesDirs) {
-    const packageJsonPath = join(plan.packagesRoot, packageDirName, 'package.json');
+  for (const packageDirName of closurePackageDirs) {
+    const packageJsonPath = join(packagesRoot, packageDirName, 'package.json');
     if (!existsSync(packageJsonPath)) {
       continue;
     }
@@ -1111,30 +1552,155 @@ function installProductionNodeModules(plan: BuildArtifactPlan): void {
       continue;
     }
     for (const [name, range] of Object.entries(dependencies)) {
-      rootDependencies[name] = range as string;
+      if (typeof range !== 'string' || range.length === 0) {
+        throw new Error(`Invalid dependency range for ${name} in ${packageDirName}: ${range as unknown as string}`);
+      }
+      const existing = ranges.get(name);
+      if (existing === undefined) {
+        ranges.set(name, [range]);
+      } else {
+        existing.push(range);
+      }
     }
   }
 
+  const rootDependencies: Record<string, string> = {};
+
+  for (const [name, listed] of ranges) {
+    const deduped = [...new Set(listed)];
+    if (deduped.length === 1) {
+      rootDependencies[name] = deduped[0];
+      continue;
+    }
+
+    const intersection = intersectSemverRanges(deduped);
+    if (intersection === null) {
+      throw new Error(
+        `Incompatible dependency ranges for ${name}: ${deduped.join(', ')}. Resolve the conflict before building.`,
+      );
+    }
+    rootDependencies[name] = intersection;
+  }
+
+  return rootDependencies;
+}
+
+/**
+ * A very small subset of npm range intersection. Handles `^x.y.z`, `~x.y.z`,
+ * `>=x.y.z`, exact versions, and `workspace:*` ranges. Returns `null` for
+ * ranges whose major versions conflict (the common case where `^1.0.0` vs
+ * `^2.0.0` cannot coexist) and otherwise returns the lowest applicable range
+ * so the caller pins an exact lower bound. This is intentionally
+ * conservative: it rejects when in doubt rather than silently picking one.
+ * Callers pin a resolved version via the lockfile when in doubt.
+ *
+ * `workspace:*` and other `workspace:` protocols are treated as identical
+ * placeholders; if any package requests a `workspace:` range for a dep, that
+ * is the resolved range (the lockfile resolves it at install time). Mixing a
+ * `workspace:` range with a non-workspace range is rejected.
+ */
+export function intersectSemverRanges(ranges: ReadonlyArray<string>): string | null {
+  const hasWorkspace = ranges.some((range) => range.startsWith('workspace:'));
+  if (hasWorkspace) {
+    const allWorkspace = ranges.every((range) => range.startsWith('workspace:'));
+    if (!allWorkspace) {
+      return null;
+    }
+    if (ranges.every((range) => range === ranges[0])) {
+      return ranges[0];
+    }
+    const sorted = [...ranges].sort();
+    return sorted[0];
+  }
+
+  const parsed = ranges.map((range) => parseSemverRange(range));
+  if (parsed.some((entry) => entry === null)) {
+    return null;
+  }
+
+  const listed = parsed as Array<{ major: number; minor: number; patch: number; operator: string; raw: string }>;
+  const majors = new Set(listed.map((entry) => entry.major));
+  if (majors.size > 1) {
+    return null;
+  }
+
+  return listed
+    .map((entry) => entry.raw)
+    .sort()
+    .reduce((acc, raw) => (acc === null ? raw : raw < acc ? raw : acc), null as string | null);
+}
+
+interface ParsedSemverRange {
+  major: number;
+  minor: number;
+  patch: number;
+  operator: string;
+  raw: string;
+}
+
+function parseSemverRange(range: string): ParsedSemverRange | null {
+  const match = /^([~^>=]*)(\d+)\.(\d+)\.(\d+)/u.exec(range);
+  if (!match) {
+    return null;
+  }
+
+  const [, operator, major, minor, patch] = match;
+  return {
+    major: Number(major),
+    minor: Number(minor),
+    patch: Number(patch),
+    operator: operator || '',
+    raw: range,
+  };
+}
+
+/**
+ * Synthesize a minimal workspace root inside the artifact, listing only the
+ * command-owning packages' closure under `pnpm-workspace.yaml`, and run
+ * `pnpm install --prod --no-frozen-lockfile --ignore-scripts --prefer-offline`
+ * against the synthesised `package.json` so only the transitive production
+ * dependency closure is materialised. The scaffolding (`package.json`,
+ * `pnpm-workspace.yaml`, and the `pnpm-lock.yaml` generated by pnpm) is then
+ * removed so it is not shipped in the tarball.
+ *
+ * The metadata emitted at {@link createArtifactManifest} time records the
+ * exact command-owning closure, so equivalent builds of the same commit
+ * produce equivalent dependency trees. Range conflicts between closure
+ * members are detected up-front by {@link mergeClosureDependencies}.
+ */
+function installProductionNodeModules(plan: BuildArtifactPlan): void {
+  const rootDependencies = mergeClosureDependencies(plan.packagesRoot, plan.commandPackageDirs);
+
   const scaffoldPackageJson = join(plan.artifactRoot, 'package.json');
   const scaffoldWorkspaceYaml = join(plan.artifactRoot, 'pnpm-workspace.yaml');
+  const scaffoldLockfile = join(plan.artifactRoot, 'pnpm-lock.yaml');
 
   writeFileSync(
     scaffoldPackageJson,
     `${JSON.stringify(
-      { name: plan.toolName, version: plan.version, private: true, dependencies: rootDependencies },
+      {
+        name: plan.toolName,
+        version: plan.version,
+        private: true,
+        dependencies: rootDependencies,
+      },
       null,
       2,
     )}\n`,
   );
-  writeFileSync(scaffoldWorkspaceYaml, 'packages:\n- packages/*\n');
+
+  const workspaceEntries = plan.commandPackageDirs.map((dir) => `  - packages/${dir}`);
+  writeFileSync(scaffoldWorkspaceYaml, `packages:\n${workspaceEntries.join('\n')}\n`);
 
   try {
-    execFileSync('pnpm', ['install', '--prod', '--no-frozen-lockfile', '--ignore-scripts', '--prefer-offline'], {
+    plan.runner.run('pnpm', ['install', '--prod', '--no-frozen-lockfile', '--ignore-scripts', '--prefer-offline'], {
       cwd: plan.artifactRoot,
       stdio: 'inherit',
+      timeoutMs: plan.runTimeoutMs,
     });
   } finally {
     rmIfExists(scaffoldPackageJson);
     rmIfExists(scaffoldWorkspaceYaml);
+    rmIfExists(scaffoldLockfile);
   }
 }

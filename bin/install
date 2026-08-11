@@ -74,6 +74,40 @@ function normalizeVersion(rawVersion) {
 }
 
 // src/index.ts
+var DEFAULT_RUN_TIMEOUT_MS = 6e4;
+var DEFAULT_MAX_OUTPUT_BYTES = 8 * 1024 * 1024;
+var DEFAULT_KILL_SIGNAL = "SIGTERM";
+var defaultArtifactRunner = {
+  run(executable, args, options) {
+    const timeoutMs = options.timeoutMs ?? DEFAULT_RUN_TIMEOUT_MS;
+    const killSignal = options.killSignal ?? DEFAULT_KILL_SIGNAL;
+    execFileSync(executable, [...args], {
+      cwd: options.cwd,
+      stdio: options.stdio ?? "inherit",
+      env: options.env ? { ...process.env, ...options.env } : process.env,
+      timeout: timeoutMs,
+      killSignal
+    });
+  },
+  capture(executable, args, options) {
+    const timeoutMs = options.timeoutMs ?? DEFAULT_RUN_TIMEOUT_MS;
+    const killSignal = options.killSignal ?? DEFAULT_KILL_SIGNAL;
+    const maxOutputBytes = options.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES;
+    const result = execFileSync(executable, [...args], {
+      cwd: options.cwd,
+      stdio: ["ignore", "pipe", "pipe"],
+      env: options.env ? { ...process.env, ...options.env } : process.env,
+      encoding: "utf8",
+      timeout: timeoutMs,
+      killSignal,
+      maxBuffer: maxOutputBytes
+    });
+    if (Buffer.byteLength(result, "utf8") > maxOutputBytes) {
+      throw new Error(`${executable} produced more than ${maxOutputBytes} bytes of output.`);
+    }
+    return result;
+  }
+};
 var DEFAULT_TOOL_NAME = "repo-toolkit";
 var DEFAULT_HELP_FLAG = "--help";
 var ARTIFACT_MANIFEST_SCHEMA_VERSION = 1;
@@ -82,6 +116,24 @@ var MAX_ARCHIVE_PATH_LENGTH = 512;
 var MAX_ARCHIVE_EXPANDED_BYTES = 512 * 1024 * 1024;
 var SAFE_FILENAME_COMPONENT_RE = /^[A-Za-z0-9][A-Za-z0-9._+-]*$/u;
 var SAFE_COMMAND_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/u;
+function validateArtifactRunner(runner) {
+  if (typeof runner !== "object" || runner === null) {
+    throw new Error("runner must be an ArtifactRunner object");
+  }
+  const r = runner;
+  if (typeof r.run !== "function" || typeof r.capture !== "function") {
+    throw new Error("runner must implement run() and capture()");
+  }
+}
+function resolveRunTimeoutMs(value) {
+  if (value === void 0) {
+    return DEFAULT_RUN_TIMEOUT_MS;
+  }
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
+    throw new Error(`runTimeoutMs must be a positive finite number: ${value}`);
+  }
+  return value;
+}
 function verifySymlinks(rootPath, currentPath = rootPath) {
   const normalizedRoot = resolve(rootPath);
   for (const entry of readdirSync(currentPath, { withFileTypes: true })) {
@@ -124,12 +176,15 @@ function verifyExtractedArtifact(installRoot, options) {
   }
   const helpFlag = options.helpFlag ?? DEFAULT_HELP_FLAG;
   const skipExec = options.skipExec ?? false;
+  const runner = options.runner ?? defaultArtifactRunner;
+  validateArtifactRunner(runner);
+  const runTimeoutMs = resolveRunTimeoutMs(options.runTimeoutMs);
   for (const command of manifest.commands) {
     const wrapperPath = resolveContainedPath(installRoot, `bin/${command.name}`, "command wrapper");
     accessSync(wrapperPath, constants.X_OK);
-    execFileSync("bash", ["-n", wrapperPath], { stdio: "inherit" });
+    runner.run("bash", ["-n", wrapperPath], { cwd: installRoot, stdio: "inherit", timeoutMs: runTimeoutMs });
     if (!skipExec) {
-      execFileSync(wrapperPath, [helpFlag], { stdio: "ignore" });
+      runner.run(wrapperPath, [helpFlag], { cwd: installRoot, stdio: "ignore", timeoutMs: runTimeoutMs });
     }
   }
   return manifest;
@@ -142,6 +197,9 @@ function installReleaseArtifact(options) {
   const expectedDirName = `${toolName}-${validateFilenameComponent(version, "version")}`;
   const helpFlag = options.helpFlag ?? DEFAULT_HELP_FLAG;
   const skipExec = options.skipExec ?? false;
+  const runner = options.runner ?? defaultArtifactRunner;
+  validateArtifactRunner(runner);
+  const runTimeoutMs = resolveRunTimeoutMs(options.runTimeoutMs);
   if (!existsSync(archivePath)) {
     throw new Error(`Missing release artifact: ${archivePath}`);
   }
@@ -156,12 +214,20 @@ function installReleaseArtifact(options) {
       );
     }
   }
-  const validatedArchive = validateReleaseArchive(archivePath);
+  const validatedArchive = validateReleaseArchive(archivePath, {
+    runner,
+    runTimeoutMs,
+    cwd: dirname(archivePath)
+  });
   const installParent = dirname(installPath);
   mkdirSync(installParent, { recursive: true });
   const extractRoot = mkdtempSync(join(installParent, `${toolName}-install-`));
   try {
-    execFileSync("tar", ["-xzf", archivePath, "-C", extractRoot], { stdio: "inherit" });
+    runner.run("tar", ["-xzf", archivePath, "-C", extractRoot], {
+      cwd: dirname(archivePath),
+      stdio: "inherit",
+      timeoutMs: runTimeoutMs
+    });
     const installRoot = resolveInstallRoot(extractRoot, expectedDirName, { toolName, version });
     const manifest = verifyExtractedArtifact(installRoot, {
       archiveFileName: validatedArchive.archiveFileName,
@@ -169,7 +235,9 @@ function installReleaseArtifact(options) {
       expectedVersion: version,
       expectedToolName: toolName,
       helpFlag,
-      skipExec
+      skipExec,
+      runner,
+      runTimeoutMs
     });
     if (existsSync(installPath)) {
       rmIfExists(installPath);
@@ -339,9 +407,9 @@ function validateUniquePathList(values, label) {
   }
   return normalizedValues;
 }
-function validateReleaseArchive(artifactPath) {
+function validateReleaseArchive(artifactPath, options = {}) {
   const archiveFileName = basename(artifactPath);
-  const entries = listArchiveEntries(artifactPath);
+  const entries = listArchiveEntries(artifactPath, options);
   if (entries.length === 0) {
     throw new Error(`Release artifact is empty: ${artifactPath}`);
   }
@@ -399,10 +467,12 @@ function validateReleaseArchive(artifactPath) {
     topLevelDirName
   };
 }
-function listArchiveEntries(artifactPath) {
-  const output = execFileSync("tar", ["-tvzf", artifactPath, "--full-time", "--numeric-owner"], {
-    encoding: "utf8",
-    stdio: ["ignore", "pipe", "pipe"]
+function listArchiveEntries(artifactPath, options = {}) {
+  const runner = options.runner ?? defaultArtifactRunner;
+  const cwd = options.cwd ?? dirname(artifactPath);
+  const output = runner.capture("tar", ["-tvzf", artifactPath, "--full-time", "--numeric-owner"], {
+    cwd,
+    timeoutMs: options.runTimeoutMs
   });
   return output.split("\n").map((line) => line.trimEnd()).filter(Boolean).map((line) => parseArchiveEntry(line));
 }
@@ -444,9 +514,7 @@ async function main() {
   const version = process.argv[4];
   const toolName = process.argv[5] || "repo-toolkit";
   if (!archivePath || !installPath || !version) {
-    throw new Error(
-      "usage: repo-toolkit-install-artifact-embedded <archivePath> <installPath> <version> [toolName]"
-    );
+    throw new Error("usage: repo-toolkit-install-artifact-embedded <archivePath> <installPath> <version> [toolName]");
   }
   const { installPath: resolvedInstallPath, manifest } = installReleaseArtifact({
     archivePath,
@@ -454,10 +522,8 @@ async function main() {
     version,
     toolName
   });
-  process.stdout.write(
-    `installed ${manifest.toolName} v${manifest.version} to ${resolvedInstallPath}
-`
-  );
+  process.stdout.write(`installed ${manifest.toolName} v${manifest.version} to ${resolvedInstallPath}
+`);
 }
 main().catch((error) => {
   const message = error instanceof Error ? error.message : String(error);

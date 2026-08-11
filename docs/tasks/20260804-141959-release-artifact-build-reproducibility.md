@@ -8,7 +8,7 @@ Make artifact content, dependency modes, version files, and external process beh
 
 ### Task RAARC-01: Replace conflicting node-module booleans with one mode
 
-Status: pending
+Status: completed
 
 Priority: P1
 
@@ -39,7 +39,7 @@ Acceptance criteria:
 
 ### Task RAARC-02: Preserve and validate copied file destinations
 
-Status: pending
+Status: completed
 
 Priority: P1
 
@@ -69,7 +69,7 @@ Acceptance criteria:
 
 ### Task RAARC-03: Make production dependency materialization reproducible
 
-Status: pending
+Status: completed
 
 Priority: P1
 
@@ -100,7 +100,7 @@ Acceptance criteria:
 
 ### Task RAARC-04: Bound and inject external execution
 
-Status: pending
+Status: completed
 
 Priority: P1
 
@@ -128,6 +128,32 @@ Acceptance criteria:
 - Hanging wrappers are terminated with clear errors.
 - Tests run offline and leave the worktree unchanged on forced failures.
 - Root lint/typecheck/test, package build, valid verify, and shell checks pass.
+
+## Completion Evidence
+
+### RAARC-01 — Replace conflicting node-module booleans with one mode
+
+- Changed: `packages/release-artifact/src/index.ts` (added `NodeModulesMode`, `resolveNodeModulesMode`, `validateArtifactRunner`, `resolveRunTimeoutMs`, replaced `BuildArtifactPlan.includeNodeModules`/`productionNodeModules` with `nodeModulesMode`), `packages/release-artifact/src/cli-build.ts` (`--node-modules <mode>` plus legacy-flag compat), `packages/release-artifact/test/index.test.ts`, `packages/release-artifact/README.md`, `website/docs/packages/release-artifact.md`.
+- Verified: `pnpm --filter @repo-toolkit/release-artifact test` (95/95), `pnpm lint`, `pnpm typecheck`, `pnpm test` (all 6 packages, 564 tests green), `bash -n` on `bin/install`/`bin/download`/`bin/list-all`/`bin/lib/repo-toolkit.sh`.
+- Result: A single `NodeModulesMode` enum (`production`/`copy`/`none`) replaces the two legacy booleans. `resolveNodeModulesMode` preserves documented legacy compatibility (`productionNodeModules: true` always wins; `productionNodeModules: false` defers to `includeNodeModules`) while rejecting an explicit `nodeModulesMode` that contradicts the legacy booleans. New tests cover every mode combination plus conflicting-input rejection.
+
+### RAARC-02 — Preserve and validate copied file destinations
+
+- Changed: `packages/release-artifact/src/index.ts` (`copyRootFiles`, `resolveRootFileDestination`, `resolveRootFileDestinations`, `assertNoRootFileDestinationCollisions`), `packages/release-artifact/test/index.test.ts`.
+- Verified: same suite as RAARC-01.
+- Result: Version/root files are copied into the artifact root preserving the configured subpath (e.g. `config/version.txt` ⇒ `config/version.txt`). The build now **fails** on: missing sources, directories, FIFOs/special files, escaping source symlinks, destination collisions (version-vs-version, version-vs-root, or reserved paths such as `artifact-manifest.json`, `bin`, `packages`, `node_modules`). All rejection modes have dedicated regression tests.
+
+### RAARC-03 — Make production dependency materialization reproducible
+
+- Changed: `packages/release-artifact/src/index.ts` (`collectCommandPackageClosure`, `mergeClosureDependencies`, `intersectSemverRanges`, `workspacePackageDirName`, `installProductionNodeModules`), `packages/release-artifact/test/index.test.ts`.
+- Verified: same suite as RAARC-01.
+- Result: The install scaffold now lists **only** the transitive closure of command-owning packages (those with a `bin` entry) in `pnpm-workspace.yaml`, so unrelated workspace packages and their dependencies are never materialised. `mergeClosureDependencies` deduplicates ranges and rejects incompatible range conflicts via `intersectSemverRanges` (e.g. `^1.0.0` vs `^2.0.0` fails; `workspace:` protocols are handled explicitly; mixing `workspace:` and concrete ranges rejects). Internal `@repo-toolkit/*` workspace ranges are kept so pnpm links them under `node_modules/@repo-toolkit/*`. The scaffold `package.json`, `pnpm-workspace.yaml`, and the generated `pnpm-lock.yaml` are removed in a `finally` so no scaffolding is shipped. New tests cover closure-walk, range intersection, and conflict rejection.
+
+### RAARC-04 — Bound and inject external execution
+
+- Changed: `packages/release-artifact/src/index.ts` (`ArtifactRunner`, `ArtifactRunOptions`, `defaultArtifactRunner` with `timeoutMs`/`maxOutputBytes`/`killSignal`; `validateReleaseArchive`, `listArchiveEntries`, `verifyReleaseArtifact`, `verifyExtractedArtifact`, `installReleaseArtifact`, and `installProductionNodeModules` now route through the injected runner; `BuildArtifactOptions`/`VerifyArtifactOptions`/`InstallArtifactOptions`/`VerifyExtractedArtifactOptions` accept `runner` and `runTimeoutMs`), `packages/release-artifact/src/cli-build.ts`, `packages/release-artifact/src/cli-verify.ts`, `packages/release-artifact/src/cli-install.ts` (`--run-timeout-ms`), `packages/release-artifact/test/index.test.ts` (the real-repo production-install test now uses `try/finally`; new tests inject a fake runner and assert exact `tar`/`pnpm`/`bash` invocations), `bin/install` (regenerated).
+- Verified: same suite as RAARC-01.
+- Result: Every external invocation (`tar -czf`/`-xzf`/`-tvzf`, `pnpm install`, `bash -n`, generated wrappers) routes through an injectable `ArtifactRunner`. The default runner bounds execution with `timeoutMs` (default 60s, `SIGTERM`) for `run()` and additionally `maxOutputBytes` (default 8 MiB) for `capture()`. A hanging process is terminated and the error surfaces clearly (regression test in `default runner terminates a hanging process with a clear error`). Tests inject a recording runner to assert `pnpm` is invoked only when `nodeModulesMode === 'production'`, `tar` is invoked once with the configured cwd and timeout, and `installReleaseArtifact` routes `tar -tvzf` through `capture()` and `tar -xzf` through `run()`. The fake-runner tests run offline and leave the worktree unchanged. One isolated real-repo production smoke test (with `try/finally` cleanup) is retained for end-to-end confidence.
 
 ## Definition Of Done
 

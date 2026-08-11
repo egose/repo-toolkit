@@ -16,6 +16,7 @@ const SPECS: FlagSpec[] = [
   { name: 'help-flag' },
   { name: 'skip-exec', boolean: true },
   { name: 'force', boolean: true },
+  { name: 'run-timeout-ms' },
   INTERACTIVE_FLAG,
 ];
 
@@ -35,6 +36,7 @@ Options:
   --help-flag <flag>             Flag passed to each wrapper to confirm it boots (default: --help)
   --skip-exec                    Skip executing wrappers; only check manifest, files, x_OK, and 'bash -n'
   --force                        Replace an existing non-empty install path
+  --run-timeout-ms <ms>          Per-process timeout for external commands (default: 60000)
   -i, --interactive              Prompt for missing required values interactively
   -h, --help                     Show this help message
 `);
@@ -50,6 +52,13 @@ function buildOptions(values: Record<string, string>): Partial<InstallArtifactOp
   if (values['help-flag']) options.helpFlag = values['help-flag'];
   if (values['skip-exec'] !== undefined) options.skipExec = true;
   if (values.force !== undefined) options.force = true;
+  if (values['run-timeout-ms']) {
+    const parsed = Number(values['run-timeout-ms']);
+    if (!Number.isFinite(parsed) || parsed <= 0) {
+      throw new Error(`--run-timeout-ms must be a positive finite number: ${values['run-timeout-ms']}`);
+    }
+    options.runTimeoutMs = parsed;
+  }
 
   return options;
 }
