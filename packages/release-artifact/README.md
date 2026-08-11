@@ -32,12 +32,15 @@ Build:
 - `--version <version>` Target version (required). A leading `v` is stripped.
 - `--tag <version>` Compatibility alias for `--version`.
 - `--tool-name <name>` Tool name used in artifact filenames (default: `repo-toolkit`).
-- `--version-files <f>[,<f>]` Root file(s) copied into artifact root (default: `VERSION`).
-- `--root-files <f>[,<f>]` Additional root files copied into artifact root.
+- `--version-files <f>[,<f>]` Root file(s) copied into artifact root, preserving subpath (default: `VERSION`). Missing files fail the build.
+- `--root-files <f>[,<f>]` Additional root files copied into artifact root, preserving subpath. Missing files fail the build.
 - `--packages-dir <path>` Directory holding packages (default: `packages`).
 - `--dist-dir <path>` Directory where the tarball is written (default: `dist`).
-- `--skip-node-modules` Do not copy `node_modules` into the artifact.
+- `--node-modules <mode>` Resolved node-modules mode: `production` (default), `copy`, or `none`.
+- `--skip-node-modules` Compatibility alias for `--node-modules none`.
+- `--production-node-modules` / `--no-production-node-modules` Compatibility aliases for `--node-modules production` / `copy|none`.
 - `--node-command <name>` Node interpreter used in bash wrappers (default: `node`).
+- `--run-timeout-ms <ms>` Per-process timeout for external commands (default: 60000).
 
 Verify:
 
@@ -49,6 +52,7 @@ Verify:
 - `--dist-dir <path>` Directory holding the tarball (default: `dist`).
 - `--artifact-path <path>` Explicit tarball path; overrides cwd/tool-name/dist-dir resolution.
 - `--help-flag <flag>` Flag passed to each wrapper to confirm it boots (default: `--help`).
+- `--run-timeout-ms <ms>` Per-process timeout for external commands (default: 60000).
 
 ## JavaScript API
 
@@ -58,7 +62,7 @@ import { buildReleaseArtifact, verifyReleaseArtifact } from '@repo-toolkit/relea
 const plan = buildReleaseArtifact({
   version: '1.2.3',
   cwd: '/path/to/monorepo',
-  includeNodeModules: true,
+  nodeModulesMode: 'production',
   rootFiles: ['LICENSE'],
 });
 
@@ -74,23 +78,56 @@ verifyReleaseArtifact({ version: '1.2.3', cwd: '/path/to/monorepo' });
 - `buildWrapperScript(targetPath, nodeCommand?)` — generate a bash wrapper that `exec`s the node interpreter.
 - `toBinEntries(binField, packageName)` — normalize a `package.json#bin` field into `[name, entry]` pairs.
 - `collectCommands(packagesRoot, packageDirNames)` — read `bin` entries across packages.
+- `collectCommandPackageClosure(packagesRoot, packageDirNames, commands)` — compute the transitive closure of command-owning packages.
+- `mergeClosureDependencies(packagesRoot, closurePackageDirs)` — merge production deps of closure packages, rejecting incompatible range conflicts.
+- `intersectSemverRanges(ranges)` — conservative npm range intersection (rejects when in doubt).
+- `resolveNodeModulesMode(mode, includeNodeModules, productionNodeModules)` — resolve the legacy booleans + explicit mode to a single `NodeModulesMode`.
+- `resolveRootFileDestination(value, label)` — validate a root/version file's relative POSIX destination.
+- `validateArtifactRunner(runner)` — assert a value is a valid `ArtifactRunner`.
+- `defaultArtifactRunner` — injectable runner that bounds `tar`/`pnpm`/`bash`/wrapper execution with timeout and max-output limits.
 - `buildRequiredFiles(commands, versionFiles)` — compute the manifest's `requiredFiles` list.
 - `createArtifactManifest(version, commands, requiredFiles)` — assemble the manifest (commands sorted).
 - `verifySymlinks(rootPath, currentPath?)` — throw on any absolute symlink.
+- `resolveRunTimeoutMs(value)` — validate the per-process timeout override.
 
-### Options
+### Options (BuildArtifactOptions)
 
 - `version` _(string, required)_ Target version. A leading `v` is stripped.
 - `cwd` _(string)_ Workspace root directory. Defaults to `process.cwd()`.
 - `toolName` _(string)_ Tool name used in artifact filenames (default: `repo-toolkit`).
-- `versionFiles` _(string[])_ Root file(s) copied into artifact root (default: `['VERSION']`). Missing files are skipped.
-- `rootFiles` _(string[])_ Additional root files copied into artifact root. Missing files are skipped.
+- `versionFiles` _(string[])_ Root file(s) copied into artifact root, preserving the configured subpath (default: `['VERSION']`). Missing files fail the build.
+- `rootFiles` _(string[])_ Additional root files copied into artifact root, preserving the configured subpath. Missing files fail the build.
 - `packagesDir` _(string)_ Directory holding packages (default: `packages`).
 - `distDir` _(string)_ Directory where the tarball is written / located (default: `dist`).
-- `includeNodeModules` _(boolean)_ Copy `node_modules` into the artifact (default: `true`).
+- `nodeModulesMode` _(NodeModulesMode)_ Resolved node-modules mode: `'production'` (default), `'copy'`, or `'none'`. Replaces the legacy `includeNodeModules`/`productionNodeModules` booleans; passing both with conflicting values is rejected.
+- `includeNodeModules` _(boolean, deprecated)_ Use `nodeModulesMode: 'copy'` (`true`) or `nodeModulesMode: 'none'` (`false`).
+- `productionNodeModules` _(boolean, deprecated)_ Use `nodeModulesMode: 'production'` (`true`) or `nodeModulesMode: 'copy'|'none'` (`false`).
 - `nodeCommand` _(string)_ Node interpreter used in bash wrappers (default: `node`).
+- `excludes` _(string[])_ Glob patterns excluded from each copied package directory. Replaces the defaults.
+- `runner` _(ArtifactRunner)_ Injectable subprocess runner. Defaults to `defaultArtifactRunner`.
+- `runTimeoutMs` _(number)_ Per-process timeout for external commands (default: 60000). Must be a positive finite number.
+
+### Options (VerifyArtifactOptions / InstallArtifactOptions)
+
+- `version` _(string, required)_ Target version used to locate the tarball (verify) or asserted against the manifest (install). A leading `v` is stripped.
+- `cwd` _(string)_ Workspace root directory. Defaults to `process.cwd()`.
+- `toolName` _(string)_ Tool name used to locate the tarball (default: `repo-toolkit`).
+- `distDir` _(string)_ Directory holding the tarball (default: `dist`).
 - `artifactPath` _(string, verify only)_ Explicit tarball path; overrides cwd/tool-name/dist-dir resolution.
-- `helpFlag` _(string, verify only)_ Flag passed to each wrapper to confirm it boots (default: `--help`).
+- `helpFlag` _(string)_ Flag passed to each wrapper to confirm it boots (default: `--help`).
+- `skipExec` _(boolean)_ Skip executing wrappers; only check manifest, required files, symlink safety, x_OK, and `bash -n`.
+- `force` _(boolean, install only)_ Replace an existing non-empty install path (default: `false`).
+- `runner` _(ArtifactRunner)_ Injectable subprocess runner. Defaults to `defaultArtifactRunner`.
+- `runTimeoutMs` _(number)_ Per-process timeout for external commands (default: 60000).
+
+### Injectable subprocess runner
+
+`buildReleaseArtifact`, `verifyReleaseArtifact`, `verifyExtractedArtifact`, and `installReleaseArtifact` accept an injectable `ArtifactRunner` so tests can assert exact invocations without contacting a real toolchain. The default runner (`defaultArtifactRunner`) spawns via `execFileSync` with:
+
+- `timeoutMs` (default 60s) — kills the child after the configured window via `SIGTERM`.
+- `maxOutputBytes` (default 8 MiB) — bounds the captured output of `runner.capture()`.
+
+`run()` surfaces a nonzero exit or timeout as a thrown `Error`; `capture()` additionally rejects output larger than `maxOutputBytes`.
 
 ## Security note
 
