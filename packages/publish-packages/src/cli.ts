@@ -7,6 +7,8 @@ import {
 } from '@repo-toolkit/publish-package';
 import { publishPackages, type PublishPackagesOptions } from './index';
 
+export { SPECS };
+
 const SPECS: FlagSpec[] = [
   { name: 'config' },
   { name: 'cwd' },
@@ -32,7 +34,7 @@ const SPECS: FlagSpec[] = [
   INTERACTIVE_FLAG,
 ];
 
-function printHelp(): void {
+export function printHelp(): void {
   console.log(`repo-toolkit-publish-packages
 
 Usage:
@@ -66,7 +68,7 @@ Options:
 `);
 }
 
-function buildOptions(result: ReturnType<typeof parseFlags>): Partial<PublishPackagesOptions> {
+export function buildOptions(result: ReturnType<typeof parseFlags>): Partial<PublishPackagesOptions> {
   if (!result) {
     return {};
   }

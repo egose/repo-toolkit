@@ -82,7 +82,7 @@ Completion evidence:
 
 ### Task MPARC-03: Add workspace contract and isolated CLI/package tests
 
-Status: pending
+Status: completed
 
 Priority: P2
 
@@ -112,6 +112,14 @@ Acceptance criteria:
 - Package tests do not depend on live workspace members or host npm configuration.
 - Removing a required alias/script/docs entry makes the contract fixture fail.
 - Package test, root lint/typecheck/test, build, and pack smoke checks pass.
+
+Completion evidence:
+
+- Changed: `packages/publish-packages/src/index.ts` (added `runner` option, plan field, validation, and forwarding to `PublishPackageOptions`), `packages/publish-packages/src/cli.ts` (exported `SPECS`, `printHelp`, `buildOptions`), `packages/publish-packages/test/index.test.ts` (rewrote to temp workspaces + injected fake `ProcessRunner`), `packages/publish-packages/README.md` (added `--include-package-file`, `--include-root-file`, `--no-default-package-files`, `--no-default-root-files`, `-i/--interactive`, `-h/--help`; clarified `packageFiles`/`rootFiles` "replace defaults"; corrected `workspace:` range behavior wording).
+- Added: `packages/publish-packages/test/cli.test.ts` (35 tests: flag parsing, list/no-default/boolean flags, `--flag=value`/dash-leading values, `--` separator, config precedence, `printHelp` README parity, SPECS/help parity, `pnpm pack` ESM/dts/bin/shebang smoke + source/test leak guard), `packages/publish-packages/test/contract.test.ts` (17 tests: tsconfig.base.json path aliases, orphan-alias guard, root-script-to-bin derivation, root private flag, unique bins, internal-range direction, placeholder contract, type/module/main/types/exports/files fields, build/test scripts, README Packages + Workspace Layout membership, website/docs/packages/index.md + per-package doc entry, local README, shared tsup/vitest/tsconfig presence).
+- Verified: `pnpm lint` clean, `pnpm typecheck` clean, `pnpm build` clean, `pnpm test` clean (`@repo-toolkit/publish-packages` = 3 files / 77 tests; 502 tests across workspace).
+- Sanity-check: deleting `@repo-toolkit/changelog` from `tsconfig.base.json` `paths` makes the contract test fail; deleting the `changelog` root script makes the contract test fail.
+- Result: `publishPackages` exposes an injectable `runner` so tests fake npm execution; plan/selection tests use isolated temp workspaces; CLI behavior and packed ESM/bin/type contracts are covered; a repository contract enforces workspace alias, root-script, unique bin, internal-range, placeholder, and docs-membership synchronization; README options and `workspace:` semantics are now correct.
 
 ## Definition Of Done
 
