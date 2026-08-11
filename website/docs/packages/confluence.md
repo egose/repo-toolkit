@@ -198,9 +198,9 @@ treated specially.
 - Inline: `**strong**`, `__strong__`, `*em*`, `_em_`, `` `code` ``
 - Inline code spans are tokenized **first** and their contents are never
   processed as Markdown or re-escaped; `*not italic*` inside `` ` ` `` stays
-  literal. Backtick-run-length matching (`` `x` ``, `` `a`b`` ``) follows
+  literal. Backtick-run-length matching (`` `x` ``, `` `a`b`` `) follows
 CommonMark, and a single leading/trailing space inside a span is trimmed
-(`` ` code `→`<code>code</code>` ``).
+(` `code`→`<code>code</code>` ``).
 - Emphasis is matched with CommonMark flanking rules. `*` allows intraword
   emphasis (`a*b*c`); `_` does not (`snake_case_name` is literal, not
   `snake<em>case</em>name`). Nested emphasis works:
