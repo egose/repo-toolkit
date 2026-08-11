@@ -12,12 +12,13 @@ import {
   readFileSync,
   readlinkSync,
   realpathSync,
+  renameSync,
   rmSync,
   writeFileSync,
 } from 'node:fs';
-import { basename, isAbsolute, join, posix as pathPosix, relative, resolve } from 'node:path';
+import { basename, dirname, isAbsolute, join, posix as pathPosix, relative, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
-import { isPlainObject, normalizeVersion } from '@repo-toolkit/publish-package';
+import { isPlainObject, normalizeVersion } from '@repo-toolkit/publish-package/helpers';
 
 const DEFAULT_TOOL_NAME = 'repo-toolkit';
 const DEFAULT_VERSION_FILE = 'VERSION';
@@ -72,7 +73,7 @@ interface ParsedArchiveEntry {
   linkTarget?: string;
 }
 
-interface ValidatedArchive {
+export interface ValidatedArchive {
   artifactPath: string;
   archiveFileName: string;
   topLevelDirName: string;
@@ -83,6 +84,21 @@ interface ParseArtifactManifestOptions {
   artifactDirName?: string;
   expectedVersion?: string;
   expectedToolName?: string;
+}
+
+export interface VerifyExtractedArtifactOptions {
+  /** Filename of the tarball extracted into `installRoot`. Asserted against the manifest. */
+  archiveFileName: string;
+  /** Top-level directory name inside the extraction. Asserted against the manifest. */
+  expectedDirName: string;
+  /** Target version asserted against the manifest's `version`. A leading `v` is stripped. */
+  expectedVersion?: string;
+  /** Tool name asserted against the manifest's `toolName`. */
+  expectedToolName?: string;
+  /** Flag passed to each wrapper to confirm the command boots (default: `--help`). */
+  helpFlag?: string;
+  /** Skip executing the wrappers (only check manifest, required files, symlink safety, x_OK, and `bash -n`). */
+  skipExec?: boolean;
 }
 
 export interface BuildArtifactOptions {
@@ -536,43 +552,157 @@ export function verifyReleaseArtifact(options: VerifyArtifactOptions): void {
   const validatedArchive = validateReleaseArchive(artifactPath);
 
   const extractRoot = mkdtempSync(join(tmpdir(), 'repo-toolkit-artifact-'));
-  const helpFlag = options.helpFlag ?? DEFAULT_HELP_FLAG;
-  const skipExec = options.skipExec ?? false;
 
   try {
     execFileSync('tar', ['-xzf', artifactPath, '-C', extractRoot], { stdio: 'inherit' });
 
     const installRoot = resolveInstallRoot(extractRoot, validatedArchive.topLevelDirName, options);
-    const manifestPath = join(installRoot, 'artifact-manifest.json');
 
-    verifySymlinks(installRoot);
-
-    if (!existsSync(manifestPath)) {
-      throw new Error('Release artifact is missing artifact-manifest.json.');
-    }
-
-    const manifest = parseArtifactManifest(readFileSync(manifestPath, 'utf8'), {
+    verifyExtractedArtifact(installRoot, {
       archiveFileName: validatedArchive.archiveFileName,
-      artifactDirName: validatedArchive.topLevelDirName,
+      expectedDirName: validatedArchive.topLevelDirName,
       expectedVersion: options.version ? normalizeVersion(options.version) : undefined,
       expectedToolName: options.toolName ?? (options.artifactPath ? undefined : DEFAULT_TOOL_NAME),
+      helpFlag: options.helpFlag,
+      skipExec: options.skipExec,
+    });
+  } finally {
+    rmIfExists(extractRoot);
+  }
+}
+
+/**
+ * Run the post-extraction validation contract over an extracted artifact tree.
+ * `installRoot` must be the directory produced by extracting the tarball and
+ * descending into the single expected top-level directory. Used by both
+ * {@link verifyReleaseArtifact} and the asdf installer so verifier and installer
+ * always apply identical symlink, manifest, required-file, and wrapper checks.
+ */
+export function verifyExtractedArtifact(
+  installRoot: string,
+  options: VerifyExtractedArtifactOptions,
+): ArtifactManifest {
+  verifySymlinks(installRoot);
+
+  const manifestPath = join(installRoot, 'artifact-manifest.json');
+  if (!existsSync(manifestPath)) {
+    throw new Error('Release artifact is missing artifact-manifest.json.');
+  }
+
+  const manifest = parseArtifactManifest(readFileSync(manifestPath, 'utf8'), {
+    archiveFileName: options.archiveFileName,
+    artifactDirName: options.expectedDirName,
+    expectedVersion: options.expectedVersion,
+    expectedToolName: options.expectedToolName,
+  });
+
+  for (const relativePath of manifest.requiredFiles) {
+    const absolutePath = resolveContainedPath(installRoot, relativePath, 'required file');
+    if (!existsSync(absolutePath)) {
+      throw new Error(`Release artifact is missing ${relativePath}.`);
+    }
+  }
+
+  const helpFlag = options.helpFlag ?? DEFAULT_HELP_FLAG;
+  const skipExec = options.skipExec ?? false;
+
+  for (const command of manifest.commands) {
+    const wrapperPath = resolveContainedPath(installRoot, `bin/${command.name}`, 'command wrapper');
+    accessSync(wrapperPath, constants.X_OK);
+    execFileSync('bash', ['-n', wrapperPath], { stdio: 'inherit' });
+    if (!skipExec) {
+      execFileSync(wrapperPath, [helpFlag], { stdio: 'ignore' });
+    }
+  }
+
+  return manifest;
+}
+
+export interface InstallArtifactOptions {
+  /** Archive tarball to install. */
+  archivePath: string;
+  /** Final install destination directory. The artifact's top-level dir is moved here. */
+  installPath: string;
+  /** Target version asserted against the manifest's `version` and the extracted dir name. A leading `v` is stripped. */
+  version: string;
+  /** Tool name asserted against the manifest's `toolName` and the extracted dir name (default: `repo-toolkit`). */
+  toolName?: string;
+  /** Flag passed to each wrapper to confirm it boots (default: `--help`). */
+  helpFlag?: string;
+  /** Skip executing the wrappers (only check manifest, required files, symlink safety, x_OK, and `bash -n`). */
+  skipExec?: boolean;
+  /** Replace an existing non-empty `installPath` instead of refusing it (default: `false`). */
+  force?: boolean;
+  /** Workspace root directory; accepted for CLI/config compatibility and otherwise unused. */
+  cwd?: string;
+}
+
+export interface InstallArtifactResult {
+  installPath: string;
+  manifest: ArtifactManifest;
+}
+
+/**
+ * Atomically install a release artifact tarball at `installPath`. Performs the
+ * same validation that {@link verifyReleaseArtifact} applies, but extracts into
+ * a fresh temp dir sibling of `installPath` (so `rename` is atomic on the same
+ * filesystem) and refuses a non-empty existing `installPath` unless `force` is
+ * set. On any validation failure the temp dir is removed; the existing
+ * `installPath`, if any, is left untouched. This is the contract the asdf
+ * installer invokes so verifier and installer outcomes stay equivalent.
+ */
+export function installReleaseArtifact(options: InstallArtifactOptions): InstallArtifactResult {
+  const archivePath = resolve(options.archivePath);
+  const installPath = resolve(options.installPath);
+  const toolName = validateFilenameComponent(options.toolName ?? DEFAULT_TOOL_NAME, 'toolName');
+  const version = normalizeVersion(options.version);
+  const expectedDirName = `${toolName}-${validateFilenameComponent(version, 'version')}`;
+  const helpFlag = options.helpFlag ?? DEFAULT_HELP_FLAG;
+  const skipExec = options.skipExec ?? false;
+
+  if (!existsSync(archivePath)) {
+    throw new Error(`Missing release artifact: ${archivePath}`);
+  }
+
+  if (installPath === archivePath || installPath === dirname(archivePath)) {
+    throw new Error(`Install path must not be the archive or its parent: ${installPath}`);
+  }
+
+  if (existsSync(installPath)) {
+    const installEntries = readdirSync(installPath);
+    if (installEntries.length > 0 && !options.force) {
+      throw new Error(
+        `Install destination already exists and is non-empty: ${installPath} (pass --force to replace it).`,
+      );
+    }
+  }
+
+  const validatedArchive = validateReleaseArchive(archivePath);
+
+  const installParent = dirname(installPath);
+  mkdirSync(installParent, { recursive: true });
+  const extractRoot = mkdtempSync(join(installParent, `${toolName}-install-`));
+
+  try {
+    execFileSync('tar', ['-xzf', archivePath, '-C', extractRoot], { stdio: 'inherit' });
+
+    const installRoot = resolveInstallRoot(extractRoot, expectedDirName, { toolName, version });
+
+    const manifest = verifyExtractedArtifact(installRoot, {
+      archiveFileName: validatedArchive.archiveFileName,
+      expectedDirName,
+      expectedVersion: version,
+      expectedToolName: toolName,
+      helpFlag,
+      skipExec,
     });
 
-    for (const relativePath of manifest.requiredFiles) {
-      const absolutePath = resolveContainedPath(installRoot, relativePath, 'required file');
-      if (!existsSync(absolutePath)) {
-        throw new Error(`Release artifact is missing ${relativePath}.`);
-      }
+    if (existsSync(installPath)) {
+      rmIfExists(installPath);
     }
 
-    for (const command of manifest.commands) {
-      const wrapperPath = resolveContainedPath(installRoot, `bin/${command.name}`, 'command wrapper');
-      accessSync(wrapperPath, constants.X_OK);
-      execFileSync('bash', ['-n', wrapperPath], { stdio: 'inherit' });
-      if (!skipExec) {
-        execFileSync(wrapperPath, [helpFlag], { stdio: 'ignore' });
-      }
-    }
+    renameSync(installRoot, installPath);
+    return { installPath, manifest };
   } finally {
     rmIfExists(extractRoot);
   }
@@ -592,7 +722,17 @@ function shellSingleQuote(value: string): string {
   return `'${value.replace(/'/g, `'\\''`)}'`;
 }
 
-function resolveInstallRoot(extractRoot: string, expectedDirName: string, options: VerifyArtifactOptions): string {
+/**
+ * Resolve the install root inside an extraction tree. Rejects extraction trees
+ * that contain anything other than exactly one directory, and (when requested)
+ * asserts that directory matches the expected tool/version name so a tarball
+ * cannot masquerade as a different release. Used by both verifier and installer.
+ */
+export function resolveInstallRoot(
+  extractRoot: string,
+  expectedDirName: string,
+  options: { toolName?: string; version?: string } = {},
+): string {
   const entries = readdirSync(extractRoot, { withFileTypes: true });
   const directories = entries.filter((entry) => entry.isDirectory());
 
@@ -798,7 +938,7 @@ function validateUniquePathList(values: unknown[], label: string): string[] {
   return normalizedValues;
 }
 
-function validateReleaseArchive(artifactPath: string): ValidatedArchive {
+export function validateReleaseArchive(artifactPath: string): ValidatedArchive {
   const archiveFileName = basename(artifactPath);
   const entries = listArchiveEntries(artifactPath);
 

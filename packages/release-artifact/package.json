@@ -17,7 +17,8 @@
   "types": "dist/index.d.ts",
   "bin": {
     "repo-toolkit-build-artifact": "dist/cli-build.js",
-    "repo-toolkit-verify-artifact": "dist/cli-verify.js"
+    "repo-toolkit-verify-artifact": "dist/cli-verify.js",
+    "repo-toolkit-install-artifact": "dist/cli-install.js"
   },
   "exports": {
     ".": {
@@ -30,7 +31,9 @@
     "build": "tsup --config tsup.config.ts",
     "test": "pnpm --filter @repo-toolkit/release-artifact... build && vitest run --config vitest.config.ts",
     "build-artifact": "node dist/cli-build.js",
-    "verify-artifact": "node dist/cli-verify.js"
+    "verify-artifact": "node dist/cli-verify.js",
+    "install-artifact": "node dist/cli-install.js",
+    "gen-install": "pnpm build && node scripts/generate-install.mjs"
   },
   "dependencies": {
     "@repo-toolkit/publish-package": "workspace:*"

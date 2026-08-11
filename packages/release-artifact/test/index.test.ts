@@ -1,8 +1,8 @@
 import { execFileSync } from 'node:child_process';
 import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
-import { chmodSync, existsSync, rmSync } from 'node:fs';
+import { chmodSync, existsSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, relative } from 'node:path';
+import { basename, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
@@ -12,10 +12,13 @@ import {
   buildWrapperScript,
   collectCommands,
   createArtifactManifest,
+  installReleaseArtifact,
   matchesAnyGlob,
   resolveArtifactPath,
   resolveBuildArtifactPlan,
   toBinEntries,
+  validateReleaseArchive,
+  verifyExtractedArtifact,
   verifyReleaseArtifact,
   verifySymlinks,
 } from '../src/index';
@@ -599,10 +602,349 @@ describe('buildReleaseArtifact (production node_modules, real repo)', () => {
   }, 60_000);
 });
 
-describe('bin/install', () => {
-  it('rejects malicious archives before extracting into the install path', async () => {
-    const repoRoot = fileURLToPath(new URL('../../..', import.meta.url));
-    const rootDir = await mkdtemp(join(tmpdir(), 'repo-toolkit-install-script-'));
+describe('installReleaseArtifact', () => {
+  it('atomically installs a valid artifact and refuses a stale non-empty destination', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'repo-toolkit-install-runner-'));
+    const installDir = join(rootDir, 'install', 'fixture-toolkit');
+
+    try {
+      await createFixtureWorkspace(rootDir);
+      const plan = buildReleaseArtifact({
+        version: FIXTURE_VERSION,
+        cwd: rootDir,
+        toolName: FIXTURE_TOOL_NAME,
+        includeNodeModules: false,
+        productionNodeModules: false,
+      });
+
+      const { installPath, manifest } = installReleaseArtifact({
+        archivePath: plan.artifactPath,
+        installPath: installDir,
+        version: FIXTURE_VERSION,
+        toolName: FIXTURE_TOOL_NAME,
+      });
+
+      expect(installPath).toBe(installDir);
+      expect(existsSync(join(installPath, 'artifact-manifest.json'))).toBe(true);
+      expect(existsSync(join(installPath, 'bin', 'fixture-cli'))).toBe(true);
+      expect(existsSync(join(installPath, 'packages', 'fixture-cli', 'cli.js'))).toBe(true);
+      expect(manifest.toolName).toBe(FIXTURE_TOOL_NAME);
+      expect(manifest.version).toBe(FIXTURE_VERSION);
+
+      // The temp extraction dir must be gone after success.
+      const installParent = join(rootDir, 'install');
+      const leftovers = readdirSync(installParent).filter((name) => name.startsWith('fixture-toolkit-install-'));
+      expect(leftovers).toEqual([]);
+
+      // Re-running with the same non-empty destination must refuse without --force
+      // and must NOT touch the existing install tree.
+      expect(() =>
+        installReleaseArtifact({
+          archivePath: plan.artifactPath,
+          installPath: installDir,
+          version: FIXTURE_VERSION,
+          toolName: FIXTURE_TOOL_NAME,
+        }),
+      ).toThrowError(/already exists and is non-empty/);
+      expect(existsSync(join(installDir, 'artifact-manifest.json'))).toBe(true);
+
+      // --force replaces the existing install tree.
+      installReleaseArtifact({
+        archivePath: plan.artifactPath,
+        installPath: installDir,
+        version: FIXTURE_VERSION,
+        toolName: FIXTURE_TOOL_NAME,
+        force: true,
+      });
+      expect(existsSync(join(installDir, 'artifact-manifest.json'))).toBe(true);
+    } finally {
+      await rm(rootDir, { recursive: true, force: true });
+    }
+  }, 30_000);
+
+  it('rejects a version mismatch before touching the install path and leaves no temp dir', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'repo-toolkit-install-ver-'));
+    const installDir = join(rootDir, 'install', 'fixture-toolkit');
+
+    try {
+      await createFixtureWorkspace(rootDir);
+      const plan = buildReleaseArtifact({
+        version: FIXTURE_VERSION,
+        cwd: rootDir,
+        toolName: FIXTURE_TOOL_NAME,
+        includeNodeModules: false,
+        productionNodeModules: false,
+      });
+
+      expect(() =>
+        installReleaseArtifact({
+          archivePath: plan.artifactPath,
+          installPath: installDir,
+          version: '9.9.9',
+          toolName: FIXTURE_TOOL_NAME,
+        }),
+      ).toThrowError(/extracted to unexpected directory|version mismatch/);
+
+      // The final install path must not have been created, and no temp dir may linger.
+      expect(existsSync(installDir)).toBe(false);
+      const installParent = join(rootDir, 'install');
+      const leftovers = readdirSync(installParent).filter((name) => name.startsWith('fixture-toolkit-install-'));
+      expect(leftovers).toEqual([]);
+    } finally {
+      await rm(rootDir, { recursive: true, force: true });
+    }
+  }, 30_000);
+
+  it('rejects a malicious traversal archive before extraction and leaves no temp dir', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'repo-toolkit-install-trav-'));
+    const archivePath = join(rootDir, `${FIXTURE_TOOL_NAME}-${FIXTURE_VERSION}.tar.gz`);
+    const installDir = join(rootDir, 'install', 'fixture-toolkit');
+
+    try {
+      await createTraversalArchive(archivePath, `${FIXTURE_TOOL_NAME}-${FIXTURE_VERSION}`);
+
+      expect(() =>
+        installReleaseArtifact({
+          archivePath,
+          installPath: installDir,
+          version: FIXTURE_VERSION,
+          toolName: FIXTURE_TOOL_NAME,
+        }),
+      ).toThrowError(/normalized relative POSIX path|top-level directory/);
+
+      expect(existsSync(join(rootDir, 'escape.txt'))).toBe(false);
+      expect(existsSync(installDir)).toBe(false);
+      const installParent = join(rootDir, 'install');
+      if (existsSync(installParent)) {
+        const leftovers = readdirSync(installParent).filter((name) => name.startsWith('fixture-toolkit-install-'));
+        expect(leftovers).toEqual([]);
+      }
+    } finally {
+      await rm(rootDir, { recursive: true, force: true });
+    }
+  }, 30_000);
+
+  it('pre-existing files cannot satisfy missing required archive members', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'repo-toolkit-install-preexisting-'));
+    const installDir = join(rootDir, 'install', 'fixture-toolkit');
+
+    try {
+      await createFixtureWorkspace(rootDir);
+      const plan = buildReleaseArtifact({
+        version: FIXTURE_VERSION,
+        cwd: rootDir,
+        toolName: FIXTURE_TOOL_NAME,
+        includeNodeModules: false,
+        productionNodeModules: false,
+      });
+
+      // Seed the install path with a fake, incomplete tree that is missing the real cli.js.
+      await mkdir(join(installDir, 'bin'), { recursive: true });
+      await writeFile(join(installDir, 'VERSION'), `fake\n`);
+      await writeFile(join(installDir, 'bin', 'fixture-cli'), `#!/usr/bin/env bash\necho fake\n`);
+      chmodSync(join(installDir, 'bin', 'fixture-cli'), 0o755);
+
+      // Without --force the install refuses because the destination is non-empty; the
+      // fake tree must remain untouched (the real artifact is never extracted into it).
+      expect(() =>
+        installReleaseArtifact({
+          archivePath: plan.artifactPath,
+          installPath: installDir,
+          version: FIXTURE_VERSION,
+          toolName: FIXTURE_TOOL_NAME,
+        }),
+      ).toThrowError(/already exists and is non-empty/);
+      expect(await readFile(join(installDir, 'VERSION'), 'utf8')).toBe(`fake\n`);
+
+      // With --force the validated artifact fully replaces the fake tree; the bogus
+      // VERSION file is overwritten with the real one.
+      installReleaseArtifact({
+        archivePath: plan.artifactPath,
+        installPath: installDir,
+        version: FIXTURE_VERSION,
+        toolName: FIXTURE_TOOL_NAME,
+        force: true,
+      });
+      expect(await readFile(join(installDir, 'VERSION'), 'utf8')).toBe(`${FIXTURE_VERSION}\n`);
+      expect(existsSync(join(installDir, 'packages', 'fixture-cli', 'cli.js'))).toBe(true);
+    } finally {
+      await rm(rootDir, { recursive: true, force: true });
+    }
+  }, 30_000);
+});
+
+describe('validateReleaseArchive', () => {
+  it('returns the top-level directory name for a valid artifact', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'repo-toolkit-validate-valid-'));
+
+    try {
+      await createFixtureWorkspace(rootDir);
+      const plan = buildReleaseArtifact({
+        version: FIXTURE_VERSION,
+        cwd: rootDir,
+        toolName: FIXTURE_TOOL_NAME,
+        includeNodeModules: false,
+        productionNodeModules: false,
+      });
+
+      const validated = validateReleaseArchive(plan.artifactPath);
+      expect(validated.topLevelDirName).toBe(`${FIXTURE_TOOL_NAME}-${FIXTURE_VERSION}`);
+      expect(validated.archiveFileName).toBe(`${FIXTURE_TOOL_NAME}-${FIXTURE_VERSION}.tar.gz`);
+    } finally {
+      await rm(rootDir, { recursive: true, force: true });
+    }
+  }, 30_000);
+
+  it('throws before extraction for a traversal archive', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'repo-toolkit-validate-trav-'));
+    const archivePath = join(rootDir, `${FIXTURE_TOOL_NAME}-${FIXTURE_VERSION}.tar.gz`);
+
+    try {
+      await createTraversalArchive(archivePath, `${FIXTURE_TOOL_NAME}-${FIXTURE_VERSION}`);
+      expect(() => validateReleaseArchive(archivePath)).toThrowError(
+        /normalized relative POSIX path|top-level directory/,
+      );
+      expect(existsSync(join(rootDir, 'escape.txt'))).toBe(false);
+    } finally {
+      await rm(rootDir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('verifyExtractedArtifact', () => {
+  it('runs symlink, manifest, required-file, and wrapper checks on an extracted tree', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'repo-toolkit-verify-extr-'));
+
+    try {
+      await createFixtureWorkspace(rootDir);
+      const plan = buildReleaseArtifact({
+        version: FIXTURE_VERSION,
+        cwd: rootDir,
+        toolName: FIXTURE_TOOL_NAME,
+        includeNodeModules: false,
+        productionNodeModules: false,
+      });
+
+      const extractRoot = await mkdtemp(join(tmpdir(), 'repo-toolkit-extract-'));
+      try {
+        execFileSync('tar', ['-xzf', plan.artifactPath, '-C', extractRoot], { stdio: 'inherit' });
+        const installRoot = join(extractRoot, plan.artifactDirName);
+
+        const manifest = verifyExtractedArtifact(installRoot, {
+          archiveFileName: basename(plan.artifactPath),
+          expectedDirName: plan.artifactDirName,
+          expectedVersion: FIXTURE_VERSION,
+          expectedToolName: FIXTURE_TOOL_NAME,
+        });
+
+        expect(manifest.toolName).toBe(FIXTURE_TOOL_NAME);
+        expect(manifest.commands.map((c) => c.name)).toEqual(['fixture-cli']);
+      } finally {
+        await rm(extractRoot, { recursive: true, force: true });
+      }
+    } finally {
+      await rm(rootDir, { recursive: true, force: true });
+    }
+  }, 30_000);
+
+  it('rejects a missing required file', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'repo-toolkit-verify-missing-'));
+
+    try {
+      await createFixtureWorkspace(rootDir);
+      const plan = buildReleaseArtifact({
+        version: FIXTURE_VERSION,
+        cwd: rootDir,
+        toolName: FIXTURE_TOOL_NAME,
+        includeNodeModules: false,
+        productionNodeModules: false,
+      });
+
+      const extractRoot = await mkdtemp(join(tmpdir(), 'repo-toolkit-extract-'));
+      try {
+        execFileSync('tar', ['-xzf', plan.artifactPath, '-C', extractRoot], { stdio: 'inherit' });
+        const installRoot = join(extractRoot, plan.artifactDirName);
+
+        // Remove a required file; verifyExtractedArtifact must fail before any wrapper runs.
+        rmSync(join(installRoot, 'packages', 'fixture-cli', 'cli.js'), { force: true });
+
+        expect(() =>
+          verifyExtractedArtifact(installRoot, {
+            archiveFileName: basename(plan.artifactPath),
+            expectedDirName: plan.artifactDirName,
+            expectedVersion: FIXTURE_VERSION,
+            expectedToolName: FIXTURE_TOOL_NAME,
+          }),
+        ).toThrowError(/missing packages\/fixture-cli\/cli\.js/);
+      } finally {
+        await rm(extractRoot, { recursive: true, force: true });
+      }
+    } finally {
+      await rm(rootDir, { recursive: true, force: true });
+    }
+  }, 30_000);
+
+  it('rejects a manifest version mismatch', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'repo-toolkit-verify-version-'));
+
+    try {
+      await createFixtureWorkspace(rootDir);
+      const plan = buildReleaseArtifact({
+        version: FIXTURE_VERSION,
+        cwd: rootDir,
+        toolName: FIXTURE_TOOL_NAME,
+        includeNodeModules: false,
+        productionNodeModules: false,
+      });
+
+      const extractRoot = await mkdtemp(join(tmpdir(), 'repo-toolkit-extract-'));
+      try {
+        execFileSync('tar', ['-xzf', plan.artifactPath, '-C', extractRoot], { stdio: 'inherit' });
+        const installRoot = join(extractRoot, plan.artifactDirName);
+
+        expect(() =>
+          verifyExtractedArtifact(installRoot, {
+            archiveFileName: basename(plan.artifactPath),
+            expectedDirName: plan.artifactDirName,
+            expectedVersion: '9.9.9',
+            expectedToolName: FIXTURE_TOOL_NAME,
+          }),
+        ).toThrowError(/version mismatch/);
+      } finally {
+        await rm(extractRoot, { recursive: true, force: true });
+      }
+    } finally {
+      await rm(rootDir, { recursive: true, force: true });
+    }
+  }, 30_000);
+});
+
+function runInstallScript(repoRoot: string, env: NodeJS.ProcessEnv): { status: number; stderr: string } {
+  try {
+    execFileSync('bash', [join(repoRoot, 'bin', 'install')], {
+      env,
+      stdio: 'pipe',
+      encoding: 'utf8',
+    });
+    return { status: 0, stderr: '' };
+  } catch (error) {
+    const e = error as { status?: number; stderr?: string };
+    return { status: e.status ?? 1, stderr: e.stderr ?? '' };
+  }
+}
+
+describe('bin/install (black-box)', () => {
+  const repoRoot = fileURLToPath(new URL('../../..', import.meta.url));
+  const REPO_TOOL_NAME = 'repo-toolkit';
+  const REPO_VERSION = '0.0.0-bbtest';
+
+  async function buildRealRepoArtifact(): Promise<string> {
+    buildReleaseArtifact({ version: REPO_VERSION, cwd: repoRoot, toolName: REPO_TOOL_NAME });
+    return join(repoRoot, 'dist', `${REPO_TOOL_NAME}-${REPO_VERSION}.tar.gz`);
+  }
+
+  it('rejects malicious traversal archives before extracting and leaves no partial state', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'repo-toolkit-bbinstall-trav-'));
     const downloadDir = join(rootDir, 'download');
     const installDir = join(rootDir, 'install');
     const archivePath = join(downloadDir, `${FIXTURE_TOOL_NAME}-${FIXTURE_VERSION}.tar.gz`);
@@ -611,18 +953,240 @@ describe('bin/install', () => {
       await mkdir(downloadDir, { recursive: true });
       await createTraversalArchive(archivePath, `${FIXTURE_TOOL_NAME}-${FIXTURE_VERSION}`);
 
-      expect(() =>
-        execFileSync('bash', [join(repoRoot, 'bin', 'install')], {
-          env: {
-            ...process.env,
-            ASDF_INSTALL_TYPE: 'version',
-            ASDF_INSTALL_VERSION: FIXTURE_VERSION,
-            ASDF_INSTALL_PATH: installDir,
-            ASDF_DOWNLOAD_PATH: downloadDir,
-          },
-          stdio: 'pipe',
-        }),
-      ).toThrowError();
+      const { status, stderr } = runInstallScript(repoRoot, {
+        ...process.env,
+        ASDF_INSTALL_TYPE: 'version',
+        ASDF_INSTALL_VERSION: FIXTURE_VERSION,
+        ASDF_INSTALL_PATH: installDir,
+        ASDF_DOWNLOAD_PATH: downloadDir,
+      });
+
+      expect(status).not.toBe(0);
+      expect(stderr).toMatch(/normalized relative POSIX path|top-level directory/);
+      expect(existsSync(join(installDir, 'escape.txt'))).toBe(false);
+      // No partial install tree, and no leftover temp dirs in the install parent.
+      expect(existsSync(installDir)).toBe(false);
+    } finally {
+      await rm(rootDir, { recursive: true, force: true });
+    }
+  });
+
+  it('installs a valid real-repo artifact atomically and reports success', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'repo-toolkit-bbinstall-valid-'));
+    const downloadDir = join(rootDir, 'download');
+    const installDir = join(rootDir, 'install', REPO_TOOL_NAME);
+    let archivePath: string;
+
+    try {
+      await mkdir(downloadDir, { recursive: true });
+      archivePath = await buildRealRepoArtifact();
+      await import('node:fs/promises').then((fs) => fs.copyFile(archivePath, join(downloadDir, basename(archivePath))));
+
+      const { status, stderr } = runInstallScript(repoRoot, {
+        ...process.env,
+        ASDF_INSTALL_TYPE: 'version',
+        ASDF_INSTALL_VERSION: REPO_VERSION,
+        ASDF_INSTALL_PATH: installDir,
+        ASDF_DOWNLOAD_PATH: downloadDir,
+      });
+
+      expect(status).toBe(0);
+      expect(stderr).toBe('');
+      expect(existsSync(join(installDir, 'artifact-manifest.json'))).toBe(true);
+      expect(existsSync(join(installDir, 'VERSION'))).toBe(true);
+      expect(existsSync(join(installDir, 'bin', 'repo-toolkit-verify-artifact'))).toBe(true);
+    } finally {
+      await rm(rootDir, { recursive: true, force: true });
+      rmSync(archivePath!, { force: true });
+      rmSync(join(repoRoot, 'dist', `${REPO_TOOL_NAME}-${REPO_VERSION}`), { recursive: true, force: true });
+    }
+  }, 120_000);
+
+  it('rejects a stale non-empty destination without touching the existing tree', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'repo-toolkit-bbinstall-stale-'));
+    const downloadDir = join(rootDir, 'download');
+    const installDir = join(rootDir, 'install', REPO_TOOL_NAME);
+    let archivePath: string;
+
+    try {
+      await mkdir(installDir, { recursive: true });
+      await writeFile(join(installDir, 'preexisting.txt'), 'untouched\n');
+      await mkdir(downloadDir, { recursive: true });
+      archivePath = await buildRealRepoArtifact();
+      await import('node:fs/promises').then((fs) => fs.copyFile(archivePath, join(downloadDir, basename(archivePath))));
+
+      const { status, stderr } = runInstallScript(repoRoot, {
+        ...process.env,
+        ASDF_INSTALL_TYPE: 'version',
+        ASDF_INSTALL_VERSION: REPO_VERSION,
+        ASDF_INSTALL_PATH: installDir,
+        ASDF_DOWNLOAD_PATH: downloadDir,
+      });
+
+      expect(status).not.toBe(0);
+      expect(stderr).toMatch(/already exists and is non-empty/);
+      expect(await readFile(join(installDir, 'preexisting.txt'), 'utf8')).toBe('untouched\n');
+    } finally {
+      await rm(rootDir, { recursive: true, force: true });
+      rmSync(archivePath!, { force: true });
+      rmSync(join(repoRoot, 'dist', `${REPO_TOOL_NAME}-${REPO_VERSION}`), { recursive: true, force: true });
+    }
+  }, 120_000);
+
+  it('rejects a version mismatch before placing any files and leaves no temp dir', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'repo-toolkit-bbinstall-ver-'));
+    const downloadDir = join(rootDir, 'download');
+    const installDir = join(rootDir, 'install', REPO_TOOL_NAME);
+    let archivePath: string;
+
+    try {
+      await mkdir(downloadDir, { recursive: true });
+      archivePath = await buildRealRepoArtifact();
+      await import('node:fs/promises').then((fs) => fs.copyFile(archivePath, join(downloadDir, basename(archivePath))));
+
+      const { status, stderr } = runInstallScript(repoRoot, {
+        ...process.env,
+        ASDF_INSTALL_TYPE: 'version',
+        ASDF_INSTALL_VERSION: '9.9.9',
+        ASDF_INSTALL_PATH: installDir,
+        ASDF_DOWNLOAD_PATH: downloadDir,
+      });
+
+      expect(status).not.toBe(0);
+      expect(stderr).toMatch(/extracted to unexpected directory|version mismatch/);
+      expect(existsSync(installDir)).toBe(false);
+      // No leftover temp dirs in the install parent.
+      const installParent = join(rootDir, 'install');
+      const leftovers = existsSync(installParent)
+        ? readdirSync(installParent).filter((name) => name.startsWith('repo-toolkit-install-'))
+        : [];
+      expect(leftovers).toEqual([]);
+    } finally {
+      await rm(rootDir, { recursive: true, force: true });
+      rmSync(archivePath!, { force: true });
+      rmSync(join(repoRoot, 'dist', `${REPO_TOOL_NAME}-${REPO_VERSION}`), { recursive: true, force: true });
+    }
+  }, 120_000);
+
+  it('pre-existing files cannot satisfy a missing required archive member', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'repo-toolkit-bbinstall-preexisting-'));
+    const downloadDir = join(rootDir, 'download');
+    const installDir = join(rootDir, 'install', REPO_TOOL_NAME);
+    let archivePath: string;
+
+    try {
+      await mkdir(join(installDir, 'bin'), { recursive: true });
+      await writeFile(join(installDir, 'VERSION'), 'fake\n');
+      await writeFile(join(installDir, 'bin', 'repo-toolkit-verify-artifact'), '#!/usr/bin/env bash\n');
+      await mkdir(downloadDir, { recursive: true });
+      archivePath = await buildRealRepoArtifact();
+      await import('node:fs/promises').then((fs) => fs.copyFile(archivePath, join(downloadDir, basename(archivePath))));
+
+      const { status, stderr } = runInstallScript(repoRoot, {
+        ...process.env,
+        ASDF_INSTALL_TYPE: 'version',
+        ASDF_INSTALL_VERSION: REPO_VERSION,
+        ASDF_INSTALL_PATH: installDir,
+        ASDF_DOWNLOAD_PATH: downloadDir,
+      });
+
+      expect(status).not.toBe(0);
+      expect(stderr).toMatch(/already exists and is non-empty/);
+      // The fake install tree must remain untouched; the real artifact is never
+      // extracted into it (validation runs against a fresh temp sibling).
+      expect(await readFile(join(installDir, 'VERSION'), 'utf8')).toBe('fake\n');
+    } finally {
+      await rm(rootDir, { recursive: true, force: true });
+      rmSync(archivePath!, { force: true });
+      rmSync(join(repoRoot, 'dist', `${REPO_TOOL_NAME}-${REPO_VERSION}`), { recursive: true, force: true });
+    }
+  }, 120_000);
+
+  it('rejects multiple archives in the download dir', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'repo-toolkit-bbinstall-multi-'));
+    const downloadDir = join(rootDir, 'download');
+    const installDir = join(rootDir, 'install', REPO_TOOL_NAME);
+    let archivePath: string;
+
+    try {
+      await mkdir(downloadDir, { recursive: true });
+      archivePath = await buildRealRepoArtifact();
+      await import('node:fs/promises').then((fs) =>
+        Promise.all([
+          fs.copyFile(archivePath, join(downloadDir, 'a.tar.gz')),
+          fs.copyFile(archivePath, join(downloadDir, 'b.tar.gz')),
+        ]),
+      );
+
+      const { status, stderr } = runInstallScript(repoRoot, {
+        ...process.env,
+        ASDF_INSTALL_TYPE: 'version',
+        ASDF_INSTALL_VERSION: REPO_VERSION,
+        ASDF_INSTALL_PATH: installDir,
+        ASDF_DOWNLOAD_PATH: downloadDir,
+      });
+
+      expect(status).not.toBe(0);
+      expect(stderr).toMatch(/Expected exactly one release archive/);
+    } finally {
+      await rm(rootDir, { recursive: true, force: true });
+      rmSync(archivePath!, { force: true });
+      rmSync(join(repoRoot, 'dist', `${REPO_TOOL_NAME}-${REPO_VERSION}`), { recursive: true, force: true });
+    }
+  }, 120_000);
+
+  it('rejects install types other than version', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'repo-toolkit-bbinstall-type-'));
+    const downloadDir = join(rootDir, 'download');
+    const installDir = join(rootDir, 'install', REPO_TOOL_NAME);
+
+    try {
+      await mkdir(downloadDir, { recursive: true });
+      const { status, stderr } = runInstallScript(repoRoot, {
+        ...process.env,
+        ASDF_INSTALL_TYPE: 'ref',
+        ASDF_INSTALL_VERSION: REPO_VERSION,
+        ASDF_INSTALL_PATH: installDir,
+        ASDF_DOWNLOAD_PATH: downloadDir,
+      });
+
+      expect(status).not.toBe(0);
+      expect(stderr).toMatch(/install type 'version' only/);
+    } finally {
+      await rm(rootDir, { recursive: true, force: true });
+    }
+  }, 30_000);
+
+  it('yields equivalent outcomes to verifyReleaseArtifact for the traversal corpus', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'repo-toolkit-bbinstall-equiv-'));
+    const downloadDir = join(rootDir, 'download');
+    const installDir = join(rootDir, 'install');
+    const archivePath = join(downloadDir, `${FIXTURE_TOOL_NAME}-${FIXTURE_VERSION}.tar.gz`);
+
+    try {
+      await mkdir(downloadDir, { recursive: true });
+      await createTraversalArchive(archivePath, `${FIXTURE_TOOL_NAME}-${FIXTURE_VERSION}`);
+
+      let verifierMessage = '';
+      try {
+        verifyReleaseArtifact({ artifactPath: archivePath });
+      } catch (error) {
+        verifierMessage = (error as Error).message;
+      }
+      expect(verifierMessage.length).toBeGreaterThan(0);
+
+      const { status, stderr } = runInstallScript(repoRoot, {
+        ...process.env,
+        ASDF_INSTALL_TYPE: 'version',
+        ASDF_INSTALL_VERSION: FIXTURE_VERSION,
+        ASDF_INSTALL_PATH: installDir,
+        ASDF_DOWNLOAD_PATH: downloadDir,
+      });
+
+      expect(status).not.toBe(0);
+      // The embedded bundle shares the same validateReleaseArchive code path as
+      // verifyReleaseArtifact, so both reject with the same message for traversal archives.
+      expect(stderr).toContain(verifierMessage.split('\n')[0]);
       expect(existsSync(join(installDir, 'escape.txt'))).toBe(false);
     } finally {
       await rm(rootDir, { recursive: true, force: true });
