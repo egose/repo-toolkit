@@ -14,6 +14,9 @@ import {
   promptForRequiredValue,
   canPrompt,
   INTERACTIVE_FLAG,
+  defaultProcessRunner,
+  type ProcessRunner,
+  type ProcessRunOptions,
 } from '../src/index';
 
 const internalNames = new Set(['@repo-toolkit/changelog', '@repo-toolkit/publish-package']);
@@ -726,6 +729,7 @@ describe('publishPackage', () => {
   it('writes a publish-ready package.json and copies files in dry-run mode (last additionalName wins)', async () => {
     const rootDir = await mkdtemp(join(tmpdir(), 'repo-toolkit-publish-package-'));
     const publishDir = join(rootDir, 'artifacts', 'npm');
+    const runner = createFakeRunner();
 
     try {
       await mkdir(publishDir, { recursive: true });
@@ -751,6 +755,8 @@ describe('publishPackage', () => {
       await writeFile(join(publishDir, 'index.js'), 'export {}\n');
       await writeFile(join(publishDir, 'index.d.ts'), 'export {};\n');
 
+      const logSpy = (await import('vitest')).vi.spyOn(console, 'log').mockImplementation(() => {});
+
       publishPackage({
         cwd: rootDir,
         version: '1.2.3',
@@ -758,7 +764,10 @@ describe('publishPackage', () => {
         includePackageFiles: ['docs/NOTICE.md'],
         skipBuild: true,
         dryRun: true,
+        runner,
       });
+
+      logSpy.mockRestore();
 
       // The loop writes package.json N times (once per name); the last write
       // wins, so the file on disk has the last additionalName.
@@ -770,6 +779,12 @@ describe('publishPackage', () => {
       expect(existsSync(join(publishDir, 'CHANGELOG.md'))).toBe(true);
       expect(existsSync(join(publishDir, 'NOTICE.md'))).toBe(true);
       expect(existsSync(join(publishDir, 'LICENSE'))).toBe(true);
+
+      // No build step (skipBuild), and exactly one npm publish per name.
+      expect(runner.runs.filter((entry) => entry.kind === 'runShell')).toHaveLength(0);
+      expect(runner.runs.filter((entry) => entry.kind === 'run')).toHaveLength(2);
+      expect(runner.runs[0].executable).toBe('npm');
+      expect(runner.runs[1].executable).toBe('npm');
     } finally {
       await rm(rootDir, { recursive: true, force: true });
     }
@@ -871,5 +886,291 @@ describe('publishPackage', () => {
       await rm(outsideDir, { recursive: true, force: true });
       await rm(rootDir, { recursive: true, force: true });
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Fake runner: injectable subprocess execution asserts exact invocations
+// without contacting a real npm registry or running a real build.
+// ---------------------------------------------------------------------------
+
+interface FakeRun {
+  kind: 'run' | 'runShell';
+  executable?: string;
+  args?: string[];
+  command?: string;
+  options: ProcessRunOptions;
+}
+
+interface FakeRunner extends ProcessRunner {
+  runs: FakeRun[];
+  failAfter: number | null;
+  setFailAfter(count: number): void;
+}
+
+function createFakeRunner(): FakeRunner {
+  const runs: FakeRun[] = [];
+  let failAfterCount: number | null = null;
+  let current = 0;
+
+  const runner: FakeRunner = {
+    runs,
+    failAfter: null,
+    setFailAfter(count) {
+      failAfterCount = count;
+      current = 0;
+      runner.failAfter = count;
+    },
+    run(executable, args, options) {
+      runs.push({ kind: 'run', executable, args: [...args], options });
+      if (failAfterCount !== null && current >= failAfterCount) {
+        current += 1;
+        throw new Error(`fake: ${executable} failed`);
+      }
+      current += 1;
+    },
+    runShell(command, options) {
+      runs.push({ kind: 'runShell', command, options });
+      if (failAfterCount !== null && current >= failAfterCount) {
+        current += 1;
+        throw new Error(`fake: ${command} failed`);
+      }
+      current += 1;
+    },
+  };
+
+  return runner;
+}
+
+async function makePackageFixture(dir: string, manifest: Record<string, unknown>): Promise<void> {
+  await mkdir(join(dir, 'dist'), { recursive: true });
+  await writeFile(join(dir, 'package.json'), `${JSON.stringify(manifest)}\n`);
+  await writeFile(join(dir, 'dist', 'index.js'), 'export {}\n');
+  await writeFile(join(dir, 'README.md'), '# Example\n');
+  await writeFile(join(dir, 'LICENSE'), 'Apache-2.0\n');
+}
+
+describe('publishPackage with injected runner', () => {
+  it('invokes the build command via the runner with the package cwd', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'pp-runner-build-'));
+    const runner = createFakeRunner();
+
+    try {
+      await makePackageFixture(rootDir, { name: '@example/pkg', version: '1.2.3' });
+
+      publishPackage({
+        cwd: rootDir,
+        version: '1.2.3',
+        buildCommand: 'pnpm build',
+        dryRun: true,
+        runner,
+      });
+
+      expect(runner.runs[0]).toEqual({
+        kind: 'runShell',
+        command: 'pnpm build',
+        options: { cwd: rootDir },
+      });
+    } finally {
+      await rm(rootDir, { recursive: true, force: true });
+    }
+  });
+
+  it('skips the build runner when skipBuild is true', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'pp-runner-skipbuild-'));
+    const runner = createFakeRunner();
+
+    try {
+      await makePackageFixture(rootDir, { name: '@example/pkg', version: '1.2.3' });
+
+      publishPackage({
+        cwd: rootDir,
+        version: '1.2.3',
+        skipBuild: true,
+        dryRun: true,
+        runner,
+      });
+
+      expect(runner.runs.every((entry) => entry.kind !== 'runShell')).toBe(true);
+      expect(runner.runs[0].executable).toBe('npm');
+    } finally {
+      await rm(rootDir, { recursive: true, force: true });
+    }
+  });
+
+  it('passes access, tag, registry, provenance, and dry-run to npm publish in exact order', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'pp-runner-npm-flags-'));
+    const runner = createFakeRunner();
+
+    try {
+      await makePackageFixture(rootDir, { name: '@example/pkg', version: '1.2.3-beta.4' });
+
+      publishPackage({
+        cwd: rootDir,
+        version: '1.2.3-beta.4',
+        access: 'restricted',
+        registry: 'https://registry.example.org',
+        provenance: true,
+        skipBuild: true,
+        dryRun: true,
+        runner,
+      });
+
+      expect(runner.runs).toHaveLength(1);
+      expect(runner.runs[0]).toEqual({
+        kind: 'run',
+        executable: 'npm',
+        args: [
+          'publish',
+          '--access',
+          'restricted',
+          '--tag',
+          'beta',
+          '--registry',
+          'https://registry.example.org',
+          '--provenance',
+          '--dry-run',
+        ],
+        options: expect.objectContaining({ cwd: join(rootDir, 'dist') }),
+      });
+    } finally {
+      await rm(rootDir, { recursive: true, force: true });
+    }
+  });
+
+  it('forwards the OTP through npm_config_otp env, never as --otp argv', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'pp-runner-otp-env-'));
+    const runner = createFakeRunner();
+
+    try {
+      await makePackageFixture(rootDir, { name: '@example/pkg', version: '1.2.3' });
+
+      publishPackage({
+        cwd: rootDir,
+        version: '1.2.3',
+        otp: '123456',
+        skipBuild: true,
+        dryRun: true,
+        runner,
+      });
+
+      expect(runner.runs).toHaveLength(1);
+      const npmRun = runner.runs[0];
+      expect(npmRun.args).not.toContain('--otp');
+      expect(npmRun.args).not.toContain('123456');
+      expect(npmRun.options.env).toEqual({ npm_config_otp: '123456' });
+    } finally {
+      await rm(rootDir, { recursive: true, force: true });
+    }
+  });
+
+  it('omits the env block when no OTP is supplied', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'pp-runner-no-otp-'));
+    const runner = createFakeRunner();
+
+    try {
+      await makePackageFixture(rootDir, { name: '@example/pkg', version: '1.2.3' });
+
+      publishPackage({
+        cwd: rootDir,
+        version: '1.2.3',
+        skipBuild: true,
+        dryRun: true,
+        runner,
+      });
+
+      expect(runner.runs[0].options.env).toBeUndefined();
+    } finally {
+      await rm(rootDir, { recursive: true, force: true });
+    }
+  });
+
+  it('publishes each additionalName in order and runs npm once per name', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'pp-runner-multiple-'));
+    const runner = createFakeRunner();
+
+    try {
+      await makePackageFixture(rootDir, {
+        name: '@example/pkg',
+        additionalNames: ['@example/pkg-alt', '@example/extra'],
+        version: '1.2.3',
+      });
+
+      publishPackage({ cwd: rootDir, version: '1.2.3', skipBuild: true, dryRun: true, runner });
+
+      const npmRuns = runner.runs.filter((entry) => entry.kind === 'run');
+      expect(npmRuns).toHaveLength(3);
+      expect(npmRuns[0].args).toContain('--access');
+    } finally {
+      await rm(rootDir, { recursive: true, force: true });
+    }
+  });
+
+  it('stops at the first failing npm publish and does not invoke npm for later names', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'pp-runner-npm-failure-'));
+    const runner = createFakeRunner();
+
+    try {
+      await makePackageFixture(rootDir, {
+        name: '@example/pkg',
+        additionalNames: ['@example/pkg-alt', '@example/extra'],
+        version: '1.2.3',
+      });
+
+      runner.setFailAfter(0);
+
+      expect(() =>
+        publishPackage({ cwd: rootDir, version: '1.2.3', skipBuild: true, dryRun: true, runner }),
+      ).toThrowError();
+      const npmRuns = runner.runs.filter((entry) => entry.kind === 'run');
+      expect(npmRuns).toHaveLength(1);
+    } finally {
+      await rm(rootDir, { recursive: true, force: true });
+    }
+  });
+
+  it('does not invoke npm publish when the build command fails', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'pp-runner-build-failure-'));
+    const runner = createFakeRunner();
+
+    try {
+      await makePackageFixture(rootDir, { name: '@example/pkg', version: '1.2.3' });
+      runner.setFailAfter(0);
+
+      expect(() => publishPackage({ cwd: rootDir, version: '1.2.3', dryRun: true, runner })).toThrowError(
+        /fake: pnpm build failed/,
+      );
+      expect(runner.runs.some((entry) => entry.kind === 'run')).toBe(false);
+    } finally {
+      await rm(rootDir, { recursive: true, force: true });
+    }
+  });
+
+  it('wraps runner errors that leak the OTP into a redacted message', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'pp-runner-redaction-'));
+    const runner: ProcessRunner = {
+      run() {
+        throw new Error('failed otp=123456 during publish');
+      },
+      runShell() {
+        throw new Error('build failed');
+      },
+    };
+
+    try {
+      await makePackageFixture(rootDir, { name: '@example/pkg', version: '1.2.3' });
+
+      expect(() =>
+        publishPackage({ cwd: rootDir, version: '1.2.3', otp: '123456', skipBuild: true, dryRun: true, runner }),
+      ).toThrowError(/npm publish: failed otp=\[redacted\] during publish/);
+    } finally {
+      await rm(rootDir, { recursive: true, force: true });
+    }
+  });
+
+  it('uses defaultProcessRunner when none is supplied', () => {
+    expect(defaultProcessRunner).toBeDefined();
+    expect(typeof defaultProcessRunner.run).toBe('function');
+    expect(typeof defaultProcessRunner.runShell).toBe('function');
   });
 });
