@@ -98,6 +98,13 @@ function _createMdxContent(props) {
             children: "@repo-toolkit/release-artifact"
           })
         }), ": assemble, verify, and distribute a self-contained CLI release artifact (tarball) from a monorepo."]
+      }), "\n", (0,jsx_runtime.jsxs)(_components.li, {
+        children: [(0,jsx_runtime.jsx)(_components.a, {
+          href: "./confluence",
+          children: (0,jsx_runtime.jsx)(_components.code, {
+            children: "@repo-toolkit/confluence"
+          })
+        }), ": sync a folder of Markdown docs to Confluence pages and attachments (GitHub Action compatible)."]
       }), "\n"]
     }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
       children: ["Package-local ", (0,jsx_runtime.jsx)(_components.code, {
