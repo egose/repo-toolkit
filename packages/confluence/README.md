@@ -142,6 +142,14 @@ attachment-bearing placeholders are created in a single POST with their final
 rendered body; pages with local images or Mermaid blocks are created first and
 have attachments uploaded against their page id, then their body is PUT.
 
+`syncConfluenceToDocs` and the lower-level rewriters depend only on the narrow
+`ConfluenceGateway` and `AttachmentGateway` interfaces (which
+`ConfluenceClient` implements). Supply your own gateway object as `client` and
+the bundled HTTP `username`/`apiToken`/`baseUrl` are no longer required — the
+gateway owns all remote work. Typed fakes implementing the interface are
+accepted by `syncConfluenceToDocs({ client })` without `as unknown` casts.
+`spaceKey` and `parentPageId` remain required even with a custom gateway.
+
 ## GitHub Action usage
 
 The CLI auto-detects the GitHub Actions `INPUT_*` environment when no flags are

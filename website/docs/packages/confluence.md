@@ -307,6 +307,63 @@ const plan = resolveConfluenceSyncPlan({
 await syncConfluenceToDocs({ ...plan, renderHtmlBlocks: false });
 ```
 
+### Custom gateway (typed testing / non-Confluence backends)
+
+`syncConfluenceToDocs` and the lower-level rewriters depend only on the narrow
+`ConfluenceGateway` and `AttachmentGateway` interfaces — they never read
+`ConfluenceClient` directly. Supply your own object whose method shapes match
+the interface and the bundled HTTP credentials/baseUrl are no longer required:
+the gateway owns all remote work.
+
+```ts
+import { syncConfluenceToDocs, type ConfluenceGateway } from '@repo-toolkit/confluence';
+
+// A typed fake: no `as unknown as ConfluenceClient` cast needed.
+const fake: ConfluenceGateway = {
+  async getSpaceIdByKey() {
+    return 'SPACE';
+  },
+  async getPagesByTitle(_spaceId, _title) {
+    return [];
+  },
+  async getPage() {
+    throw new Error('not stubbed');
+  },
+  async createPage(input) {
+    return {
+      /* … */
+    } as never;
+  },
+  async updatePage(input) {
+    return {
+      /* … */
+    } as never;
+  },
+  async getAttachments() {
+    return [];
+  },
+  async uploadAttachment() {
+    throw new Error('not stubbed');
+  },
+  async updateAttachmentData() {
+    throw new Error('not stubbed');
+  },
+};
+
+await syncConfluenceToDocs({
+  folder: 'docs',
+  spaceKey: 'ENG',
+  parentPageId: '123',
+  client: fake, // ← skips username / apiToken / baseUrl checks
+  log: () => {},
+});
+```
+
+`spaceKey` and `parentPageId` remain required even with a custom gateway —
+the orchestrator needs them to drive the gateway, and a custom client doesn't
+know which Confluence space or parent page to publish under. `--dry-run`
+remains credentials-free (no gateway needed).
+
 ### Exports
 
 - `syncConfluenceToDocs(options)` — walk the doc tree and sync pages,
@@ -314,18 +371,23 @@ await syncConfluenceToDocs({ ...plan, renderHtmlBlocks: false });
 - `resolveConfluenceSyncPlan(options)` — resolve and validate the sync plan
   (`ConfluenceSyncPlan`) without starting a sync. Useful for previewing
   defaults.
-- `ConfluenceClient`, `ConfluenceApiError` — the HTTP client used by the
-  sync. Page/space/attachment-list calls use the v2 API; binary attachment
-  uploads use the v1 multipart endpoint with `X-Atlassian-Token: no-check`
-  because v2 has no multipart contract yet.
+- `ConfluenceClient`, `ConfluenceApiError` — the bundled HTTP client. Page/
+  space/attachment-list calls use the v2 API; binary attachment uploads use
+  the v1 multipart endpoint with `X-Atlassian-Token: no-check` because v2 has
+  no multipart contract yet.
+- `ConfluenceGateway`, `AttachmentGateway` — narrow remote-mutation
+  interfaces that `ConfluenceClient` implements. Both the orchestrator and
+  the image/mermaid rewriters depend only on these contracts, so a typed fake
+  implementing the gateway is accepted by `syncConfluenceToDocs({ client })`
+  and the rewriters without `as unknown as` casts. Supplying `client` skips
+  the bundled-client credential/baseUrl required-field checks.
 - `markdownToStorage(markdown, options)` — the standalone Markdown →
   Confluence storage-format converter. Returns `{ html, mermaidBlocks }`.
-- `renderHtmlBlock`, `renderCodeBlock`, `renderInline`, `escapeXmlAttribute`,
-  `escapeAttachmentFilename`, `isRemoteUrl`, `isAllowedUrl`,
-  `LOCAL_IMAGE_PLACEHOLDER_RE` — converter building blocks for reuse in tests
-  or custom pipelines. `isAllowedUrl` exposes the inline link/image URL
-  allowlist (`http`/`https`/`mailto`/`tel` + scheme-less relative) so custom
-  pipelines can validate against the same policy.
+- `escapeXmlAttribute`, `escapeAttachmentFilename`, `isRemoteUrl`,
+  `isAllowedUrl` — converter building blocks for custom pipelines.
+  `isAllowedUrl` exposes the inline link/image URL allowlist
+  (`http`/`https`/`mailto`/`tel` + scheme-less relative) so custom pipelines
+  can validate against the same policy.
 - `rewriteImagesToAttachments`, `rewriteMermaidBlocks` — second-pass rewriters
   that turn `<ac:image data-local-src>` placeholders into attachment macros
   and mermaid placeholders into `mmdc`-rendered SVG attachments.

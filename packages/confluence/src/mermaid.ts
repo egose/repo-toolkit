@@ -3,7 +3,7 @@ import { mkdtemp, rm, writeFile, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import type { ConfluenceClient, Attachment } from './confluence-client';
+import type { AttachmentGateway, Attachment } from './confluence-client';
 import {
   escapeAttachmentFilename,
   escapeXmlAttribute,
@@ -63,7 +63,7 @@ export async function rewriteMermaidBlocks(
   html: string,
   blocks: MermaidBlock[],
   pageId: string,
-  client: ConfluenceClient,
+  client: AttachmentGateway,
   options: MermaidRewriteOptions = {},
 ): Promise<MermaidRewriteResult> {
   const fallbacks: string[] = [];
@@ -197,7 +197,7 @@ export async function preflightMermaidBlocks(
   html: string,
   blocks: MermaidBlock[],
   pageId: string,
-  client: ConfluenceClient,
+  client: AttachmentGateway,
   options: MermaidRewriteOptions = {},
 ): Promise<MermaidPreflightResult> {
   const fallbacks: string[] = [];

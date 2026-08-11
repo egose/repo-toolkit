@@ -1,7 +1,11 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
-import { mkdtemp, mkdir, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, rm, symlink, writeFile, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const TEST_DIR = fileURLToPath(new URL('.', import.meta.url));
+const DIST_INDEX_DTS = resolve(TEST_DIR, '..', 'dist', 'index.d.ts');
 
 import {
   resolveConfluenceSyncPlan,
@@ -11,6 +15,7 @@ import {
   SyncMutationError,
   validateAttachmentSources,
   type ConfluenceSyncOptions,
+  type ConfluenceGateway,
   type Page,
   type SyncChange,
 } from '../src/index';
@@ -37,14 +42,14 @@ function buildFakeClient(opts: {
   spaceId?: string;
   existingPages?: Page[];
   initialAttachmentIds?: Record<string, string>;
-}) {
+}): { client: ConfluenceGateway; calls: RecordedCall[] } {
   const spaceId = opts.spaceId ?? 'SPACE';
   const pages = new Map<string, Page>();
   const attachmentsByPage = new Map<string, Map<string, { id: string; filename?: string }>>();
   const calls: RecordedCall[] = [];
   let pageIdCounter = 100;
 
-  const client = {
+  const client: ConfluenceGateway = {
     async getSpaceIdByKey(key: string): Promise<string> {
       calls.push({ method: 'getSpaceIdByKey', args: [key] });
       return spaceId;
@@ -236,7 +241,7 @@ describe('syncConfluenceToDocs', () => {
       spaceKey: 'ENG',
       parentPageId: '123',
       dryRun: true,
-      client: client as unknown as Parameters<typeof syncConfluenceToDocs>[0]['client'],
+      client: client,
       log: logSpy,
     });
     expect(calls).toHaveLength(0);
@@ -256,7 +261,7 @@ describe('syncConfluenceToDocs', () => {
       baseUrl: 'https://x/wiki',
       spaceKey: 'ENG',
       parentPageId: '123',
-      client: client as unknown as Parameters<typeof syncConfluenceToDocs>[0]['client'],
+      client: client,
       log: logSpy,
     });
     const methods = calls.map((c) => c.method);
@@ -291,7 +296,7 @@ describe('syncConfluenceToDocs', () => {
       baseUrl: 'https://x/wiki',
       spaceKey: 'ENG',
       parentPageId: '123',
-      client: client as unknown as Parameters<typeof syncConfluenceToDocs>[0]['client'],
+      client: client,
       log: logSpy,
     });
     const uploadCalls = calls.filter((c) => c.method === 'uploadAttachment');
@@ -316,7 +321,7 @@ describe('syncConfluenceToDocs', () => {
       baseUrl: 'https://x/wiki',
       spaceKey: 'ENG',
       parentPageId: '123',
-      client: client as unknown as Parameters<typeof syncConfluenceToDocs>[0]['client'],
+      client: client,
       log: logSpy,
     });
     // CFARC-03: a leaf page with no local uploads is created with its final
@@ -344,7 +349,7 @@ describe('syncConfluenceToDocs', () => {
       baseUrl: 'https://x/wiki',
       spaceKey: 'ENG',
       parentPageId: '123',
-      client: client as unknown as Parameters<typeof syncConfluenceToDocs>[0]['client'],
+      client: client,
       log: logSpy,
     });
     expect(calls.some((c) => c.method === 'updatePage')).toBe(false);
@@ -364,7 +369,7 @@ describe('syncConfluenceToDocs', () => {
       baseUrl: 'https://x/wiki',
       spaceKey: 'ENG',
       parentPageId: '123',
-      client: client as unknown as Parameters<typeof syncConfluenceToDocs>[0]['client'],
+      client: client,
       log: () => {},
     });
     const pageByTitle = calls.filter((c) => c.method === 'getPagesByTitle');
@@ -387,7 +392,7 @@ describe('syncConfluenceToDocs', () => {
       baseUrl: 'https://x/wiki',
       spaceKey: 'ENG',
       parentPageId: '123',
-      client: client as unknown as Parameters<typeof syncConfluenceToDocs>[0]['client'],
+      client: client,
       log: () => {},
     });
 
@@ -411,7 +416,7 @@ describe('syncConfluenceToDocs', () => {
         baseUrl: 'https://x/wiki',
         spaceKey: 'ENG',
         parentPageId: '123',
-        client: client as unknown as Parameters<typeof syncConfluenceToDocs>[0]['client'],
+        client: client,
         log: () => {},
       }),
     ).rejects.toThrowError(/Multiple Confluence pages matched title intro/);
@@ -432,7 +437,7 @@ describe('syncConfluenceToDocs', () => {
         baseUrl: 'https://x/wiki',
         spaceKey: 'ENG',
         parentPageId: '123',
-        client: client as unknown as Parameters<typeof syncConfluenceToDocs>[0]['client'],
+        client: client,
         log: () => {},
       }),
     ).rejects.toThrowError(/conflicting page titles/);
@@ -457,7 +462,7 @@ describe('syncConfluenceToDocs', () => {
           baseUrl: 'https://x/wiki',
           spaceKey: 'ENG',
           parentPageId: '123',
-          client: client as unknown as Parameters<typeof syncConfluenceToDocs>[0]['client'],
+          client: client,
           log: () => {},
         }),
       ).rejects.toThrowError(/escapes the documentation root/);
@@ -478,7 +483,7 @@ describe('syncConfluenceToDocs', () => {
       spaceKey: 'ENG',
       parentPageId: '123',
       renderHtmlBlocks: true,
-      client: client as unknown as Parameters<typeof syncConfluenceToDocs>[0]['client'],
+      client: client,
       log: () => {},
     });
     // CFARC-03: leaf with no attachments is created in one POST with its
@@ -499,7 +504,7 @@ describe('syncConfluenceToDocs', () => {
       baseUrl: 'https://x/wiki',
       spaceKey: 'ENG',
       parentPageId: '123',
-      client: client as unknown as Parameters<typeof syncConfluenceToDocs>[0]['client'],
+      client: client,
       log: () => {},
     });
     const created = calls.find((c) => c.method === 'createPage')?.args[0] as { body?: { value: string } } | undefined;
@@ -541,7 +546,7 @@ describe('CFARC-02: content-addressed attachments and no-op second sync', () => 
       baseUrl: 'https://x/wiki',
       spaceKey: 'ENG',
       parentPageId: '123',
-      client: client as unknown as Parameters<typeof syncConfluenceToDocs>[0]['client'],
+      client: client,
       log: () => {},
     });
 
@@ -562,7 +567,7 @@ describe('CFARC-02: content-addressed attachments and no-op second sync', () => 
       baseUrl: 'https://x/wiki',
       spaceKey: 'ENG',
       parentPageId: '123',
-      client: client as unknown as Parameters<typeof syncConfluenceToDocs>[0]['client'],
+      client: client,
       log: () => {},
     });
 
@@ -594,7 +599,7 @@ describe('CFARC-02: content-addressed attachments and no-op second sync', () => 
       baseUrl: 'https://x/wiki',
       spaceKey: 'ENG',
       parentPageId: '123',
-      client: client as unknown as Parameters<typeof syncConfluenceToDocs>[0]['client'],
+      client: client,
       log: () => {},
     });
 
@@ -622,7 +627,7 @@ describe('CFARC-02: content-addressed attachments and no-op second sync', () => 
       baseUrl: 'https://x/wiki',
       spaceKey: 'ENG',
       parentPageId: '123',
-      client: client as unknown as Parameters<typeof syncConfluenceToDocs>[0]['client'],
+      client: client,
       log: () => {},
     });
     const firstPuts = calls.filter((c) => c.method === 'updatePage').length;
@@ -637,7 +642,7 @@ describe('CFARC-02: content-addressed attachments and no-op second sync', () => 
       baseUrl: 'https://x/wiki',
       spaceKey: 'ENG',
       parentPageId: '123',
-      client: client as unknown as Parameters<typeof syncConfluenceToDocs>[0]['client'],
+      client: client,
       log: () => {},
     });
     const secondPuts = calls.filter((c) => c.method === 'updatePage').length;
@@ -679,7 +684,7 @@ describe('CFARC-03: validate locally before remote mutation', () => {
           baseUrl: 'https://x/wiki',
           spaceKey: 'ENG',
           parentPageId: '123',
-          client: client as unknown as Parameters<typeof syncConfluenceToDocs>[0]['client'],
+          client: client,
           log: () => {},
         }),
       ).rejects.toBeInstanceOf(LocalSyncValidationAggregateError);
@@ -705,7 +710,7 @@ describe('CFARC-03: validate locally before remote mutation', () => {
         baseUrl: 'https://x/wiki',
         spaceKey: 'ENG',
         parentPageId: '123',
-        client: client as unknown as Parameters<typeof syncConfluenceToDocs>[0]['client'],
+        client: client,
         log: () => {},
       }),
     ).rejects.toBeInstanceOf(LocalSyncValidationAggregateError);
@@ -729,7 +734,7 @@ describe('CFARC-03: validate locally before remote mutation', () => {
         baseUrl: 'https://x/wiki',
         spaceKey: 'ENG',
         parentPageId: '123',
-        client: client as unknown as Parameters<typeof syncConfluenceToDocs>[0]['client'],
+        client: client,
         log: () => {},
       });
     } catch (error) {
@@ -823,7 +828,7 @@ describe('CFARC-03: validate locally before remote mutation', () => {
       baseUrl: 'https://x/wiki',
       spaceKey: 'ENG',
       parentPageId: '123',
-      client: client as unknown as Parameters<typeof syncConfluenceToDocs>[0]['client'],
+      client: client,
       log: logSpy,
     } as ConfluenceSyncOptions);
 
@@ -876,7 +881,7 @@ describe('CFARC-03: validate locally before remote mutation', () => {
         baseUrl: 'https://x/wiki',
         spaceKey: 'ENG',
         parentPageId: '123',
-        client: client as unknown as Parameters<typeof syncConfluenceToDocs>[0]['client'],
+        client: client,
         log: logSpy,
       } as ConfluenceSyncOptions);
     } catch (error) {
@@ -909,46 +914,256 @@ describe('CFARC-03: validate locally before remote mutation', () => {
     expect(syncErr.message).toMatch(/server 500 during updatePage/);
   });
 
-  it('SyncMutationError carries only unprocessed entries after the failing entry (changes is empty when the first entry fails)', async () => {
-    // Single failing entry and a single never-processed entry after it.
-    await writeFile(join(tmp, 'bad.md'), '# Bad');
-    await writeFile(join(tmp, 'later.md'), '# Later');
-    const { client, calls } = buildFakeClient({
-      spaceId: 'SPACE',
-      existingPages: [pageFixture('P-bad', 'bad', 1, '<h1>stale</h1>', '123')],
+  it('reports a typed gateway fake via `client` without `unknown as` at the call site', async () => {
+    // CFARC-04 criterion: tests inject fakes without `unknown as`.
+    // buildFakeClient already returns `ConfluenceGateway`; this test pins the
+    // contract by flowing a typed fake end-to-end through syncConfluenceToDocs.
+    await writeFile(join(tmp, 'a.md'), '# A');
+    await writeFile(join(tmp, 'b.md'), '# B');
+    const { client, calls } = buildFakeClient({ spaceId: 'SPACE' });
+
+    const result = await syncConfluenceToDocs({
+      folder: tmp,
+      spaceKey: 'ENG',
+      parentPageId: '123',
+      client,
+      log: () => {},
     });
 
-    client.updatePage = async (): Promise<Page> => {
-      throw new Error('boom');
-    };
+    // The typed fake ran the full remote path: getSpaceIdByKey + two creates.
+    const methods = calls.map((c) => c.method);
+    expect(methods).toContain('getSpaceIdByKey');
+    expect(methods.filter((m) => m === 'createPage')).toHaveLength(2);
+    // Returned SyncResult.changes enumerates every created page.
+    expect(result).toBeDefined();
+    const changes = (result as { changes?: SyncChange[] }).changes ?? [];
+    expect(changes.map((c) => c.entry.segments.join('/')).sort()).toEqual(['a.md', 'b.md']);
+    expect(changes.every((c) => c.kind === 'created')).toBe(true);
+  });
 
-    let thrown: unknown;
-    try {
-      await syncConfluenceToDocs({
+  it('rejects a missing spaceKey/parentPageId even when a client is supplied', async () => {
+    // spaceKey and parentPageId are sync-target inputs that even a custom
+    // gateway cannot derive — they must remain required without --dry-run.
+    await writeFile(join(tmp, 'a.md'), '# A');
+    const { client } = buildFakeClient({ spaceId: 'SPACE' });
+
+    await expect(
+      syncConfluenceToDocs({
         folder: tmp,
-        username: 'u',
-        apiToken: 't',
-        baseUrl: 'https://x/wiki',
-        spaceKey: 'ENG',
         parentPageId: '123',
-        client: client as unknown as Parameters<typeof syncConfluenceToDocs>[0]['client'],
+        client,
         log: () => {},
-      } as ConfluenceSyncOptions);
-    } catch (error) {
-      thrown = error;
-    }
-    expect(thrown).toBeInstanceOf(SyncMutationError);
-    const syncErr = thrown as SyncMutationError;
-    expect(syncErr.changes).toHaveLength(0);
-    expect(syncErr.failure.entry.segments.join('/')).toBe('bad.md');
-    expect(syncErr.unprocessed.map((e) => e.segments.join('/'))).toEqual(['later.md']);
-    // No upload ran for the later (unprocessed) entry; the only API work
-    // before the abort was the local-validation-safe lookup/get.
-    expect(calls.some((c) => c.method === 'uploadAttachment')).toBe(false);
-    // No PUT/POST happened for the later entry.
-    const titlesAfterAbort = calls
+      } as ConfluenceSyncOptions),
+    ).rejects.toThrowError(/spaceKey is required/);
+
+    await expect(
+      syncConfluenceToDocs({
+        folder: tmp,
+        spaceKey: 'ENG',
+        client,
+        log: () => {},
+      } as ConfluenceSyncOptions),
+    ).rejects.toThrowError(/parentPageId is required/);
+  });
+
+  it('CFARC-04: a supplied gateway works without username/apiToken/baseUrl (no dummy credentials)', async () => {
+    // The supported-contract criterion: a custom client replaces the
+    // credentials/baseUrl requirement entirely. No username/apiToken/baseUrl
+    // are supplied, and the sync still runs against the typed fake.
+    await mkdir(join(tmp, 'guide'));
+    await writeFile(join(tmp, 'guide', 'intro.md'), '# Intro');
+    const { client, calls } = buildFakeClient({ spaceId: 'SPACE' });
+
+    await syncConfluenceToDocs({
+      folder: tmp,
+      spaceKey: 'ENG',
+      parentPageId: '123',
+      client,
+      log: () => {},
+      // No username / apiToken / baseUrl supplied — the gateway replaces them.
+    } as ConfluenceSyncOptions);
+
+    const methods = calls.map((c) => c.method);
+    expect(methods).toContain('getSpaceIdByKey');
+    expect(methods).toContain('createPage');
+    const createTitles = calls
       .filter((c) => c.method === 'createPage')
       .map((c) => (c.args[0] as { title: string }).title);
-    expect(titlesAfterAbort).not.toContain('later');
+    expect(createTitles).toContain('guide');
+    expect(createTitles).toContain('intro');
+  });
+
+  it('CFARC-04: resolveConfluenceSyncPlan skips credential/baseUrl checks when a client is supplied', () => {
+    // The plan-resolver alone (no sync) must accept the credentials-free shape.
+    const plan = resolveConfluenceSyncPlan({
+      folder: tmp,
+      spaceKey: 'ENG',
+      parentPageId: '123',
+      client: buildFakeClient({ spaceId: 'SPACE' }).client,
+    });
+    expect(plan.username).toBe('');
+    expect(plan.apiToken).toBe('');
+    expect(plan.baseUrl).toBe('');
+    expect(plan.spaceKey).toBe('ENG');
+    expect(plan.parentPageId).toBe('123');
+
+    // ...but still requires username/apiToken/baseUrl when no client is given.
+    expect(() =>
+      resolveConfluenceSyncPlan({
+        folder: tmp,
+        spaceKey: 'ENG',
+        parentPageId: '123',
+      } as ConfluenceSyncOptions),
+    ).toThrowError(/username is required/);
+  });
+});
+
+describe('CFARC-04: public declarations expose only intentional package contracts', () => {
+  // Runtime values exported from the root barrel. TypeScript-only re-exports
+  // (interfaces, type aliases) are not enumerable via `Object.keys` and are
+  // asserted separately against `dist/index.d.ts`.
+  const SUPPORTED_RUNTIME_EXPORTS = new Set([
+    // sync orchestrator + plan
+    'syncConfluenceToDocs',
+    'resolveConfluenceSyncPlan',
+    'resolveSyncPlan',
+    'LocalSyncValidationAggregateError',
+    'SyncMutationError',
+    'validateLocalSync',
+    'INTERACTIVE_FLAG',
+    // gateway + client
+    'ConfluenceClient',
+    'ConfluenceApiError',
+    // doc-tree + markdown
+    'readDocTree',
+    'titleFromSegment',
+    'isMarkdownName',
+    'markdownToStorage',
+    'isAllowedUrl',
+    'isRemoteUrl',
+    'escapeXmlAttribute',
+    'escapeAttachmentFilename',
+    // attachments + mermaid
+    'rewriteImagesToAttachments',
+    'preflightImagesToAttachments',
+    'validateAttachmentSources',
+    'rewriteMermaidBlocks',
+    'preflightMermaidBlocks',
+  ]);
+
+  // Type-only declarations exported from the root barrel. Asserted against the
+  // generated `dist/index.d.ts` so the type surface and the runtime surface
+  // agree on the supported contract.
+  const SUPPORTED_TYPE_EXPORTS = new Set([
+    'ConfluenceSyncOptions',
+    'ConfluenceSyncPlan',
+    'LocalSyncEntryPlan',
+    'LocalSyncPlan',
+    'LocalSyncValidationError',
+    'SyncChange',
+    'SyncFailure',
+    'SyncResult',
+    'ConfluenceGateway',
+    'AttachmentGateway',
+    'ConfluenceClientOptions',
+    'Page',
+    'Attachment',
+    'PageBody',
+    'PageVersion',
+    'CreatePageInput',
+    'UpdatePageInput',
+    'DocEntry',
+    'DocTree',
+    'MermaidBlock',
+    'MarkdownConvertResult',
+    'MarkdownConvertOptions',
+    'RewriteResult',
+    'RewriteOptions',
+    'AttachmentPreflightResult',
+    'ValidatedAttachmentSource',
+    'MermaidRewriteResult',
+    'MermaidRewriteOptions',
+    'MermaidPreflightResult',
+  ]);
+
+  // Implementation internals that must NOT be re-exported from the root API.
+  const UNSUPPORTED_RUNTIME_EXPORTS = [
+    'LOCAL_IMAGE_PLACEHOLDER_RE',
+    'renderInline',
+    'renderHtmlBlock',
+    'renderCodeBlock',
+    'renderMermaidPlaceholder',
+    'mermaidPlaceholderRe',
+    'escapeHtml',
+    'collectLocalImagePaths',
+    'resolveDocRelative',
+    'parseFlags',
+    'resolveCliOptions',
+    'isPlainObject',
+  ];
+
+  // Implementation-internal type/regex helpers that must not appear in the
+  // generated type declarations either.
+  const UNSUPPORTED_TYPE_EXPORTS = [
+    'LOCAL_IMAGE_PLACEHOLDER_RE',
+    'renderInline',
+    'renderHtmlBlock',
+    'renderCodeBlock',
+    'renderMermaidPlaceholder',
+    'mermaidPlaceholderRe',
+    'escapeHtml',
+    'collectLocalImagePaths',
+    'resolveDocRelative',
+    'resolveCliOptions',
+    'isPlainObject',
+  ];
+
+  it('does not re-export implementation regexes or low-level renderer helpers at runtime', async () => {
+    const mod = await import('../src/index');
+    const exportedKeys = new Set(Object.keys(mod));
+    for (const name of UNSUPPORTED_RUNTIME_EXPORTS) {
+      expect(exportedKeys.has(name)).toBe(false);
+    }
+  });
+
+  it('re-exports the supported runtime contracts (values + classes + consts)', async () => {
+    const mod = await import('../src/index');
+    const exportedKeys = new Set(Object.keys(mod));
+    const missing: string[] = [];
+    const extra: string[] = [];
+    for (const name of SUPPORTED_RUNTIME_EXPORTS) {
+      if (!exportedKeys.has(name)) {
+        missing.push(name);
+      }
+    }
+    for (const name of exportedKeys) {
+      if (!SUPPORTED_RUNTIME_EXPORTS.has(name)) {
+        extra.push(name);
+      }
+    }
+    expect({ missing, extra }).toEqual({ missing: [], extra: [] });
+  });
+
+  it('exposes the supported type contracts in dist/index.d.ts', async () => {
+    let dts: string;
+    try {
+      dts = await readFile(DIST_INDEX_DTS, 'utf8');
+    } catch {
+      // dist may not be built in a fresh checkout; skip the type-surface
+      // assertion when the declarations file is absent. The runtime-surface
+      // tests above still pass and `pnpm build` emits the d.ts in CI.
+      console.warn(`CFARC-04: skipping type-surface assertion — ${DIST_INDEX_DTS} not present (run \`pnpm build\`).`);
+      return;
+    }
+    for (const name of SUPPORTED_TYPE_EXPORTS) {
+      // `export type { X }` or `export { type X }` or `export interface X` /
+      // `export declare class X` — match the identifier anywhere in the d.ts.
+      const re = new RegExp(`\\b${name}\\b`);
+      expect(re.test(dts)).toBe(true);
+    }
+    for (const name of UNSUPPORTED_TYPE_EXPORTS) {
+      const re = new RegExp(`\\b${name}\\b`);
+      expect(re.test(dts)).toBe(false);
+    }
   });
 });

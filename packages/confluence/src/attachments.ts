@@ -1,7 +1,7 @@
 import { existsSync, lstatSync, realpathSync } from 'node:fs';
 import { normalize, isAbsolute, relative, resolve } from 'node:path';
 
-import type { ConfluenceClient, Attachment } from './confluence-client';
+import type { AttachmentGateway, Attachment } from './confluence-client';
 import { escapeAttachmentFilename, escapeXmlAttribute, isRemoteUrl, LOCAL_IMAGE_PLACEHOLDER_RE } from './markdown';
 import { buildStableName, shortHashFile } from './content-hash';
 
@@ -81,7 +81,7 @@ export function validateAttachmentSources(html: string, options: RewriteOptions)
 export async function rewriteImagesToAttachments(
   html: string,
   pageId: string,
-  client: ConfluenceClient,
+  client: AttachmentGateway,
   options: RewriteOptions,
 ): Promise<RewriteResult> {
   const uploaded: { src: string; attachment: Attachment }[] = [];
@@ -103,7 +103,7 @@ export async function rewriteImagesToAttachments(
 export async function preflightImagesToAttachments(
   html: string,
   pageId: string,
-  client: ConfluenceClient,
+  client: AttachmentGateway,
   options: RewriteOptions,
 ): Promise<PreflightResult> {
   const existing = await client.getAttachments(pageId);
@@ -147,7 +147,7 @@ export async function preflightImagesToAttachments(
 async function resolvePlaceholders(
   html: string,
   pageId: string,
-  client: ConfluenceClient,
+  client: AttachmentGateway,
   options: RewriteOptions,
   uploaded: { src: string; attachment: Attachment }[],
 ): Promise<string> {

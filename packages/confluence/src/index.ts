@@ -1,13 +1,22 @@
 import { readFileSync } from 'node:fs';
 import { dirname, isAbsolute, resolve } from 'node:path';
 
-import { parseFlags, type FlagSpec, resolveCliOptions, isPlainObject } from '@repo-toolkit/publish-package';
-export { parseFlags, type FlagSpec, resolveCliOptions, isPlainObject };
+import type { FlagSpec } from '@repo-toolkit/publish-package';
 
 import { ConfluenceClient, ConfluenceApiError } from './confluence-client';
-import type { Page } from './confluence-client';
+import type { ConfluenceGateway, Page } from './confluence-client';
 export { ConfluenceClient, ConfluenceApiError };
-export type { ConfluenceClientOptions, Page, Attachment, PageBody, PageVersion } from './confluence-client';
+export type {
+  ConfluenceGateway,
+  AttachmentGateway,
+  ConfluenceClientOptions,
+  Page,
+  Attachment,
+  PageBody,
+  PageVersion,
+  CreatePageInput,
+  UpdatePageInput,
+} from './confluence-client';
 
 import { readDocTree, titleFromSegment, isMarkdownName, type DocEntry } from './files';
 export { readDocTree, titleFromSegment, isMarkdownName };
@@ -15,24 +24,13 @@ export type { DocEntry, DocTree } from './files';
 
 import {
   markdownToStorage,
-  escapeAttachmentFilename,
-  escapeXmlAttribute,
   isRemoteUrl,
   isAllowedUrl,
+  escapeXmlAttribute,
+  escapeAttachmentFilename,
   LOCAL_IMAGE_PLACEHOLDER_RE,
-  renderInline,
-  renderHtmlBlock,
 } from './markdown';
-export {
-  markdownToStorage,
-  escapeAttachmentFilename,
-  escapeXmlAttribute,
-  isRemoteUrl,
-  isAllowedUrl,
-  LOCAL_IMAGE_PLACEHOLDER_RE,
-  renderInline,
-  renderHtmlBlock,
-};
+export { markdownToStorage, isRemoteUrl, isAllowedUrl, escapeXmlAttribute, escapeAttachmentFilename };
 export type { MermaidBlock, MarkdownConvertResult, MarkdownConvertOptions } from './markdown';
 
 import { rewriteImagesToAttachments, preflightImagesToAttachments, validateAttachmentSources } from './attachments';
@@ -86,8 +84,14 @@ export interface ConfluenceSyncOptions {
    * API mutation calls. Credentials are not required under `--dry-run`.
    */
   dryRun?: boolean;
-  /** Custom Confluence client instance (testing). When supplied, `username`/`apiToken`/`baseUrl` are ignored. */
-  client?: ConfluenceClient;
+  /**
+   * Custom Confluence gateway. Any object whose method shapes match
+   * {@link ConfluenceGateway} is accepted (typed fakes — no `unknown` cast).
+   * When supplied, `username`/`apiToken`/`baseUrl`/`spaceKey`/`parentPageId`
+   * are ignored by the orchestrator and the credential/baseUrl required-field
+   * checks are skipped — the gateway owns all remote work.
+   */
+  client?: ConfluenceGateway;
   /** Logger sink; defaults to `console`. */
   log?: (message: string) => void;
 }
@@ -264,15 +268,24 @@ export function resolveConfluenceSyncPlan(options: ConfluenceSyncOptions = {}): 
   if (!options.folder) {
     throw new Error('folder is required');
   }
+  const hasGateway = options.client !== undefined;
+  // A supplied gateway replaces the credentials/baseUrl contract: the
+  // orchestrator drives remote work through `options.client`, so the network
+  // credentials that the bundled ConfluenceClient would need are not required.
+  // `spaceKey` and `parentPageId` are sync-target inputs — even a custom
+  // gateway doesn't know which space or parent page to publish under — so
+  // they remain required unless `--dry-run` is set.
   if (!options.dryRun) {
-    if (!options.username) {
-      throw new Error('username is required');
-    }
-    if (!options.apiToken) {
-      throw new Error('apiToken is required');
-    }
-    if (!options.baseUrl) {
-      throw new Error('baseUrl is required');
+    if (!hasGateway) {
+      if (!options.username) {
+        throw new Error('username is required');
+      }
+      if (!options.apiToken) {
+        throw new Error('apiToken is required');
+      }
+      if (!options.baseUrl) {
+        throw new Error('baseUrl is required');
+      }
     }
     if (!options.spaceKey) {
       throw new Error('spaceKey is required');
@@ -328,7 +341,7 @@ export async function syncConfluenceToDocs(options: ConfluenceSyncOptions = {}):
     return;
   }
 
-  const client =
+  const client: ConfluenceGateway =
     options.client ??
     new ConfluenceClient({
       baseUrl: plan.baseUrl,
@@ -358,7 +371,7 @@ export async function syncConfluenceToDocs(options: ConfluenceSyncOptions = {}):
 async function syncEntry(
   entryPlan: LocalSyncEntryPlan,
   plan: ConfluenceSyncPlan,
-  client: ConfluenceClient,
+  client: ConfluenceGateway,
   cache: PageTitleCache,
   log: (message: string) => void,
   changes: SyncChange[],
@@ -459,9 +472,9 @@ async function syncEntry(
 class PageTitleCache {
   private readonly cache = new Map<string, { id: string }>();
   private readonly spaceId: string;
-  private readonly client: ConfluenceClient;
+  private readonly client: ConfluenceGateway;
 
-  constructor(spaceId: string, client: ConfluenceClient) {
+  constructor(spaceId: string, client: ConfluenceGateway) {
     this.spaceId = spaceId;
     this.client = client;
   }
@@ -571,7 +584,7 @@ async function predictBody(
   html: string,
   mermaidBlocks: ReadonlyArray<import('./markdown').MermaidBlock>,
   pageId: string,
-  client: ConfluenceClient,
+  client: ConfluenceGateway,
   ctx: PredictContext,
 ): Promise<string | null> {
   let predicted = html;

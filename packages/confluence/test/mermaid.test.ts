@@ -4,12 +4,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { markdownToStorage, rewriteMermaidBlocks } from '../src/index';
-import type { ConfluenceClient, Attachment } from '../src/confluence-client';
+import type { AttachmentGateway, Attachment } from '../src/confluence-client';
 import { ConfluenceUploadError } from '../src/confluence-client';
 import { renderMermaidPlaceholder } from '../src/markdown';
 
 function fakeClient(opts: { existingAttachments?: Attachment[] } = {}): {
-  client: ConfluenceClient;
+  client: AttachmentGateway;
   uploads: { pageId: string; file: string; filename?: string }[];
   updates: { pageId: string; attachmentId: string; file: string; filename?: string }[];
   attachmentsByName: Map<string, Attachment>;
@@ -20,7 +20,7 @@ function fakeClient(opts: { existingAttachments?: Attachment[] } = {}): {
   for (const a of opts.existingAttachments ?? []) {
     if (a.filename) attachmentsByName.set(a.filename, a);
   }
-  const client = {
+  const client: AttachmentGateway = {
     async getAttachments(): Promise<Attachment[]> {
       return Array.from(attachmentsByName.values());
     },
@@ -61,7 +61,7 @@ function fakeClient(opts: { existingAttachments?: Attachment[] } = {}): {
       attachmentsByName.set(filename, att);
       return att;
     },
-  } as unknown as ConfluenceClient;
+  };
   return { client, uploads, updates, attachmentsByName };
 }
 
@@ -224,7 +224,7 @@ describe('CFARC-02: insertion-stable content-addressed mermaid names', () => {
     const second = '```mermaid\nflowchart TD\nX-->Y\n```\n\n```mermaid\nflowchart LR\nA-->B\n```';
     const { html: secondHtml, mermaidBlocks: secondBlocks } = markdownToStorage(second);
 
-    const reusedClient = {
+    const reusedClient: AttachmentGateway = {
       async getAttachments(): Promise<Attachment[]> {
         return Array.from(atts1.values());
       },
@@ -248,7 +248,7 @@ describe('CFARC-02: insertion-stable content-addressed mermaid names', () => {
       async updateAttachmentData(): Promise<Attachment> {
         throw new Error('updateAttachmentData should not run for unchanged diagrams');
       },
-    } as unknown as ConfluenceClient;
+    };
 
     const reusedRender = vi.fn(async (_source: string, outFile: string) => {
       await writeFile(outFile, '<svg/>', 'utf8');
@@ -436,7 +436,7 @@ describe('CFSEC-05: bound Mermaid subprocess and upload-error propagation', () =
     );
     const md = '```mermaid\ngraph TD\nA-->B\n```';
     const { html, mermaidBlocks } = markdownToStorage(md);
-    const failing: Pick<ConfluenceClient, 'getAttachments' | 'uploadAttachment' | 'updateAttachmentData'> = {
+    const failing: AttachmentGateway = {
       async getAttachments(): Promise<Attachment[]> {
         return [];
       },
@@ -447,7 +447,7 @@ describe('CFSEC-05: bound Mermaid subprocess and upload-error propagation', () =
         throw new Error('unexpected');
       },
     };
-    const client = failing as unknown as ConfluenceClient;
+    const client: AttachmentGateway = failing;
     await expect(
       rewriteMermaidBlocks(html, mermaidBlocks, 'P1', client, {
         available: true,

@@ -29,6 +29,43 @@ export interface ConfluenceClientOptions {
   maxUploadBytes?: number;
 }
 
+/**
+ * Narrow gateway covering only the attachment-list and binary upload methods the
+ * image/mermaid rewriters need. `ConfluenceClient` implements this interface;
+ * tests inject fakes that implement just these three methods.
+ */
+export interface AttachmentGateway {
+  getAttachments(pageId: string): Promise<Attachment[]>;
+  uploadAttachment(pageId: string, filePath: string, comment?: string, filename?: string): Promise<Attachment>;
+  updateAttachmentData(
+    pageId: string,
+    attachmentId: string,
+    filePath: string,
+    comment?: string,
+    filename?: string,
+  ): Promise<Attachment>;
+}
+
+/**
+ * Narrow remote-mutation boundary consumed by the sync orchestrator and the
+ * image/mermaid rewriters. `ConfluenceClient` implements this interface; tests
+ * may inject any object whose method shapes match (typed fakes — no `unknown`
+ * cast required). Replacing the client also replaces the credentials/baseUrl
+ * requirement: the sync orchestrator relies solely on this gateway for remote
+ * work, so callers that supply their own gateway never need dummy credentials.
+ *
+ * The interface is the supported contract for custom clients: every method
+ * listed here is one the sync actually calls, and the signatures match the v1
+ * multipart + v2 JSON contract the bundled `ConfluenceClient` honors.
+ */
+export interface ConfluenceGateway extends AttachmentGateway {
+  getSpaceIdByKey(spaceKey: string): Promise<string>;
+  getPagesByTitle(spaceId: string, title: string): Promise<Page[]>;
+  getPage(pageId: string): Promise<Page>;
+  createPage(input: CreatePageInput): Promise<Page>;
+  updatePage(input: UpdatePageInput): Promise<Page>;
+}
+
 export interface PageBody {
   representation: 'storage' | 'atlas_doc' | 'wiki' | 'view' | 'export_view';
   value: string;
@@ -120,7 +157,7 @@ export class ConfluenceApiError extends Error {
   }
 }
 
-export class ConfluenceClient {
+export class ConfluenceClient implements ConfluenceGateway {
   private readonly baseUrl: string;
   private readonly baseUrlOrigin: string;
   private readonly authHeader: string;
