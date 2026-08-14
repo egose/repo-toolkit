@@ -50,6 +50,10 @@ export function parseFlags(
   for (let index = 0; index < argv.length; index += 1) {
     let arg = argv[index];
 
+    if (arg === '--' && index === 0) {
+      continue;
+    }
+
     if (arg === '--') {
       const remaining = argv.slice(index + 1);
       if (remaining.length === 0) {
