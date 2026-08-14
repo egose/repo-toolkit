@@ -126,13 +126,18 @@ describe('parseFlags', () => {
     expect(() => parseFlags(['--dry-run=yes'], specs)).toThrowError(/Boolean flag --dry-run does not take a value/);
   });
 
-  it('treats -- as a separator and parses subsequent flags normally', () => {
-    expect(() => parseFlags(['--', '--cwd', '/x'], specs)).toThrowError(/Unknown argument: --cwd/);
+  it('ignores a leading -- script separator and continues parsing flags', () => {
+    const result = parseFlags(['--', '--cwd', '/x'], specs);
+    expect(result?.values.cwd).toBe('/x');
+  });
+
+  it('treats a later -- as a separator in strict mode', () => {
+    expect(() => parseFlags(['--cwd', '/r', '--', '--dry-run'], specs)).toThrowError(/Unknown argument: --dry-run/);
   });
 
   it('collects post-separator args as unknown in non-strict mode', () => {
-    const result = parseFlags(['--', '--cwd', '/x'], specs, { strict: false });
-    expect(result?.unknown).toEqual(['--cwd', '/x']);
+    const result = parseFlags(['--cwd', '/r', '--', '--dry-run'], specs, { strict: false });
+    expect(result?.unknown).toEqual(['--dry-run']);
   });
 
   it('resolves a short boolean alias (-i) to the canonical name', () => {
