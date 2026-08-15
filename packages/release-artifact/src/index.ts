@@ -663,12 +663,21 @@ export function resolveBuildArtifactPlan(options: BuildArtifactOptions): BuildAr
  * command (i.e. contribute a `bin` entry). Only these directories contribute
  * dependencies to the production install so the artifact ships exactly the
  * runtime needed by the bundled CLIs and nothing else.
+ *
+ * Workspace-internal dependencies are resolved from the actual `name` field of
+ * each `package.json` under `packagesRoot` rather than a hardcoded scope, so
+ * the closure is correct for repos using ANY npm scope (not just
+ * `@repo-toolkit/*`). A dependency is treated as internal if its package name
+ * matches one of the discovered workspace packages; its directory is then
+ * visited regardless of whether the bare package name matches the dir name.
  */
 export function collectCommandPackageClosure(
   packagesRoot: string,
   packageDirNames: ReadonlyArray<string>,
   commands: ReadonlyArray<ArtifactCommand>,
 ): string[] {
+  const internalDirByName = resolveInternalPackageMap(packagesRoot, packageDirNames);
+
   const owners = new Set<string>();
   for (const command of commands) {
     owners.add(command.packageDir);
@@ -693,8 +702,8 @@ export function collectCommandPackageClosure(
     }
 
     for (const depName of Object.keys(deps)) {
-      const internalDirName = workspacePackageDirName(depName);
-      if (internalDirName !== null && packageDirNames.includes(internalDirName)) {
+      const internalDirName = internalDirByName.get(depName);
+      if (internalDirName !== undefined && packageDirNames.includes(internalDirName)) {
         visit(internalDirName);
       }
     }
@@ -708,9 +717,45 @@ export function collectCommandPackageClosure(
 }
 
 /**
- * Resolve a workspace-internal package directory name from a dependency name.
- * Internal packages use the `@repo-toolkit/<pkg>` form; the directory name is
+ * Build a `package.json name -> directory name` index for every workspace
+ * package under `packagesRoot`. The index is consulted by the command-package
+ * closure resolver so internal dependencies are recognized regardless of the
+ * npm scope they live under (`@repo-toolkit/*`, `@web-ts-toolkit/*`,
+ * `@example/*`, or any other). Dirs without a `package.json` or a string `name`
+ * field are skipped silently, mirroring the per-package read in
+ * `collectCommandPackageClosure`. This avoids the prior hardcoded
+ * `@repo-toolkit/*` regex, which silently dropped internal deps from
+ * non-`@repo-toolkit` scopes and broke the scaffolded `pnpm-workspace.yaml`.
+ */
+function resolveInternalPackageMap(packagesRoot: string, packageDirNames: ReadonlyArray<string>): Map<string, string> {
+  const map = new Map<string, string>();
+  for (const packageDirName of packageDirNames) {
+    const packageJsonPath = join(packagesRoot, packageDirName, 'package.json');
+    if (!existsSync(packageJsonPath)) {
+      continue;
+    }
+    const packageJson = readJson(packageJsonPath);
+    const packageName = packageJson.name;
+    if (typeof packageName !== 'string' || packageName.length === 0) {
+      continue;
+    }
+    if (!map.has(packageName)) {
+      map.set(packageName, packageDirName);
+    }
+  }
+  return map;
+}
+
+/**
+ * Resolve a workspace-internal package directory name from a dependency name
+ * for the legacy `@repo-toolkit/<pkg>` convention: the directory name is
  * `<pkg>`. External deps return `null`.
+ *
+ * @deprecated This helper hardcodes the `@repo-toolkit/*` scope and is retained
+ * only for backward compatibility with previous public API surface. New
+ * planning code resolves internal packages via `resolveInternalPackageMap`,
+ * which derives the name-to-directory mapping from the actual workspace
+ * `package.json` `name` fields and therefore supports arbitrary scopes.
  */
 export function workspacePackageDirName(depName: string): string | null {
   const match = /^@repo-toolkit\/([A-Za-z0-9][A-Za-z0-9._-]*)$/u.exec(depName);
@@ -1529,8 +1574,8 @@ function copyTree(sourceRoot: string, destinationRoot: string, excludes: Readonl
  * the intersection is computed; if the intersection is empty (e.g. `^1.0.0`
  * vs `^2.0.0`), the build fails with a clear message.
  *
- * Internal `@repo-toolkit/<pkg>` workspace dependencies are kept (so pnpm links
- * the package from `packages/<pkg>` when `pnpm-workspace.yaml` lists it);
+ * Internal workspace dependencies (any npm scope) are kept (so pnpm links
+ * the package from `packages/<dirName>` when `pnpm-workspace.yaml` lists it);
  * conflicts between `workspace:*` and a pinned range are rejected. External
  * deps are merged with intersection detection so an incompatible transitive
  * request fails during planning, not at install time.

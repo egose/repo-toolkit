@@ -1392,6 +1392,97 @@ describe('collectCommandPackageClosure (RAARC-03)', () => {
       collectCommandPackageClosure('/nonexistent', ['a'], [{ name: 'x', packageDir: 'a', entry: 'cli.js' }]),
     ).toEqual(['a']);
   });
+
+  it('walks internal workspace deps whose scraper dir name differs from the bare package name', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'repo-toolkit-closure-asym-'));
+    try {
+      await mkdir(join(rootDir, 'packages', 'cli-a'), { recursive: true });
+      await mkdir(join(rootDir, 'packages', 'shared-thing'), { recursive: true });
+      await writeFile(
+        join(rootDir, 'packages', 'cli-a', 'package.json'),
+        `${JSON.stringify({
+          name: '@web-ts-toolkit/cli-a',
+          dependencies: { '@web-ts-toolkit/shared-thing': 'workspace:*' },
+        })}\n`,
+      );
+      await writeFile(
+        join(rootDir, 'packages', 'shared-thing', 'package.json'),
+        `${JSON.stringify({ name: '@web-ts-toolkit/shared-thing' })}\n`,
+      );
+
+      const closure = collectCommandPackageClosure(
+        join(rootDir, 'packages'),
+        ['cli-a', 'shared-thing'],
+        [{ name: 'cli-a', packageDir: 'cli-a', entry: 'cli.js' }],
+      );
+
+      expect(closure).toEqual(['cli-a', 'shared-thing']);
+    } finally {
+      await rm(rootDir, { recursive: true, force: true });
+    }
+  });
+
+  it('walks internal workspace deps across multiple npm scopes present in the workspace', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'repo-toolkit-closure-multi-scope-'));
+    try {
+      await mkdir(join(rootDir, 'packages', 'cli-a'), { recursive: true });
+      await mkdir(join(rootDir, 'packages', 'shared-b'), { recursive: true });
+      await mkdir(join(rootDir, 'packages', 'shared-c'), { recursive: true });
+      await writeFile(
+        join(rootDir, 'packages', 'cli-a', 'package.json'),
+        `${JSON.stringify({
+          name: '@example/cli-a',
+          dependencies: {
+            '@web-ts-toolkit/shared-b': 'workspace:*',
+            '@repo-toolkit/shared-c': 'workspace:*',
+          },
+        })}\n`,
+      );
+      await writeFile(
+        join(rootDir, 'packages', 'shared-b', 'package.json'),
+        `${JSON.stringify({ name: '@web-ts-toolkit/shared-b' })}\n`,
+      );
+      await writeFile(
+        join(rootDir, 'packages', 'shared-c', 'package.json'),
+        `${JSON.stringify({ name: '@repo-toolkit/shared-c' })}\n`,
+      );
+
+      const closure = collectCommandPackageClosure(
+        join(rootDir, 'packages'),
+        ['cli-a', 'shared-b', 'shared-c'],
+        [{ name: 'cli-a', packageDir: 'cli-a', entry: 'cli.js' }],
+      );
+
+      expect(closure).toEqual(['cli-a', 'shared-b', 'shared-c']);
+    } finally {
+      await rm(rootDir, { recursive: true, force: true });
+    }
+  });
+
+  it('treats a package name not present under packages/ as external even within a recognized scope', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'repo-toolkit-closure-missing-'));
+    try {
+      await mkdir(join(rootDir, 'packages', 'cli-a'), { recursive: true });
+      await writeFile(
+        join(rootDir, 'packages', 'cli-a', 'package.json'),
+        `${JSON.stringify({
+          name: '@repo-toolkit/cli-a',
+          // Points to a name that IS @repo-toolkit/* scoped but no matching dir exists.
+          dependencies: { '@repo-toolkit/missing': 'workspace:*' },
+        })}\n`,
+      );
+
+      const closure = collectCommandPackageClosure(
+        join(rootDir, 'packages'),
+        ['cli-a'],
+        [{ name: 'cli-a', packageDir: 'cli-a', entry: 'cli.js' }],
+      );
+
+      expect(closure).toEqual(['cli-a']);
+    } finally {
+      await rm(rootDir, { recursive: true, force: true });
+    }
+  });
 });
 
 describe('resolveRootFileDestination (RAARC-02)', () => {
