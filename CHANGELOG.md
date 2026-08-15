@@ -1,3 +1,5 @@
+## [0.12.2](https://github.com/egose/repo-toolkit/compare/v0.12.1...v0.12.2) (2026-08-15)
+
 ## [0.12.1](https://github.com/egose/repo-toolkit/compare/v0.12.0...v0.12.1) (2026-08-15)
 
 ### Bug Fixes
