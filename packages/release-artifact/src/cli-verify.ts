@@ -17,6 +17,7 @@ const SPECS: FlagSpec[] = [
   { name: 'help-flag' },
   { name: 'skip-exec', boolean: true },
   { name: 'run-timeout-ms' },
+  { name: 'max-archive-member-count' },
   INTERACTIVE_FLAG,
 ];
 
@@ -37,6 +38,7 @@ Options:
   --help-flag <flag>             Flag passed to each wrapper to confirm it boots (default: --help)
   --skip-exec                    Skip executing wrappers; only check manifest, files, and 'bash -n'
   --run-timeout-ms <ms>          Per-process timeout for external commands (default: 60000)
+  --max-archive-member-count <n> Maximum number of archive members before validation rejects the artifact (default: 20000)
   -i, --interactive              Prompt for missing required values interactively
   -h, --help                     Show this help message
 `);
@@ -58,6 +60,15 @@ function buildOptions(values: Record<string, string>): Partial<VerifyArtifactOpt
       throw new Error(`--run-timeout-ms must be a positive finite number: ${values['run-timeout-ms']}`);
     }
     options.runTimeoutMs = parsed;
+  }
+  if (values['max-archive-member-count']) {
+    const parsed = Number(values['max-archive-member-count']);
+    if (!Number.isFinite(parsed) || parsed <= 0 || !Number.isInteger(parsed)) {
+      throw new Error(
+        `--max-archive-member-count must be a positive finite integer: ${values['max-archive-member-count']}`,
+      );
+    }
+    options.maxArchiveMemberCount = parsed;
   }
 
   return options;

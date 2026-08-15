@@ -20,6 +20,7 @@ import {
   mergeClosureDependencies,
   resolveArtifactPath,
   resolveBuildArtifactPlan,
+  resolveMaxArchiveMemberCount,
   resolveNodeModulesMode,
   resolveRootFileDestination,
   toBinEntries,
@@ -823,6 +824,28 @@ describe('validateReleaseArchive', () => {
       await rm(rootDir, { recursive: true, force: true });
     }
   });
+
+  it('honors maxArchiveMemberCount overrides', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'repo-toolkit-validate-member-limit-'));
+
+    try {
+      await createFixtureWorkspace(rootDir);
+      const plan = buildReleaseArtifact({
+        version: FIXTURE_VERSION,
+        cwd: rootDir,
+        toolName: FIXTURE_TOOL_NAME,
+        includeNodeModules: false,
+        productionNodeModules: false,
+      });
+
+      expect(() => validateReleaseArchive(plan.artifactPath, { maxArchiveMemberCount: 1 })).toThrowError(
+        /Release artifact exceeds the member limit/,
+      );
+      expect(() => validateReleaseArchive(plan.artifactPath, { maxArchiveMemberCount: 100 })).not.toThrow();
+    } finally {
+      await rm(rootDir, { recursive: true, force: true });
+    }
+  }, 30_000);
 });
 
 describe('verifyExtractedArtifact', () => {
@@ -2045,6 +2068,23 @@ describe('resolveBuildArtifactPlan with deprecated boolean combinations (RAARC-0
     } finally {
       await rm(rootDir, { recursive: true, force: true });
     }
+  });
+
+  it('rejects a non-finite, non-positive, or non-integer maxArchiveMemberCount', () => {
+    expect(() => resolveMaxArchiveMemberCount(0)).toThrowError(
+      /maxArchiveMemberCount must be a positive finite integer/,
+    );
+    expect(() => resolveMaxArchiveMemberCount(-1)).toThrowError(
+      /maxArchiveMemberCount must be a positive finite integer/,
+    );
+    expect(() => resolveMaxArchiveMemberCount(Number.NaN)).toThrowError(
+      /maxArchiveMemberCount must be a positive finite integer/,
+    );
+    expect(() => resolveMaxArchiveMemberCount(1.5)).toThrowError(
+      /maxArchiveMemberCount must be a positive finite integer/,
+    );
+    expect(resolveMaxArchiveMemberCount(undefined)).toBe(20_000);
+    expect(resolveMaxArchiveMemberCount(7)).toBe(7);
   });
 });
 

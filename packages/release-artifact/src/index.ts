@@ -109,7 +109,7 @@ const DEFAULT_DIST_DIR = 'dist';
 const DEFAULT_NODE_COMMAND = 'node';
 const DEFAULT_HELP_FLAG = '--help';
 const ARTIFACT_MANIFEST_SCHEMA_VERSION = 1;
-const MAX_ARCHIVE_MEMBER_COUNT = 20_000;
+const DEFAULT_MAX_ARCHIVE_MEMBER_COUNT = 20_000;
 const MAX_ARCHIVE_PATH_LENGTH = 512;
 const MAX_ARCHIVE_EXPANDED_BYTES = 512 * 1024 * 1024;
 const SAFE_FILENAME_COMPONENT_RE = /^[A-Za-z0-9][A-Za-z0-9._+-]*$/u;
@@ -282,6 +282,8 @@ export interface VerifyArtifactOptions {
   runner?: ArtifactRunner;
   /** Override the default per-process timeout (ms) for external commands. */
   runTimeoutMs?: number;
+  /** Override the maximum number of archive members before validation rejects the artifact (default: 20000). */
+  maxArchiveMemberCount?: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -367,6 +369,23 @@ export function resolveRunTimeoutMs(value: number | undefined): number {
 
   if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) {
     throw new Error(`runTimeoutMs must be a positive finite number: ${value as unknown as string}`);
+  }
+
+  return value;
+}
+
+/**
+ * Resolve the maximum number of archive members a release artifact may
+ * contain before validation rejects it. Defaults to
+ * {@link DEFAULT_MAX_ARCHIVE_MEMBER_COUNT}. Must be a positive finite integer.
+ */
+export function resolveMaxArchiveMemberCount(value: number | undefined): number {
+  if (value === undefined) {
+    return DEFAULT_MAX_ARCHIVE_MEMBER_COUNT;
+  }
+
+  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0 || !Number.isInteger(value)) {
+    throw new Error(`maxArchiveMemberCount must be a positive finite integer: ${value as unknown as string}`);
   }
 
   return value;
@@ -990,6 +1009,7 @@ export function verifyReleaseArtifact(options: VerifyArtifactOptions): void {
     runner,
     runTimeoutMs,
     cwd: options.cwd ?? dirname(artifactPath),
+    maxArchiveMemberCount: options.maxArchiveMemberCount,
   });
 
   const extractRoot = mkdtempSync(join(tmpdir(), 'repo-toolkit-artifact-'));
@@ -1089,6 +1109,8 @@ export interface InstallArtifactOptions {
   runner?: ArtifactRunner;
   /** Override the default per-process timeout (ms) for external commands. */
   runTimeoutMs?: number;
+  /** Override the maximum number of archive members before validation rejects the artifact (default: 20000). */
+  maxArchiveMemberCount?: number;
 }
 
 export interface InstallArtifactResult {
@@ -1138,6 +1160,7 @@ export function installReleaseArtifact(options: InstallArtifactOptions): Install
     runner,
     runTimeoutMs,
     cwd: dirname(archivePath),
+    maxArchiveMemberCount: options.maxArchiveMemberCount,
   });
 
   const installParent = dirname(installPath);
@@ -1407,16 +1430,17 @@ function validateUniquePathList(values: unknown[], label: string): string[] {
 
 export function validateReleaseArchive(
   artifactPath: string,
-  options: { runner?: ArtifactRunner; runTimeoutMs?: number; cwd?: string } = {},
+  options: { runner?: ArtifactRunner; runTimeoutMs?: number; cwd?: string; maxArchiveMemberCount?: number } = {},
 ): ValidatedArchive {
   const archiveFileName = basename(artifactPath);
   const entries = listArchiveEntries(artifactPath, options);
+  const maxArchiveMemberCount = resolveMaxArchiveMemberCount(options.maxArchiveMemberCount);
 
   if (entries.length === 0) {
     throw new Error(`Release artifact is empty: ${artifactPath}`);
   }
 
-  if (entries.length > MAX_ARCHIVE_MEMBER_COUNT) {
+  if (entries.length > maxArchiveMemberCount) {
     throw new Error(`Release artifact exceeds the member limit: ${entries.length}`);
   }
 
@@ -1488,7 +1512,7 @@ export function validateReleaseArchive(
 
 function listArchiveEntries(
   artifactPath: string,
-  options: { runner?: ArtifactRunner; runTimeoutMs?: number; cwd?: string } = {},
+  options: { runner?: ArtifactRunner; runTimeoutMs?: number; cwd?: string; maxArchiveMemberCount?: number } = {},
 ): ParsedArchiveEntry[] {
   const runner = options.runner ?? defaultArtifactRunner;
   const cwd = options.cwd ?? dirname(artifactPath);

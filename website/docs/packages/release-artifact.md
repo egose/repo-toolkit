@@ -40,27 +40,28 @@ repo-toolkit-verify-artifact --version v1.2.3
 
 ### Flags
 
-| Flag                           | Description                                                                      | Default            |
-| ------------------------------ | -------------------------------------------------------------------------------- | ------------------ | --- |
-| `--config <path>`              | Config file (JSON, `.mjs`, or `.cjs` default export). CLI flags override config. | —                  |
-| `--cwd <path>`                 | Workspace root directory                                                         | `process.cwd()`    |
-| `--version <version>`          | Target version. A leading `v` is stripped.                                       | —                  |
-| `--tag <version>`              | Alias for `--version`                                                            | —                  |
-| `--tool-name <name>`           | Tool name used in artifact filenames                                             | `repo-toolkit`     |
-| `--packages-dir <path>`        | Directory under workspace root holding packages (build only)                     | `packages`         |
-| `--dist-dir <path>`            | Directory under workspace root where the tarball is written / located            | `dist`             |
-| `--version-files <f>[,<f>]`    | Root file(s) copied into artifact root, preserving subpath (build only)          | `['VERSION']`      |
-| `--root-files <f>[,<f>]`       | Additional root files copied into artifact root, preserving subpath (build only) | —                  |
-| `--node-modules <mode>`        | Resolved node-modules mode: `production`, `copy`, or `none` (build only)         | `production`       |
-| `--skip-node-modules`          | Compatibility alias for `--node-modules none` (build only)                       | —                  |
-| `--production-node-modules`    | Compatibility alias for `--node-modules production` (build only)                 | —                  |
-| `--no-production-node-modules` | Compatibility alias for `--node-modules copy                                     | none` (build only) | —   |
-| `--node-command <name>`        | Node interpreter used in bash wrappers (build only)                              | `node`             |
-| `--exclude <glob>[,<glob>]`    | Glob patterns excluded from each copied package (replaces defaults; build only)  | `see source`       |
-| `--run-timeout-ms <ms>`        | Per-process timeout for external commands                                        | `60000`            |
-| `--artifact-path <path>`       | Explicit tarball path; overrides cwd/tool-name/dist-dir (verify only)            | —                  |
-| `--help-flag <flag>`           | Flag passed to each wrapper to confirm it boots (verify only)                    | `--help`           |
-| `-h, --help`                   | Show help                                                                        | —                  |
+| Flag                             | Description                                                                               | Default            |
+| -------------------------------- | ----------------------------------------------------------------------------------------- | ------------------ | --- |
+| `--config <path>`                | Config file (JSON, `.mjs`, or `.cjs` default export). CLI flags override config.          | —                  |
+| `--cwd <path>`                   | Workspace root directory                                                                  | `process.cwd()`    |
+| `--version <version>`            | Target version. A leading `v` is stripped.                                                | —                  |
+| `--tag <version>`                | Alias for `--version`                                                                     | —                  |
+| `--tool-name <name>`             | Tool name used in artifact filenames                                                      | `repo-toolkit`     |
+| `--packages-dir <path>`          | Directory under workspace root holding packages (build only)                              | `packages`         |
+| `--dist-dir <path>`              | Directory under workspace root where the tarball is written / located                     | `dist`             |
+| `--version-files <f>[,<f>]`      | Root file(s) copied into artifact root, preserving subpath (build only)                   | `['VERSION']`      |
+| `--root-files <f>[,<f>]`         | Additional root files copied into artifact root, preserving subpath (build only)          | —                  |
+| `--node-modules <mode>`          | Resolved node-modules mode: `production`, `copy`, or `none` (build only)                  | `production`       |
+| `--skip-node-modules`            | Compatibility alias for `--node-modules none` (build only)                                | —                  |
+| `--production-node-modules`      | Compatibility alias for `--node-modules production` (build only)                          | —                  |
+| `--no-production-node-modules`   | Compatibility alias for `--node-modules copy                                              | none` (build only) | —   |
+| `--node-command <name>`          | Node interpreter used in bash wrappers (build only)                                       | `node`             |
+| `--exclude <glob>[,<glob>]`      | Glob patterns excluded from each copied package (replaces defaults; build only)           | `see source`       |
+| `--run-timeout-ms <ms>`          | Per-process timeout for external commands                                                 | `60000`            |
+| `--max-archive-member-count <n>` | Maximum number of archive members before validation rejects the artifact (verify/install) | `20000`            |
+| `--artifact-path <path>`         | Explicit tarball path; overrides cwd/tool-name/dist-dir (verify only)                     | —                  |
+| `--help-flag <flag>`             | Flag passed to each wrapper to confirm it boots (verify only)                             | `--help`           |
+| `-h, --help`                     | Show help                                                                                 | —                  |
 
 ## JavaScript API
 
@@ -112,6 +113,7 @@ verifyReleaseArtifact({
 - `validateArtifactRunner(runner)` — assert a value is a valid `ArtifactRunner`.
 - `defaultArtifactRunner` — injectable runner that bounds `tar`/`pnpm`/`bash`/wrapper execution with timeout and max-output limits.
 - `resolveRunTimeoutMs(value)` — validate the per-process timeout override.
+- `resolveMaxArchiveMemberCount(value)` — validate the max archive member count override.
 
 ### Options
 
@@ -143,6 +145,7 @@ verifyReleaseArtifact({
 - `skipExec` _(boolean)_ Skip executing wrappers; only check manifest, required files, symlink safety, x_OK, and `bash -n`.
 - `runner` _(ArtifactRunner)_ Injectable subprocess runner (default: `defaultArtifactRunner`).
 - `runTimeoutMs` _(number)_ Per-process timeout for external commands (default: 60000).
+- `maxArchiveMemberCount` _(number)_ Maximum number of archive members before validation rejects the artifact (default: 20000). Must be a positive finite integer.
 
 ### Injectable subprocess runner
 

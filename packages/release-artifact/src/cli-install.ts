@@ -17,6 +17,7 @@ const SPECS: FlagSpec[] = [
   { name: 'skip-exec', boolean: true },
   { name: 'force', boolean: true },
   { name: 'run-timeout-ms' },
+  { name: 'max-archive-member-count' },
   INTERACTIVE_FLAG,
 ];
 
@@ -37,6 +38,7 @@ Options:
   --skip-exec                    Skip executing wrappers; only check manifest, files, x_OK, and 'bash -n'
   --force                        Replace an existing non-empty install path
   --run-timeout-ms <ms>          Per-process timeout for external commands (default: 60000)
+  --max-archive-member-count <n> Maximum number of archive members before validation rejects the artifact (default: 20000)
   -i, --interactive              Prompt for missing required values interactively
   -h, --help                     Show this help message
 `);
@@ -58,6 +60,15 @@ function buildOptions(values: Record<string, string>): Partial<InstallArtifactOp
       throw new Error(`--run-timeout-ms must be a positive finite number: ${values['run-timeout-ms']}`);
     }
     options.runTimeoutMs = parsed;
+  }
+  if (values['max-archive-member-count']) {
+    const parsed = Number(values['max-archive-member-count']);
+    if (!Number.isFinite(parsed) || parsed <= 0 || !Number.isInteger(parsed)) {
+      throw new Error(
+        `--max-archive-member-count must be a positive finite integer: ${values['max-archive-member-count']}`,
+      );
+    }
+    options.maxArchiveMemberCount = parsed;
   }
 
   return options;
