@@ -117,17 +117,20 @@ describe('CLI flag resolution', () => {
     expect(parseCli(['--help'])).toBeNull();
   });
 
-  it('terminates parsing at -- in non-strict mode', () => {
-    const result = parseFlags(['--cwd', '/r', '--', '--append'], SPECS, { strict: false });
+  it('ignores a mid-argv -- separator (pnpm/npm/yarn passthrough) and keeps parsing flags', () => {
+    const result = parseFlags(['--cwd', '/r', '--', '--append'], SPECS);
     expect(result).not.toBeNull();
-    const opts = resolveGenerateChangelogCliOptions(result!);
-    expect(opts.cwd).toBe('/r');
-    expect(opts.append).toBeUndefined();
-    expect(result!.unknown).toContain('--append');
+    expect(result!.values.cwd).toBe('/r');
+    expect(result!.values['append']).toBe('true');
   });
 
-  it('rejects post-dashdash args in strict mode', () => {
-    expect(() => parseFlags(['--cwd', '/r', '--', '--append'], SPECS)).toThrow(/Unknown argument/);
+  it('ignores trailing -- separators with no following args', () => {
+    const result = parseFlags(['--cwd', '/r', '--'], SPECS);
+    expect(result!.values.cwd).toBe('/r');
+  });
+
+  it('still rejects genuinely unknown flags after a -- separator in strict mode', () => {
+    expect(() => parseFlags(['--cwd', '/r', '--', '--bogus'], SPECS)).toThrow(/Unknown argument: --bogus/);
   });
 
   it('does not auto-run main() on import (only when executed as entry point)', () => {
