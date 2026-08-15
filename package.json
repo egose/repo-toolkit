@@ -33,19 +33,19 @@
     "test": "pnpm -r --if-present test"
   },
   "devDependencies": {
-    "@commitlint/cli": "^20.5.3",
-    "@commitlint/config-conventional": "^20.5.3",
-    "@commitlint/format": "^20.5.0",
+    "@commitlint/cli": "^21.2.2",
+    "@commitlint/config-conventional": "^21.2.2",
+    "@commitlint/format": "^21.2.2",
     "@eslint/js": "^10.0.1",
-    "@release-it/bumper": "^7.0.6",
-    "@types/node": "^25.9.5",
-    "eslint": "10.3.0",
-    "globals": "^17.7.0",
+    "@release-it/bumper": "^8.0.0",
+    "@types/node": "^26.2.0",
+    "eslint": "10.8.1",
+    "globals": "^17.11.0",
     "prettier": "4.0.0-alpha.13",
-    "release-it": "^20.2.1",
+    "release-it": "^21.0.2",
     "tsup": "^8.5.1",
-    "typescript": "^6.0.3",
-    "typescript-eslint": "^8.63.0",
+    "typescript": "^7.0.2",
+    "typescript-eslint": "^8.67.0",
     "vitest": "^4.1.10"
   }
 }
