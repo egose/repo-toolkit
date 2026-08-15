@@ -53,6 +53,7 @@ Verify:
 - `--artifact-path <path>` Explicit tarball path; overrides cwd/tool-name/dist-dir resolution.
 - `--help-flag <flag>` Flag passed to each wrapper to confirm it boots (default: `--help`).
 - `--run-timeout-ms <ms>` Per-process timeout for external commands (default: 60000).
+- `--max-archive-member-count <n>` Maximum number of archive members before validation rejects the artifact (default: 20000).
 
 ## JavaScript API
 
@@ -89,6 +90,7 @@ verifyReleaseArtifact({ version: '1.2.3', cwd: '/path/to/monorepo' });
 - `createArtifactManifest(version, commands, requiredFiles)` — assemble the manifest (commands sorted).
 - `verifySymlinks(rootPath, currentPath?)` — throw on any absolute symlink.
 - `resolveRunTimeoutMs(value)` — validate the per-process timeout override.
+- `resolveMaxArchiveMemberCount(value)` — validate the max archive member count override.
 
 ### Options (BuildArtifactOptions)
 
@@ -119,6 +121,7 @@ verifyReleaseArtifact({ version: '1.2.3', cwd: '/path/to/monorepo' });
 - `force` _(boolean, install only)_ Replace an existing non-empty install path (default: `false`).
 - `runner` _(ArtifactRunner)_ Injectable subprocess runner. Defaults to `defaultArtifactRunner`.
 - `runTimeoutMs` _(number)_ Per-process timeout for external commands (default: 60000).
+- `maxArchiveMemberCount` _(number)_ Maximum number of archive members before validation rejects the artifact (default: 20000). Must be a positive finite integer.
 
 ### Injectable subprocess runner
 
