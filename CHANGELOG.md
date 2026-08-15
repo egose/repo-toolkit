@@ -1,3 +1,13 @@
+## [0.11.0](https://github.com/egose/repo-toolkit/compare/v0.10.0...v0.11.0) (2026-08-15)
+
+### Features
+
+* **publish-package:** preserve package metadata fields during publish rewrites ([85e2091](https://github.com/egose/repo-toolkit/commit/85e209171d84e891b87d49c2591bdc13a24110a8))
+
+### Bug Fixes
+
+* **publish-package:** ignore leading script separator before parsing flags ([67ba969](https://github.com/egose/repo-toolkit/commit/67ba9695aa53010ce76fbd480effc77aa47c2637))
+
 ## [0.10.0](https://github.com/egose/repo-toolkit/compare/v0.9.0...v0.10.0) (2026-08-11)
 
 ### Features
