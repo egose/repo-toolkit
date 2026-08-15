@@ -16,6 +16,7 @@ const OMITTED_FIELDS = new Set([
 ]);
 
 export const DEFAULT_VERSION_PLACEHOLDER = '0.0.0-PLACEHOLDER';
+export const DEFAULT_METADATA_PLACEHOLDER = 'PLACEHOLDER';
 export const DEFAULT_PUBLISH_DIR = 'dist';
 export const DEFAULT_PACKAGE_FILES = ['README.md', 'CHANGELOG.md', 'llms.txt'];
 export const DEFAULT_ROOT_FILES = ['LICENSE'];
@@ -33,6 +34,7 @@ export interface RootMetadata {
 
 export interface PublishRewriteOptions {
   versionPlaceholder?: string;
+  metadataPlaceholder?: string;
   publishDir?: string;
 }
 
@@ -49,6 +51,7 @@ export function createPublishPackageJson(
 ): PackageJson {
   const { version, internalPackageNames, rootMetadata = {}, rewrite = {} } = options;
   const versionPlaceholder = rewrite.versionPlaceholder ?? DEFAULT_VERSION_PLACEHOLDER;
+  const metadataPlaceholder = rewrite.metadataPlaceholder ?? DEFAULT_METADATA_PLACEHOLDER;
   const publishDir = rewrite.publishDir ?? DEFAULT_PUBLISH_DIR;
   const publishPackageJson: PackageJson = {};
 
@@ -102,27 +105,34 @@ export function createPublishPackageJson(
   // (e.g. .map files, temp artefacts) from the publish directory.
   publishPackageJson.files = [...DEFAULT_PUBLISH_FILES_FIELD];
 
-  if (rootMetadata.author !== undefined) {
+  if (rootMetadata.author !== undefined && publishPackageJson.author === undefined) {
     publishPackageJson.author = rootMetadata.author;
   }
 
-  if (rootMetadata.bugs !== undefined) {
+  if (rootMetadata.bugs !== undefined && publishPackageJson.bugs === undefined) {
     publishPackageJson.bugs = rootMetadata.bugs;
   }
 
-  if (rootMetadata.engines !== undefined) {
+  if (rootMetadata.engines !== undefined && publishPackageJson.engines === undefined) {
     publishPackageJson.engines = rootMetadata.engines;
   }
 
-  if (rootMetadata.license !== undefined) {
-    publishPackageJson.license = rootMetadata.license;
-  }
+  publishPackageJson.license = resolvePlaceholderField(packageJson.license, rootMetadata.license, metadataPlaceholder);
 
-  if (rootMetadata.repository !== undefined) {
-    publishPackageJson.repository = rootMetadata.repository;
-  }
+  publishPackageJson.repository = resolvePlaceholderField(
+    packageJson.repository,
+    rootMetadata.repository,
+    metadataPlaceholder,
+  );
 
   return publishPackageJson;
+}
+
+function resolvePlaceholderField(sourceValue: unknown, rootValue: unknown, placeholder: string): unknown {
+  if (sourceValue !== undefined && sourceValue !== placeholder) {
+    return sourceValue;
+  }
+  return rootValue;
 }
 
 export function validateSourceManifest(manifest: PackageJson, manifestPath: string): void {
