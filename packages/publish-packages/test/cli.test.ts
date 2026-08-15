@@ -132,15 +132,20 @@ describe('CLI flag resolution (MPPARC-03)', () => {
     expect(() => parseCli(['--cwd'])).toThrow(/Missing value for --cwd/);
   });
 
-  it('terminates parsing at -- in non-strict mode and collects remaining as unknown', () => {
-    const result = parseFlags(['--cwd', '/r', '--', '--dry-run'], SPECS, { strict: false });
+  it('ignores a mid-argv -- separator (pnpm/npm/yarn passthrough) and keeps parsing flags', () => {
+    const result = parseFlags(['--cwd', '/r', '--', '--dry-run'], SPECS);
     expect(result).not.toBeNull();
     expect(result!.values.cwd).toBe('/r');
-    expect(result!.unknown).toEqual(['--dry-run']);
+    expect(result!.values['dry-run']).toBe('true');
   });
 
-  it('rejects post-dashdash args in strict mode', () => {
-    expect(() => parseFlags(['--cwd', '/r', '--', '--dry-run'], SPECS)).toThrow(/Unknown argument/);
+  it('ignores trailing -- separators with no following args', () => {
+    const result = parseFlags(['--cwd', '/r', '--'], SPECS);
+    expect(result!.values.cwd).toBe('/r');
+  });
+
+  it('still rejects genuinely unknown flags after a -- separator in strict mode', () => {
+    expect(() => parseFlags(['--cwd', '/r', '--', '--bogus'], SPECS)).toThrow(/Unknown argument: --bogus/);
   });
 });
 
