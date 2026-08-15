@@ -1,3 +1,9 @@
+## [0.12.1](https://github.com/egose/repo-toolkit/compare/v0.12.0...v0.12.1) (2026-08-15)
+
+### Bug Fixes
+
+* **publish-package:** ignore passthrough separator while parsing flags ([ac4312a](https://github.com/egose/repo-toolkit/commit/ac4312a1e72c118592c97cf3083aaf2955fdabc2))
+
 ## [0.12.0](https://github.com/egose/repo-toolkit/compare/v0.11.0...v0.12.0) (2026-08-15)
 
 ### Features
