@@ -209,85 +209,89 @@ function _createMdxContent(props) {
       id: "flags",
       children: "Flags"
     }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
-      children: ["| Flag                           | Description                                                                      | Default            |\n| ------------------------------ | -------------------------------------------------------------------------------- | ------------------ | --- |\n| ", (0,jsx_runtime.jsx)(_components.code, {
+      children: ["| Flag                             | Description                                                                               | Default            |\n| -------------------------------- | ----------------------------------------------------------------------------------------- | ------------------ | --- |\n| ", (0,jsx_runtime.jsx)(_components.code, {
         children: "--config <path>"
-      }), "              | Config file (JSON, ", (0,jsx_runtime.jsx)(_components.code, {
+      }), "                | Config file (JSON, ", (0,jsx_runtime.jsx)(_components.code, {
         children: ".mjs"
       }), ", or ", (0,jsx_runtime.jsx)(_components.code, {
         children: ".cjs"
-      }), " default export). CLI flags override config. | —                  |\n| ", (0,jsx_runtime.jsx)(_components.code, {
+      }), " default export). CLI flags override config.          | —                  |\n| ", (0,jsx_runtime.jsx)(_components.code, {
         children: "--cwd <path>"
-      }), "                 | Workspace root directory                                                         | ", (0,jsx_runtime.jsx)(_components.code, {
+      }), "                   | Workspace root directory                                                                  | ", (0,jsx_runtime.jsx)(_components.code, {
         children: "process.cwd()"
       }), "    |\n| ", (0,jsx_runtime.jsx)(_components.code, {
         children: "--version <version>"
-      }), "          | Target version. A leading ", (0,jsx_runtime.jsx)(_components.code, {
+      }), "            | Target version. A leading ", (0,jsx_runtime.jsx)(_components.code, {
         children: "v"
-      }), " is stripped.                                       | —                  |\n| ", (0,jsx_runtime.jsx)(_components.code, {
+      }), " is stripped.                                                | —                  |\n| ", (0,jsx_runtime.jsx)(_components.code, {
         children: "--tag <version>"
-      }), "              | Alias for ", (0,jsx_runtime.jsx)(_components.code, {
+      }), "                | Alias for ", (0,jsx_runtime.jsx)(_components.code, {
         children: "--version"
-      }), "                                                            | —                  |\n| ", (0,jsx_runtime.jsx)(_components.code, {
+      }), "                                                                     | —                  |\n| ", (0,jsx_runtime.jsx)(_components.code, {
         children: "--tool-name <name>"
-      }), "           | Tool name used in artifact filenames                                             | ", (0,jsx_runtime.jsx)(_components.code, {
+      }), "             | Tool name used in artifact filenames                                                      | ", (0,jsx_runtime.jsx)(_components.code, {
         children: "repo-toolkit"
       }), "     |\n| ", (0,jsx_runtime.jsx)(_components.code, {
         children: "--packages-dir <path>"
-      }), "        | Directory under workspace root holding packages (build only)                     | ", (0,jsx_runtime.jsx)(_components.code, {
+      }), "          | Directory under workspace root holding packages (build only)                              | ", (0,jsx_runtime.jsx)(_components.code, {
         children: "packages"
       }), "         |\n| ", (0,jsx_runtime.jsx)(_components.code, {
         children: "--dist-dir <path>"
-      }), "            | Directory under workspace root where the tarball is written / located            | ", (0,jsx_runtime.jsx)(_components.code, {
+      }), "              | Directory under workspace root where the tarball is written / located                     | ", (0,jsx_runtime.jsx)(_components.code, {
         children: "dist"
       }), "             |\n| ", (0,jsx_runtime.jsx)(_components.code, {
         children: "--version-files <f>[,<f>]"
-      }), "    | Root file(s) copied into artifact root, preserving subpath (build only)          | ", (0,jsx_runtime.jsx)(_components.code, {
+      }), "      | Root file(s) copied into artifact root, preserving subpath (build only)                   | ", (0,jsx_runtime.jsx)(_components.code, {
         children: "['VERSION']"
       }), "      |\n| ", (0,jsx_runtime.jsx)(_components.code, {
         children: "--root-files <f>[,<f>]"
-      }), "       | Additional root files copied into artifact root, preserving subpath (build only) | —                  |\n| ", (0,jsx_runtime.jsx)(_components.code, {
+      }), "         | Additional root files copied into artifact root, preserving subpath (build only)          | —                  |\n| ", (0,jsx_runtime.jsx)(_components.code, {
         children: "--node-modules <mode>"
-      }), "        | Resolved node-modules mode: ", (0,jsx_runtime.jsx)(_components.code, {
+      }), "          | Resolved node-modules mode: ", (0,jsx_runtime.jsx)(_components.code, {
         children: "production"
       }), ", ", (0,jsx_runtime.jsx)(_components.code, {
         children: "copy"
       }), ", or ", (0,jsx_runtime.jsx)(_components.code, {
         children: "none"
-      }), " (build only)         | ", (0,jsx_runtime.jsx)(_components.code, {
+      }), " (build only)                  | ", (0,jsx_runtime.jsx)(_components.code, {
         children: "production"
       }), "       |\n| ", (0,jsx_runtime.jsx)(_components.code, {
         children: "--skip-node-modules"
-      }), "          | Compatibility alias for ", (0,jsx_runtime.jsx)(_components.code, {
+      }), "            | Compatibility alias for ", (0,jsx_runtime.jsx)(_components.code, {
         children: "--node-modules none"
-      }), " (build only)                       | —                  |\n| ", (0,jsx_runtime.jsx)(_components.code, {
+      }), " (build only)                                | —                  |\n| ", (0,jsx_runtime.jsx)(_components.code, {
         children: "--production-node-modules"
-      }), "    | Compatibility alias for ", (0,jsx_runtime.jsx)(_components.code, {
+      }), "      | Compatibility alias for ", (0,jsx_runtime.jsx)(_components.code, {
         children: "--node-modules production"
-      }), " (build only)                 | —                  |\n| ", (0,jsx_runtime.jsx)(_components.code, {
+      }), " (build only)                          | —                  |\n| ", (0,jsx_runtime.jsx)(_components.code, {
         children: "--no-production-node-modules"
-      }), " | Compatibility alias for ", (0,jsx_runtime.jsx)(_components.code, {
-        children: "--node-modules copy                                     | none"
+      }), "   | Compatibility alias for ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "--node-modules copy                                              | none"
       }), " (build only) | —   |\n| ", (0,jsx_runtime.jsx)(_components.code, {
         children: "--node-command <name>"
-      }), "        | Node interpreter used in bash wrappers (build only)                              | ", (0,jsx_runtime.jsx)(_components.code, {
+      }), "          | Node interpreter used in bash wrappers (build only)                                       | ", (0,jsx_runtime.jsx)(_components.code, {
         children: "node"
       }), "             |\n| ", (0,jsx_runtime.jsx)(_components.code, {
         children: "--exclude <glob>[,<glob>]"
-      }), "    | Glob patterns excluded from each copied package (replaces defaults; build only)  | ", (0,jsx_runtime.jsx)(_components.code, {
+      }), "      | Glob patterns excluded from each copied package (replaces defaults; build only)           | ", (0,jsx_runtime.jsx)(_components.code, {
         children: "see source"
       }), "       |\n| ", (0,jsx_runtime.jsx)(_components.code, {
         children: "--run-timeout-ms <ms>"
-      }), "        | Per-process timeout for external commands                                        | ", (0,jsx_runtime.jsx)(_components.code, {
+      }), "          | Per-process timeout for external commands                                                 | ", (0,jsx_runtime.jsx)(_components.code, {
         children: "60000"
       }), "            |\n| ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "--max-archive-member-count <n>"
+      }), " | Maximum number of archive members before validation rejects the artifact (verify/install) | ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "20000"
+      }), "            |\n| ", (0,jsx_runtime.jsx)(_components.code, {
         children: "--artifact-path <path>"
-      }), "       | Explicit tarball path; overrides cwd/tool-name/dist-dir (verify only)            | —                  |\n| ", (0,jsx_runtime.jsx)(_components.code, {
+      }), "         | Explicit tarball path; overrides cwd/tool-name/dist-dir (verify only)                     | —                  |\n| ", (0,jsx_runtime.jsx)(_components.code, {
         children: "--help-flag <flag>"
-      }), "           | Flag passed to each wrapper to confirm it boots (verify only)                    | ", (0,jsx_runtime.jsx)(_components.code, {
+      }), "             | Flag passed to each wrapper to confirm it boots (verify only)                             | ", (0,jsx_runtime.jsx)(_components.code, {
         children: "--help"
       }), "           |\n| ", (0,jsx_runtime.jsx)(_components.code, {
         children: "-h, --help"
-      }), "                   | Show help                                                                        | —                  |"]
+      }), "                     | Show help                                                                                 | —                  |"]
     }), "\n", (0,jsx_runtime.jsx)(_components.h2, {
       id: "javascript-api",
       children: "JavaScript API"
@@ -405,6 +409,10 @@ function _createMdxContent(props) {
         children: [(0,jsx_runtime.jsx)(_components.code, {
           children: "resolveRunTimeoutMs(value)"
         }), " — validate the per-process timeout override."]
+      }), "\n", (0,jsx_runtime.jsxs)(_components.li, {
+        children: [(0,jsx_runtime.jsx)(_components.code, {
+          children: "resolveMaxArchiveMemberCount(value)"
+        }), " — validate the max archive member count override."]
       }), "\n"]
     }), "\n", (0,jsx_runtime.jsx)(_components.h3, {
       id: "options",
@@ -620,6 +628,12 @@ function _createMdxContent(props) {
         }), " ", (0,jsx_runtime.jsx)(_components.em, {
           children: "(number)"
         }), " Per-process timeout for external commands (default: 60000)."]
+      }), "\n", (0,jsx_runtime.jsxs)(_components.li, {
+        children: [(0,jsx_runtime.jsx)(_components.code, {
+          children: "maxArchiveMemberCount"
+        }), " ", (0,jsx_runtime.jsx)(_components.em, {
+          children: "(number)"
+        }), " Maximum number of archive members before validation rejects the artifact (default: 20000). Must be a positive finite integer."]
       }), "\n"]
     }), "\n", (0,jsx_runtime.jsx)(_components.h3, {
       id: "injectable-subprocess-runner",
