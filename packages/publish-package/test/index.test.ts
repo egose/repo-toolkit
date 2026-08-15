@@ -378,6 +378,102 @@ describe('createPublishPackageJson', () => {
     expect(out.engines).toEqual({ node: '>=20' });
   });
 
+  it('preserves package-local root metadata fields when already set', () => {
+    const out = createPublishPackageJson(
+      {
+        name: '@repo-toolkit/publish-package',
+        version: '0.0.0-PLACEHOLDER',
+        author: 'Package Owner',
+        bugs: { url: 'https://example.com/package/issues' },
+        engines: { node: '>=18' },
+        license: 'Package-License',
+        repository: { type: 'git', url: 'https://example.com/package.git' },
+      },
+      {
+        version: '1.2.3',
+        internalPackageNames: internalNames,
+        rootMetadata: {
+          author: 'Root Owner',
+          bugs: { url: 'https://example.com/root/issues' },
+          engines: { node: '>=20' },
+          license: 'Apache-2.0',
+          repository: { type: 'git', url: 'https://example.com/root.git' },
+        },
+      },
+    );
+
+    expect(out.author).toBe('Package Owner');
+    expect(out.bugs).toEqual({ url: 'https://example.com/package/issues' });
+    expect(out.engines).toEqual({ node: '>=18' });
+    expect(out.license).toBe('Package-License');
+    expect(out.repository).toEqual({ type: 'git', url: 'https://example.com/package.git' });
+  });
+
+  it('replaces placeholder license/repository with root metadata when no real local value is set', () => {
+    const out = createPublishPackageJson(
+      {
+        name: '@repo-toolkit/publish-package',
+        version: '0.0.0-PLACEHOLDER',
+        license: 'PLACEHOLDER',
+        repository: 'PLACEHOLDER',
+      },
+      {
+        version: '1.2.3',
+        internalPackageNames: internalNames,
+        rootMetadata: {
+          license: 'Apache-2.0',
+          repository: { type: 'git', url: 'https://example.com/root.git' },
+        },
+      },
+    );
+
+    expect(out.license).toBe('Apache-2.0');
+    expect(out.repository).toEqual({ type: 'git', url: 'https://example.com/root.git' });
+  });
+
+  it('falls back to root metadata for license/repository when the package omits them', () => {
+    const out = createPublishPackageJson(
+      {
+        name: '@repo-toolkit/publish-package',
+        version: '0.0.0-PLACEHOLDER',
+      },
+      {
+        version: '1.2.3',
+        internalPackageNames: internalNames,
+        rootMetadata: {
+          license: 'Apache-2.0',
+          repository: 'PLACEHOLDER',
+        },
+      },
+    );
+
+    expect(out.license).toBe('Apache-2.0');
+    expect(out.repository).toBe('PLACEHOLDER');
+  });
+
+  it('honors a custom metadata placeholder when resolving license/repository', () => {
+    const out = createPublishPackageJson(
+      {
+        name: '@repo-toolkit/publish-package',
+        version: '0.0.0-PLACEHOLDER',
+        license: '__TBD__',
+        repository: '__TBD__',
+      },
+      {
+        version: '1.2.3',
+        internalPackageNames: internalNames,
+        rootMetadata: {
+          license: 'Apache-2.0',
+          repository: { type: 'git', url: 'https://example.com/root.git' },
+        },
+        rewrite: { metadataPlaceholder: '__TBD__' },
+      },
+    );
+
+    expect(out.license).toBe('Apache-2.0');
+    expect(out.repository).toEqual({ type: 'git', url: 'https://example.com/root.git' });
+  });
+
   it('rewrites array-form exports entries leaf by leaf', () => {
     const out = createPublishPackageJson(
       {
