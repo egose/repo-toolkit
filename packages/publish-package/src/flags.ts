@@ -50,22 +50,13 @@ export function parseFlags(
   for (let index = 0; index < argv.length; index += 1) {
     let arg = argv[index];
 
-    if (arg === '--' && index === 0) {
-      continue;
-    }
-
+    // Ignore a bare `--` separator wherever it appears. `pnpm run <script> -- <args>`
+    // (and similar wrappers like `npm run` / `yarn`) forward a `--` after the
+    // script's own flags, and these CLIs accept flags only -- there are no
+    // positional arguments to terminate. Dropping the token keeps the trailing
+    // flags parseable without weakening strict-mode rejection of genuine unknowns.
     if (arg === '--') {
-      const remaining = argv.slice(index + 1);
-      if (remaining.length === 0) {
-        break;
-      }
-
-      if (strict) {
-        throw new Error(`Unknown argument: ${remaining[0]}`);
-      }
-
-      unknown.push(...remaining);
-      break;
+      continue;
     }
 
     if (arg === '-h' || arg === '--help') {

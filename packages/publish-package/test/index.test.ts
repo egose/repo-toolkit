@@ -131,13 +131,19 @@ describe('parseFlags', () => {
     expect(result?.values.cwd).toBe('/x');
   });
 
-  it('treats a later -- as a separator in strict mode', () => {
-    expect(() => parseFlags(['--cwd', '/r', '--', '--dry-run'], specs)).toThrowError(/Unknown argument: --dry-run/);
+  it('ignores a mid-argv -- script separator (pnpm/npm/yarn passthrough) and keeps parsing flags', () => {
+    const result = parseFlags(['--cwd', '/r', '--', '--dry-run'], specs);
+    expect(result?.values.cwd).toBe('/r');
+    expect(result?.values['dry-run']).toBe('true');
   });
 
-  it('collects post-separator args as unknown in non-strict mode', () => {
-    const result = parseFlags(['--cwd', '/r', '--', '--dry-run'], specs, { strict: false });
-    expect(result?.unknown).toEqual(['--dry-run']);
+  it('ignores trailing -- separators with no following args', () => {
+    const result = parseFlags(['--cwd', '/r', '--'], specs);
+    expect(result?.values.cwd).toBe('/r');
+  });
+
+  it('still rejects genuinely unknown flags after a -- separator in strict mode', () => {
+    expect(() => parseFlags(['--cwd', '/r', '--', '--bogus'], specs)).toThrowError(/Unknown argument: --bogus/);
   });
 
   it('resolves a short boolean alias (-i) to the canonical name', () => {
