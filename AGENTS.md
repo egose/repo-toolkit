@@ -90,7 +90,7 @@ Avoid `Array.prototype.at` / `Object.hasOwn` / other post-ES2018 lib features in
 ### Publishing and the release flow
 
 - The root `package.json` is `private: true` and never published.
-- Each package's `package.json` uses `0.0.0-PLACEHOLDER` for `version`/`license`/`repository`; `@repo-toolkit/publish-packages` rewrites the placeholder to the target version and merges root `author`/`license`/`repository`/`engines` at publish time.
+- Each package's `package.json` uses `0.0.0-PLACEHOLDER` for `version`/`license`/`repository`; `@repo-toolkit/publish-packages` rewrites the placeholder to the target version and fills in root `author`/`bugs`/`license`/`repository`/`engines` only when the package manifest does not already set the field (package-local values take precedence).
 - `workspace:*` ranges on internal deps are resolved to the target version.
 - `release-it` (`.release-it.json`) bumps `VERSION` and root `package.json` via `@release-it/bumper`; the publish workflow runs `pnpm publish-packages -- --version <tag>` from git tags.
 - The `release-artifact` builder assembles a `<toolName>-<version>.tar.gz` for asdf consumption; the release workflow uploads it to the GitHub release. The `bin/install` asdf script extracts that tarball, reads `artifact-manifest.json`, and validates `requiredFiles`.
