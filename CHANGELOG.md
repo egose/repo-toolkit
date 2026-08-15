@@ -1,3 +1,9 @@
+## [0.12.0](https://github.com/egose/repo-toolkit/compare/v0.11.0...v0.12.0) (2026-08-15)
+
+### Features
+
+* **release-artifact:** support arbitrary workspace scopes in command closure ([ee83f17](https://github.com/egose/repo-toolkit/commit/ee83f17b89ccc10eaae33a18ef3cf701fd253f35))
+
 ## [0.11.0](https://github.com/egose/repo-toolkit/compare/v0.10.0...v0.11.0) (2026-08-15)
 
 ### Features
