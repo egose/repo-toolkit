@@ -1,0 +1,45 @@
+{
+  "name": "@repo-toolkit/go-release",
+  "description": "Build and verify deterministic cross-platform Go binary releases",
+  "version": "0.0.0-PLACEHOLDER",
+  "license": "PLACEHOLDER",
+  "repository": "PLACEHOLDER",
+  "type": "module",
+  "sideEffects": false,
+  "keywords": [
+    "go",
+    "release",
+    "cross-platform",
+    "archive",
+    "tooling"
+  ],
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "bin": {
+    "repo-toolkit-build-go-release": "dist/cli-build.js",
+    "repo-toolkit-verify-go-release": "dist/cli-verify.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsup --config tsup.config.ts",
+    "test": "pnpm --filter @repo-toolkit/go-release... build && vitest run --config vitest.config.ts",
+    "build-go-release": "node dist/cli-build.js",
+    "verify-go-release": "node dist/cli-verify.js"
+  },
+  "dependencies": {
+    "@repo-toolkit/publish-package": "workspace:*"
+  },
+  "files": [
+    "README.md",
+    "dist"
+  ],
+  "engines": {
+    "node": ">=20"
+  }
+}

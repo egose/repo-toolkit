@@ -1,0 +1,41 @@
+{
+  "toolName": "database-tools",
+  "version": "1.2.3",
+  "outputDir": "dist",
+  "binaries": [
+    {
+      "name": "mongo-archive",
+      "package": "mongoarchive/main/mongoarchive.go",
+      "linkerValues": [
+        {
+          "symbol": "main.version",
+          "value": "{version} {os}-{arch}"
+        }
+      ],
+      "versionCommand": {
+        "args": ["--version"],
+        "expectedOutput": "mongo-archive version: {version} {os}-{arch}\n"
+      }
+    },
+    {
+      "name": "mongo-unarchive",
+      "package": "mongounarchive/main/mongounarchive.go",
+      "linkerValues": [
+        {
+          "symbol": "main.version",
+          "value": "{version} {os}-{arch}"
+        }
+      ],
+      "versionCommand": {
+        "args": ["--version"],
+        "expectedOutput": "mongo-unarchive version: {version} {os}-{arch}\n"
+      }
+    }
+  ],
+  "targets": [
+    { "os": "linux", "arch": "amd64" },
+    { "os": "linux", "arch": "arm64" },
+    { "os": "windows", "arch": "amd64" }
+  ],
+  "additionalFiles": [{ "source": "LICENSE", "destination": "LICENSE" }]
+}

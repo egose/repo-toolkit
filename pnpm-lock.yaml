@@ -69,6 +69,12 @@ importers:
         specifier: workspace:*
         version: link:../publish-package
 
+  packages/go-release:
+    dependencies:
+      '@repo-toolkit/publish-package':
+        specifier: workspace:*
+        version: link:../publish-package
+
   packages/publish-package:
     dependencies:
       '@clack/prompts':

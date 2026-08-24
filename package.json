@@ -29,8 +29,10 @@
     "install-artifact": "pnpm --filter @repo-toolkit/release-artifact... build && node packages/release-artifact/dist/cli-install.js",
     "gen-install": "pnpm --filter @repo-toolkit/release-artifact gen-install",
     "confluence": "pnpm --filter @repo-toolkit/confluence... build && node packages/confluence/dist/cli.js",
+    "build-go-release": "pnpm --filter @repo-toolkit/go-release... build && node packages/go-release/dist/cli-build.js",
+    "verify-go-release": "pnpm --filter @repo-toolkit/go-release... build && node packages/go-release/dist/cli-verify.js",
     "release": "release-it",
-    "test": "pnpm -r --if-present test"
+    "test": "pnpm -r --workspace-concurrency=1 --if-present test"
   },
   "devDependencies": {
     "@commitlint/cli": "^21.2.2",
