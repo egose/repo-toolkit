@@ -1,0 +1,35 @@
+{
+  "toolName": "aiproxy",
+  "version": "1.2.3",
+  "outputDir": "dist",
+  "binaries": [
+    {
+      "name": "aiproxy",
+      "package": "cmd/aiproxy",
+      "linkerValues": [
+        {
+          "symbol": "main.version",
+          "value": "{version}/{os}-{arch}"
+        }
+      ],
+      "versionCommand": {
+        "args": ["version"],
+        "expectedOutput": "{version}/{os}-{arch}\n",
+        "match": "exact"
+      }
+    }
+  ],
+  "targets": [
+    { "os": "linux", "arch": "amd64" },
+    { "os": "darwin", "arch": "arm64" },
+    { "os": "windows", "arch": "amd64" }
+  ],
+  "linkerFlags": ["-buildid=", "-s", "-w"],
+  "checksumFile": "checksums.txt",
+  "sourceDateEpoch": 0,
+  "processLimits": {
+    "timeoutMs": 120000,
+    "maxOutputBytes": 1048576,
+    "concurrency": 2
+  }
+}

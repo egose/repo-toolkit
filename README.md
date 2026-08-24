@@ -9,6 +9,7 @@ Shared monorepo for repository tooling packages.
 - `@repo-toolkit/publish-packages`: build, stage, and publish every package in a monorepo to npm in dependency order
 - `@repo-toolkit/release-artifact`: assemble, verify, and distribute a self-contained CLI release artifact (tarball) from a monorepo
 - `@repo-toolkit/confluence`: sync a folder of markdown docs to Confluence pages and attachments (GitHub Action compatible)
+- `@repo-toolkit/go-release`: build and verify deterministic cross-platform Go binary releases
 
 ## Workspace Layout
 
@@ -17,6 +18,7 @@ Shared monorepo for repository tooling packages.
 - `packages/publish-packages`: monorepo publish pipeline and `repo-toolkit-publish-packages` CLI
 - `packages/release-artifact`: release artifact builder/verifier and `repo-toolkit-build-artifact` / `repo-toolkit-verify-artifact` CLIs
 - `packages/confluence`: docs-as-code sync to Confluence and `repo-toolkit-confluence` CLI
+- `packages/go-release`: Go release builder/verifier and `repo-toolkit-build-go-release` / `repo-toolkit-verify-go-release` CLIs
 - `website/`: standalone Docusaurus docs site for the workspace packages
 
 ## Development
@@ -41,6 +43,8 @@ Useful root scripts:
 - `pnpm publish-packages -- --version v1.2.3`
 - `pnpm build-artifact -- --version v1.2.3`
 - `pnpm verify-artifact -- --version v1.2.3`
+- `pnpm build-go-release -- --config go-release.json --version 1.2.3`
+- `pnpm verify-go-release -- --config go-release.json --version 1.2.3`
 - `pnpm confluence -- --folder docs --space-key ENG --parent-page-id 123456789`
 - `pnpm release`
 
@@ -64,6 +68,8 @@ Available commands after install:
 - `repo-toolkit-build-artifact`
 - `repo-toolkit-verify-artifact`
 - `repo-toolkit-confluence`
+- `repo-toolkit-build-go-release`
+- `repo-toolkit-verify-go-release`
 
 Useful asdf commands:
 
