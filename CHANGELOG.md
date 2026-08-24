@@ -1,3 +1,14 @@
+## [0.14.0](https://github.com/egose/repo-toolkit/compare/v0.12.2...v0.14.0) (2026-08-24)
+
+### Features
+
+* add archive member limit override to release artifact validation ([19e7182](https://github.com/egose/repo-toolkit/commit/19e718290ee101b7911e954f1a0e9555dcca182d))
+* add deterministic Go release package and workspace integration ([ba8feaf](https://github.com/egose/repo-toolkit/commit/ba8feaf22feb0dedb4b7a939d1b62a3f84a5ac8f))
+
+### Bug Fixes
+
+* **go-release:** accept flexible documented example fences ([294e018](https://github.com/egose/repo-toolkit/commit/294e018d44af78388b311497303fc53a14e94f58))
+
 ## [0.12.2](https://github.com/egose/repo-toolkit/compare/v0.12.1...v0.12.2) (2026-08-15)
 
 ## [0.12.1](https://github.com/egose/repo-toolkit/compare/v0.12.0...v0.12.1) (2026-08-15)
