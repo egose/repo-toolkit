@@ -105,6 +105,13 @@ function _createMdxContent(props) {
             children: "@repo-toolkit/confluence"
           })
         }), ": sync a folder of Markdown docs to Confluence pages and attachments (GitHub Action compatible)."]
+      }), "\n", (0,jsx_runtime.jsxs)(_components.li, {
+        children: [(0,jsx_runtime.jsx)(_components.a, {
+          href: "./go-release",
+          children: (0,jsx_runtime.jsx)(_components.code, {
+            children: "@repo-toolkit/go-release"
+          })
+        }), ": build and verify deterministic cross-platform Go binary releases."]
       }), "\n"]
     }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
       children: ["Package-local ", (0,jsx_runtime.jsx)(_components.code, {
