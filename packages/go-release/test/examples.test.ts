@@ -26,10 +26,12 @@ function readExample(name: (typeof examples)[number]): Record<string, unknown> {
 
 function documentedExample(name: (typeof examples)[number]): Record<string, unknown> {
   const docs = readFileSync(join(repositoryRoot, 'website', 'docs', 'packages', 'go-release.md'), 'utf8');
-  const marker = `<!-- example:${name} -->\n\`\`\`json\n`;
+  const marker = `<!-- example:${name} -->`;
   const start = docs.indexOf(marker);
   if (start < 0) throw new Error(`Missing documented example: ${name}`);
-  const bodyStart = start + marker.length;
+  const fence = docs.slice(start + marker.length).match(/^\s*```json\r?\n/);
+  if (!fence) throw new Error(`Missing documented example fence: ${name}`);
+  const bodyStart = start + marker.length + fence[0].length;
   const end = docs.indexOf('\n```', bodyStart);
   if (end < 0) throw new Error(`Unterminated documented example: ${name}`);
   return JSON.parse(docs.slice(bodyStart, end)) as Record<string, unknown>;
