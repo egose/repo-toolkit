@@ -439,8 +439,8 @@ export class ConfluenceClient implements ConfluenceGateway {
           throw new ConfluenceApiError('Redirect responses are not allowed', response.status, endpoint, '');
         }
 
-        const text = await readBodyBounded(response, MAX_ERROR_BODY_LENGTH);
         if (!response.ok) {
+          const text = await readBodyBounded(response, MAX_ERROR_BODY_LENGTH);
           if (isSafe && shouldRetryStatus(response.status) && attempt < maxRetries) {
             attempt += 1;
             lastError = new ConfluenceApiError(describeStatus(response.status), response.status, endpoint, text);
@@ -450,13 +450,14 @@ export class ConfluenceClient implements ConfluenceGateway {
           throw new ConfluenceApiError(describeStatus(response.status), response.status, endpoint, text);
         }
 
+        const text = await response.text();
         if (text.length === 0) {
           return {} as T;
         }
         try {
           return JSON.parse(text) as T;
         } catch {
-          throw new ConfluenceApiError('Response was not valid JSON', response.status, endpoint, text);
+          throw new ConfluenceApiError('Response was not valid JSON', response.status, endpoint, truncateText(text));
         }
       } catch (cause) {
         if (cause instanceof ConfluenceApiError || cause instanceof ConfluenceUploadError) {
@@ -605,6 +606,17 @@ function sanitizeFilename(name: string): string {
     throw new ConfluenceApiError('Invalid attachment filename', 0, 'attachment', '');
   }
   return cleaned;
+}
+
+function truncateText(text: string, maxBytes = MAX_ERROR_BODY_LENGTH): string {
+  if (Buffer.byteLength(text, 'utf8') <= maxBytes) {
+    return text;
+  }
+  let end = text.length;
+  while (end > 0 && Buffer.byteLength(text.slice(0, end), 'utf8') > maxBytes) {
+    end -= 1;
+  }
+  return text.slice(0, end) + '...';
 }
 
 function multipartField(boundary: string, name: string, filename: string | undefined, value: Buffer): Buffer {
