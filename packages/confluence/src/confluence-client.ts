@@ -149,7 +149,8 @@ export class ConfluenceApiError extends Error {
   readonly responseBody: string;
 
   constructor(message: string, status: number, endpoint: string, responseBody: string) {
-    super(`${message} (status=${status}, endpoint=${endpoint})`);
+    const responseBodySuffix = responseBody === '' ? '' : `, responseBody=${responseBody}`;
+    super(`${message} (status=${status}, endpoint=${endpoint}${responseBodySuffix})`);
     this.name = 'ConfluenceApiError';
     this.status = status;
     this.endpoint = endpoint;
@@ -204,8 +205,7 @@ export class ConfluenceClient implements ConfluenceGateway {
     const visited = new Set<string>();
     let pageCount = 0;
     const startUrl = this.v2Url(
-      `/pages?${new URLSearchParams({
-        'space-id': spaceId,
+      `/spaces/${encodeURIComponent(spaceId)}/pages?${new URLSearchParams({
         title,
         limit: String(MAX_LIMIT),
         'body-format': 'storage',
