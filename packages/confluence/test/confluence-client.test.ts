@@ -153,7 +153,7 @@ describe('ConfluenceClient.getPagesByTitle', () => {
     });
     const pages = await client.getPagesByTitle('S1', 'Intro');
     expect(pages.map((page) => page.id)).toEqual(['P1', 'P2']);
-    expect(calls[0].endpoint).toContain('space-id=S1');
+    expect(calls[0].endpoint).toContain('/spaces/S1/pages?');
     expect(calls[0].endpoint).toContain('title=Intro');
     expect(calls[0].endpoint).toContain('body-format=storage');
   });
@@ -198,6 +198,8 @@ describe('ConfluenceClient error handling', () => {
       name: 'ConfluenceApiError',
       status: 404,
     });
+    const err = (await client.getPage('123').catch((e) => e)) as ConfluenceApiError;
+    expect(err.message).toContain('responseBody={"message":"gone"}');
   });
 
   it('throws ConfluenceApiError on network failure', async () => {
@@ -238,6 +240,22 @@ describe('ConfluenceClient error handling', () => {
     });
 
     await expect(client.getPage('P1')).rejects.toMatchObject({ status: 302, responseBody: '' });
+  });
+
+  it('includes the response body in invalid JSON errors', async () => {
+    const fetchFn = vi.fn(async () => makeResponse(200, '<html>login</html>') as Response);
+    const client = new ConfluenceClient({
+      baseUrl: 'https://x/wiki',
+      username: 'u',
+      apiToken: 't',
+      fetch: fetchFn as unknown as typeof fetch,
+    });
+
+    const err = (await client.getPage('P1').catch((e) => e)) as ConfluenceApiError;
+    expect(err).toBeInstanceOf(ConfluenceApiError);
+    expect(err.message).toContain('Response was not valid JSON');
+    expect(err.message).toContain('responseBody=<html>login</html>');
+    expect(err.responseBody).toBe('<html>login</html>');
   });
 });
 
