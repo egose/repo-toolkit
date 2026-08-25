@@ -1,3 +1,9 @@
+## [0.15.0](https://github.com/egose/repo-toolkit/compare/v0.14.2...v0.15.0) (2026-08-25)
+
+### Features
+
+* **confluence:** add repository source notice and table rendering support ([0fe4801](https://github.com/egose/repo-toolkit/commit/0fe4801b830a42070c075a6d10c60c0d9b1d634d))
+
 ## [0.14.2](https://github.com/egose/repo-toolkit/compare/v0.14.1...v0.14.2) (2026-08-25)
 
 ### Bug Fixes
