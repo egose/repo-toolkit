@@ -1,3 +1,9 @@
+## [0.14.1](https://github.com/egose/repo-toolkit/compare/v0.14.0...v0.14.1) (2026-08-25)
+
+### Bug Fixes
+
+* **confluence:** include response body in API errors and use space pages endpoint ([8dd2369](https://github.com/egose/repo-toolkit/commit/8dd2369cec7189de0f4b21e2bbbee18e92c85062))
+
 ## [0.14.0](https://github.com/egose/repo-toolkit/compare/v0.12.2...v0.14.0) (2026-08-24)
 
 ### Features
