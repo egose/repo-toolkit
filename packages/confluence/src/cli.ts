@@ -28,6 +28,7 @@ export const SPECS: FlagSpec[] = [
   { name: 'space-key' },
   { name: 'parent-page-id' },
   { name: 'version-message' },
+  { name: 'repository-url' },
   { name: 'skip-unchanged', boolean: true, negatable: true },
   { name: 'dry-run', boolean: true },
   { name: 'render-html-blocks', boolean: true },
@@ -77,6 +78,7 @@ Environment variables (CLI form; GitHub Action INPUT_* form is also read):
   CONFLUENCE_SPACE_KEY                 Confluence space key
   CONFLUENCE_PARENT_PAGE_ID            Numeric parent page id
   CONFLUENCE_VERSION_MESSAGE            Version-message suffix for every PUT
+  CONFLUENCE_REPOSITORY_URL            Repository URL appended to synced pages
   CONFLUENCE_SKIP_UNCHANGED            true|false (default: true)
   CONFLUENCE_DRY_RUN                   true|false (default: false)
   CONFLUENCE_RENDER_HTML_BLOCKS        true|false (default: false)
@@ -96,6 +98,7 @@ Options:
   --space-key <key>             Confluence space key (required). Resolved to a spaceId via the API
   --parent-page-id <id>         Numeric page id under which docs will be published (required)
   --version-message <text>      Commit message appended to every page/attachment PUT
+  --repository-url <url>        Repository URL appended to synced pages as an italic notice
   --skip-unchanged               Skip pages whose body is unchanged (default: true)
   --no-skip-unchanged           Re-upload every page even when unchanged
   --dry-run                     Walk the doc tree and print the plan without API calls
@@ -115,6 +118,7 @@ type StringOptionKey =
   | 'spaceKey'
   | 'parentPageId'
   | 'versionMessage'
+  | 'repositoryUrl'
   | 'cwd';
 
 const STRING_OPTION_KEYS: ReadonlyArray<StringOptionKey> = [
@@ -127,6 +131,7 @@ const STRING_OPTION_KEYS: ReadonlyArray<StringOptionKey> = [
   'spaceKey',
   'parentPageId',
   'versionMessage',
+  'repositoryUrl',
 ];
 
 function setIfString(options: Record<string, unknown>, key: StringOptionKey, value: string | undefined): void {
@@ -156,6 +161,7 @@ const ENV_BINDINGS: ReadonlyArray<EnvBinding> = [
   { envName: 'INPUT_SPACE-KEY', key: 'spaceKey', kind: 'string' },
   { envName: 'INPUT_PARENT-PAGE-ID', key: 'parentPageId', kind: 'string' },
   { envName: 'INPUT_VERSION-MESSAGE', key: 'versionMessage', kind: 'string' },
+  { envName: 'INPUT_REPOSITORY-URL', key: 'repositoryUrl', kind: 'string' },
   { envName: 'INPUT_DRY-RUN', key: 'dryRun', kind: 'boolean' },
   { envName: 'INPUT_SKIP-UNCHANGED', key: 'skipUnchanged', kind: 'boolean' },
   { envName: 'INPUT_RENDER-HTML-BLOCKS', key: 'renderHtmlBlocks', kind: 'boolean' },
@@ -167,6 +173,7 @@ const ENV_BINDINGS: ReadonlyArray<EnvBinding> = [
   { envName: 'CONFLUENCE_SPACE_KEY', key: 'spaceKey', kind: 'string' },
   { envName: 'CONFLUENCE_PARENT_PAGE_ID', key: 'parentPageId', kind: 'string' },
   { envName: 'CONFLUENCE_VERSION_MESSAGE', key: 'versionMessage', kind: 'string' },
+  { envName: 'CONFLUENCE_REPOSITORY_URL', key: 'repositoryUrl', kind: 'string' },
   { envName: 'CONFLUENCE_DRY_RUN', key: 'dryRun', kind: 'boolean' },
   { envName: 'CONFLUENCE_SKIP_UNCHANGED', key: 'skipUnchanged', kind: 'boolean' },
   { envName: 'CONFLUENCE_RENDER_HTML_BLOCKS', key: 'renderHtmlBlocks', kind: 'boolean' },
@@ -191,7 +198,23 @@ export function optionsFromEnv(env: Record<string, string | undefined> = process
     }
   }
 
+  if (options.repositoryUrl === undefined) {
+    const githubRepositoryUrl = repositoryUrlFromGitHubEnv(env);
+    if (githubRepositoryUrl) {
+      options.repositoryUrl = githubRepositoryUrl;
+    }
+  }
+
   return options as Partial<ConfluenceCliOptions>;
+}
+
+function repositoryUrlFromGitHubEnv(env: Record<string, string | undefined>): string | undefined {
+  const repository = env.GITHUB_REPOSITORY;
+  if (!repository) {
+    return undefined;
+  }
+  const serverUrl = env.GITHUB_SERVER_URL || 'https://github.com';
+  return serverUrl.replace(/\/+$/, '') + '/' + repository.replace(/^\/+/, '');
 }
 
 export function buildOptions(result: ReturnType<typeof parseFlags>): Partial<ConfluenceCliOptions> {
@@ -211,6 +234,7 @@ export function buildOptions(result: ReturnType<typeof parseFlags>): Partial<Con
   setIfString(options, 'spaceKey', values['space-key']);
   setIfString(options, 'parentPageId', values['parent-page-id']);
   setIfString(options, 'versionMessage', values['version-message']);
+  setIfString(options, 'repositoryUrl', values['repository-url']);
 
   if (values['skip-unchanged'] !== undefined) {
     options.skipUnchanged = values['skip-unchanged'] === 'true';

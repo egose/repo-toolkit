@@ -182,6 +182,35 @@ describe('markdownToStorage', () => {
     expect(html).toContain('<blockquote>quoted</blockquote>');
   });
 
+  it('renders pipe tables with a header row', () => {
+    const md = [
+      '| Concern           | Package                    | What it owns                                           |',
+      '| ----------------- | -------------------------- | ------------------------------------------------------ |',
+      '| HTTP errors       | `http-errors`              | Typed error classes, serialization, status mapping     |',
+      '| Response handling | `express-response-handler` | FastAPI-style return-value responses, error formatting |',
+    ].join('\n');
+    const { html } = markdownToStorage(md);
+    expect(html).toBe(
+      '<table><tbody>' +
+        '<tr><th>Concern</th><th>Package</th><th>What it owns</th></tr>' +
+        '<tr><td>HTTP errors</td><td><code>http-errors</code></td><td>Typed error classes, serialization, status mapping</td></tr>' +
+        '<tr><td>Response handling</td><td><code>express-response-handler</code></td><td>FastAPI-style return-value responses, error formatting</td></tr>' +
+        '</tbody></table>',
+    );
+  });
+
+  it('renders escaped pipes inside table cells as literal text', () => {
+    const md = '| A | B |\n| --- | --- |\n| x \\| y | **z** |';
+    const { html } = markdownToStorage(md);
+    expect(html).toContain('<td>x | y</td>');
+    expect(html).toContain('<td><strong>z</strong></td>');
+  });
+
+  it('does not render pipe text without a separator row as a table', () => {
+    const { html } = markdownToStorage('| not | a table |');
+    expect(html).toBe('<p>| not | a table |</p>');
+  });
+
   it('emits local-image placeholders with the data-local-src marker', () => {
     const { html } = markdownToStorage('![alt](./images/a.png)');
     expect(html).toContain('<ac:image data-local-src="./images/a.png"></ac:image>');

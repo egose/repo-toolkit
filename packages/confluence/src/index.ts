@@ -26,6 +26,7 @@ import {
   markdownToStorage,
   isRemoteUrl,
   isAllowedUrl,
+  escapeHtml,
   escapeXmlAttribute,
   escapeAttachmentFilename,
   LOCAL_IMAGE_PLACEHOLDER_RE,
@@ -78,6 +79,8 @@ export interface ConfluenceSyncOptions {
   skipUnchanged?: boolean;
   /** Render ```html fenced blocks as inline HTML via the Confluence `html` macro instead of a code box (default: false). */
   renderHtmlBlocks?: boolean;
+  /** Repository URL appended to synced pages as an italic source notice. */
+  repositoryUrl?: string;
   /**
    * Dry-run: walk the tree and validate every markdown file and local image
    * source (same preflight as a real sync) then print the plan, but make no
@@ -108,6 +111,7 @@ export interface ConfluenceSyncPlan {
   skipUnchanged: boolean;
   dryRun: boolean;
   renderHtmlBlocks: boolean;
+  repositoryUrl: string;
 }
 
 /** A single markdown entry's locally-validated sync plan. */
@@ -178,18 +182,19 @@ export function validateLocalSync(entries: ReadonlyArray<DocEntry>, plan: Conflu
       const { html, mermaidBlocks } = markdownToStorage(markdown, {
         renderHtmlBlocks: plan.renderHtmlBlocks,
       });
+      const body = appendRepositoryNotice(html, plan.repositoryUrl);
       const markdownDir = dirname(entry.absolute);
-      const hasLocalImages = hasLocalImagePlaceholder(html);
+      const hasLocalImages = hasLocalImagePlaceholder(body);
       const hasMermaidBlocks = mermaidBlocks.length > 0;
       const attachments = hasLocalImages
-        ? validateAttachmentSources(html, {
+        ? validateAttachmentSources(body, {
             markdownDir,
             allowedRoot: plan.folder,
           })
         : [];
       plans.push({
         entry,
-        html,
+        html: body,
         mermaidBlocks,
         markdownDir,
         hasLocalImages,
@@ -298,6 +303,12 @@ export function resolveConfluenceSyncPlan(options: ConfluenceSyncOptions = {}): 
     }
   }
 
+  if (options.repositoryUrl && !isAllowedUrl(options.repositoryUrl)) {
+    throw new Error(
+      'repositoryUrl must be an http(s), protocol-relative, server-relative, mailto, tel, or relative URL',
+    );
+  }
+
   return {
     cwd,
     folder,
@@ -310,6 +321,7 @@ export function resolveConfluenceSyncPlan(options: ConfluenceSyncOptions = {}): 
     skipUnchanged: options.skipUnchanged ?? true,
     dryRun: options.dryRun ?? false,
     renderHtmlBlocks: options.renderHtmlBlocks === true,
+    repositoryUrl: options.repositoryUrl ?? '',
   };
 }
 
@@ -555,6 +567,15 @@ function resolveInputPath(baseDir: string, inputPath: string): string {
 function hasLocalImagePlaceholder(html: string): boolean {
   LOCAL_IMAGE_PLACEHOLDER_RE.lastIndex = 0;
   return LOCAL_IMAGE_PLACEHOLDER_RE.test(html);
+}
+
+function appendRepositoryNotice(html: string, repositoryUrl: string): string {
+  if (repositoryUrl.length === 0) {
+    return html;
+  }
+  const url = escapeXmlAttribute(repositoryUrl);
+  const text = escapeHtml(repositoryUrl);
+  return html + '\n<p><em>This document is synced from repository <a href="' + url + '">' + text + '</a>.</em></p>';
 }
 
 interface PredictContext {

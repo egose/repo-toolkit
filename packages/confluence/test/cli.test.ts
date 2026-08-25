@@ -22,6 +22,7 @@ const PRESERVED_ENV_KEYS = [
   'CONFLUENCE_SPACE_KEY',
   'CONFLUENCE_PARENT_PAGE_ID',
   'CONFLUENCE_VERSION_MESSAGE',
+  'CONFLUENCE_REPOSITORY_URL',
   'CONFLUENCE_DRY_RUN',
   'CONFLUENCE_SKIP_UNCHANGED',
   'CONFLUENCE_RENDER_HTML_BLOCKS',
@@ -35,9 +36,12 @@ const PRESERVED_ENV_KEYS = [
   'INPUT_SPACE-KEY',
   'INPUT_PARENT-PAGE-ID',
   'INPUT_VERSION-MESSAGE',
+  'INPUT_REPOSITORY-URL',
   'INPUT_DRY-RUN',
   'INPUT_SKIP-UNCHANGED',
   'INPUT_RENDER-HTML-BLOCKS',
+  'GITHUB_SERVER_URL',
+  'GITHUB_REPOSITORY',
 ];
 
 function snapshotEnv(): Record<string, string | undefined> {
@@ -165,6 +169,23 @@ describe('confluence cli options precedence', () => {
     expect(merged.spaceKey).toBe('CFG');
     expect(merged.username).toBe('env-user');
     expect(merged.parentPageId).toBe('999');
+  });
+
+  it('resolves repositoryUrl from CLI, config, explicit env, and GitHub Actions env', async () => {
+    process.env.CONFLUENCE_REPOSITORY_URL = 'https://example.com/env/repo';
+    process.env.GITHUB_REPOSITORY = 'owner/action-repo';
+
+    const fromEnv = optionsFromEnv();
+    expect(fromEnv.repositoryUrl).toBe('https://example.com/env/repo');
+
+    delete process.env.CONFLUENCE_REPOSITORY_URL;
+    expect(optionsFromEnv().repositoryUrl).toBe('https://github.com/owner/action-repo');
+
+    process.env.CONFLUENCE_REPOSITORY_URL = 'https://example.com/env/repo';
+    const configPath = await writeConfig({ repositoryUrl: 'https://example.com/config/repo' });
+    const result = flagResult(['--config', configPath, '--repository-url', 'https://example.com/cli/repo']);
+    const merged = await resolveConfluenceOptions({ result });
+    expect(merged.repositoryUrl).toBe('https://example.com/cli/repo');
   });
 
   it('CONFLUENCE_* env vars take precedence over INPUT_* env vars', () => {

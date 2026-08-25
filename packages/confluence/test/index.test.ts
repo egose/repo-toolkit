@@ -283,6 +283,30 @@ describe('syncConfluenceToDocs', () => {
     expect(methods).not.toContain('updatePage');
   });
 
+  it('appends an italic repository source notice when repositoryUrl is set', async () => {
+    await writeFile(join(tmp, 'intro.md'), '# Intro');
+    const logSpy = vi.fn();
+    const { client, calls } = buildFakeClient({ spaceId: 'SPACE' });
+    await syncConfluenceToDocs({
+      folder: tmp,
+      username: 'u',
+      apiToken: 't',
+      baseUrl: 'https://x/wiki',
+      spaceKey: 'ENG',
+      parentPageId: '123',
+      repositoryUrl: 'https://github.com/acme/docs',
+      client: client,
+      log: logSpy,
+    });
+    const createCall = calls.find((c) => c.method === 'createPage')?.args[0] as
+      | { body?: { value: string } }
+      | undefined;
+    expect(createCall?.body?.value).toBe(
+      '<h1>Intro</h1>\n' +
+        '<p><em>This document is synced from repository <a href="https://github.com/acme/docs">https://github.com/acme/docs</a>.</em></p>',
+    );
+  });
+
   it('uploads local images as attachments and rewrites the placeholder macro', async () => {
     await mkdir(join(tmp, 'img'));
     await writeFile(join(tmp, 'img', 'logo.png'), Buffer.from([1]));

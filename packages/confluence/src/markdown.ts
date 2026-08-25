@@ -168,6 +168,16 @@ export function markdownToStorage(markdown: string, options: MarkdownConvertOpti
       continue;
     }
 
+    if (isTableStart(lines, i)) {
+      const tableLines: string[] = [];
+      while (i < lines.length && typeof lines[i] === 'string' && isTableRow(lines[i] as string)) {
+        tableLines.push(lines[i] as string);
+        i += 1;
+      }
+      out.push(renderTable(tableLines));
+      continue;
+    }
+
     if (/^\s{0,3}---+\s*$/.test(line) || /^\s{0,3}\*\*\*+\s*$/.test(line)) {
       out.push('<hr />');
       i += 1;
@@ -184,6 +194,7 @@ export function markdownToStorage(markdown: string, options: MarkdownConvertOpti
       !/^\s{0,3}(?:-|\*|\+)\s+/.test(lines[i] as string) &&
       !/^\s{0,3}\d+\.\s+/.test(lines[i] as string) &&
       !/^\s{0,3}>/.test(lines[i] as string) &&
+      !isTableStart(lines, i) &&
       !/^\s{0,3}---+\s*$/.test(lines[i] as string) &&
       !/^\s{0,3}\*\*\*+\s*$/.test(lines[i] as string)
     ) {
@@ -252,6 +263,70 @@ function renderList(listLines: string[]): string {
   const tag = ordered ? 'ol' : 'ul';
   const body = items.map((item) => `<li>${renderInline(item)}</li>`).join('');
   return `<${tag}>${body}</${tag}>`;
+}
+
+function isTableStart(lines: string[], index: number): boolean {
+  const header = lines[index];
+  const separator = lines[index + 1];
+  if (typeof header !== 'string' || typeof separator !== 'string') {
+    return false;
+  }
+  if (!isTableRow(header) || !isTableSeparator(separator)) {
+    return false;
+  }
+  return splitTableRow(header).length === splitTableRow(separator).length;
+}
+
+function isTableRow(line: string): boolean {
+  return /^\s{0,3}\|/.test(line) && splitTableRow(line).length > 1;
+}
+
+function isTableSeparator(line: string): boolean {
+  const cells = splitTableRow(line);
+  if (cells.length < 2) {
+    return false;
+  }
+  return cells.every((cell) => /^:?-{3,}:?$/.test(cell.trim()));
+}
+
+function splitTableRow(line: string): string[] {
+  const trimmed = line.trim();
+  const start = trimmed.startsWith('|') ? 1 : 0;
+  const end =
+    trimmed.endsWith('|') && !isEscapedPipe(trimmed, trimmed.length - 1) ? trimmed.length - 1 : trimmed.length;
+  const cells: string[] = [];
+  let cellStart = start;
+  for (let i = start; i < end; i += 1) {
+    if (trimmed[i] === '|' && !isEscapedPipe(trimmed, i)) {
+      cells.push(unescapeTableCell(trimmed.slice(cellStart, i).trim()));
+      cellStart = i + 1;
+    }
+  }
+  cells.push(unescapeTableCell(trimmed.slice(cellStart, end).trim()));
+  return cells;
+}
+
+function isEscapedPipe(text: string, index: number): boolean {
+  let backslashes = 0;
+  for (let i = index - 1; i >= 0 && text[i] === '\\'; i -= 1) {
+    backslashes += 1;
+  }
+  return backslashes % 2 === 1;
+}
+
+function unescapeTableCell(cell: string): string {
+  return cell.replace(/\\\|/g, '|');
+}
+
+function renderTable(tableLines: string[]): string {
+  const rows = tableLines.filter((_, index) => index !== 1).map(splitTableRow);
+  const body = rows
+    .map((cells, rowIndex) => {
+      const tag = rowIndex === 0 ? 'th' : 'td';
+      return '<tr>' + cells.map((cell) => '<' + tag + '>' + renderInline(cell) + '</' + tag + '>').join('') + '</tr>';
+    })
+    .join('');
+  return '<table><tbody>' + body + '</tbody></table>';
 }
 
 export function renderInline(text: string): string {

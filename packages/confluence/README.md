@@ -72,6 +72,9 @@ Flags:
 - `--space-key <key>` — Confluence space key (required; resolved to a `spaceId`)
 - `--parent-page-id <id>` — numeric Confluence page id (required)
 - `--version-message <text>` — version-message suffix appended to every PUT
+- `--repository-url <url>` — repository URL appended to synced pages as an
+  italic source notice. When omitted, GitHub Actions runs infer this from
+  `GITHUB_SERVER_URL` and `GITHUB_REPOSITORY`.
 - `--skip-unchanged` / `--no-skip-unchanged` — skip pages whose body is unchanged (default: `skip`)
 - `--dry-run` — walk the doc tree and validate every markdown file and local
   image source (same preflight as a real sync) then log the plan. No API
@@ -99,6 +102,7 @@ both read for every option. Boolean env values accept `true|1|yes|on` /
 | spaceKey                | `CONFLUENCE_SPACE_KEY`          | `INPUT_SPACE-KEY`                             |
 | parentPageId            | `CONFLUENCE_PARENT_PAGE_ID`     | `INPUT_PARENT-PAGE-ID`                        |
 | versionMessage          | `CONFLUENCE_VERSION_MESSAGE`    | `INPUT_VERSION-MESSAGE`                       |
+| repositoryUrl           | `CONFLUENCE_REPOSITORY_URL`     | `INPUT_REPOSITORY-URL`                        |
 | skipUnchanged (bool)    | `CONFLUENCE_SKIP_UNCHANGED`     | `INPUT_SKIP-UNCHANGED`                        |
 | dryRun (bool)           | `CONFLUENCE_DRY_RUN`            | `INPUT_DRY-RUN`                               |
 | renderHtmlBlocks (bool) | `CONFLUENCE_RENDER_HTML_BLOCKS` | `INPUT_RENDER-HTML-BLOCKS`                    |
