@@ -1,3 +1,9 @@
+## [0.16.0](https://github.com/egose/repo-toolkit/compare/v0.15.0...v0.16.0) (2026-08-25)
+
+### Features
+
+* **confluence:** add folder-aware repository notice URLs ([daa23f9](https://github.com/egose/repo-toolkit/commit/daa23f9776a7c87ee584bbbbdb3af5a768984b6d))
+
 ## [0.15.0](https://github.com/egose/repo-toolkit/compare/v0.14.2...v0.15.0) (2026-08-25)
 
 ### Features
