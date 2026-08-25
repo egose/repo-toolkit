@@ -1,3 +1,9 @@
+## [0.14.2](https://github.com/egose/repo-toolkit/compare/v0.14.1...v0.14.2) (2026-08-25)
+
+### Bug Fixes
+
+* **confluence:** preserve large JSON responses and truncate invalid payload previews ([3b8e2ed](https://github.com/egose/repo-toolkit/commit/3b8e2ed58380b86f03a9dc3cba8a778de9868fa4))
+
 ## [0.14.1](https://github.com/egose/repo-toolkit/compare/v0.14.0...v0.14.1) (2026-08-25)
 
 ### Bug Fixes
