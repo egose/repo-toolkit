@@ -157,6 +157,36 @@ describe('ConfluenceClient.getPagesByTitle', () => {
     expect(calls[0].endpoint).toContain('title=Intro');
     expect(calls[0].endpoint).toContain('body-format=storage');
   });
+
+  it('parses large valid JSON responses without truncating them first', async () => {
+    const largeBody = 'x'.repeat(10_000);
+    const { fetchFn } = buildFetchSequence([
+      {
+        status: 200,
+        body: {
+          results: [
+            {
+              id: 'P1',
+              title: 'Intro',
+              parentId: '1',
+              body: { storage: { value: largeBody, representation: 'storage' } },
+              _links: { webui: '/x' },
+            },
+          ],
+        },
+      },
+    ]);
+    const client = new ConfluenceClient({
+      baseUrl: 'https://x/wiki',
+      username: 'u',
+      apiToken: 't',
+      fetch: fetchFn as unknown as typeof fetch,
+    });
+
+    const pages = await client.getPagesByTitle('S1', 'Intro');
+    expect(pages).toHaveLength(1);
+    expect(pages[0]?.body?.storage?.value).toBe(largeBody);
+  });
 });
 
 describe('ConfluenceClient.updatePage', () => {
