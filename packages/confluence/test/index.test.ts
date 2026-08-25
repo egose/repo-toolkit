@@ -204,6 +204,26 @@ describe('resolveConfluenceSyncPlan', () => {
     expect(plan.renderHtmlBlocks).toBe(true);
   });
 
+  it('adds the synced folder path to GitHub repositoryUrl notices', () => {
+    const plan = resolveConfluenceSyncPlan({
+      ...base,
+      cwd: '/tmp/repo',
+      folder: 'docs/reference',
+      repositoryUrl: 'https://github.com/acme/project.git',
+    });
+    expect(plan.repositoryUrl).toBe('https://github.com/acme/project/tree/HEAD/docs/reference');
+  });
+
+  it('does not add absolute folders outside cwd to repositoryUrl notices', () => {
+    const plan = resolveConfluenceSyncPlan({
+      ...base,
+      cwd: '/tmp/repo',
+      folder: '/tmp/other/docs',
+      repositoryUrl: 'https://github.com/acme/project',
+    });
+    expect(plan.repositoryUrl).toBe('https://github.com/acme/project');
+  });
+
   it('requires folder', () => {
     expect(() => resolveConfluenceSyncPlan({ ...base, folder: '' })).toThrowError(/folder/);
   });
@@ -284,11 +304,13 @@ describe('syncConfluenceToDocs', () => {
   });
 
   it('appends an italic repository source notice when repositoryUrl is set', async () => {
-    await writeFile(join(tmp, 'intro.md'), '# Intro');
+    await mkdir(join(tmp, 'docs'));
+    await writeFile(join(tmp, 'docs', 'intro.md'), '# Intro');
     const logSpy = vi.fn();
     const { client, calls } = buildFakeClient({ spaceId: 'SPACE' });
     await syncConfluenceToDocs({
-      folder: tmp,
+      cwd: tmp,
+      folder: 'docs',
       username: 'u',
       apiToken: 't',
       baseUrl: 'https://x/wiki',
@@ -303,7 +325,7 @@ describe('syncConfluenceToDocs', () => {
       | undefined;
     expect(createCall?.body?.value).toBe(
       '<h1>Intro</h1>\n' +
-        '<p><em>This document is synced from repository <a href="https://github.com/acme/docs">https://github.com/acme/docs</a>.</em></p>',
+        '<p><em>This document is synced from repository <a href="https://github.com/acme/docs/tree/HEAD/docs">https://github.com/acme/docs/tree/HEAD/docs</a>.</em></p>',
     );
   });
 

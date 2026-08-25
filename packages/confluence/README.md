@@ -73,7 +73,8 @@ Flags:
 - `--parent-page-id <id>` — numeric Confluence page id (required)
 - `--version-message <text>` — version-message suffix appended to every PUT
 - `--repository-url <url>` — repository URL appended to synced pages as an
-  italic source notice. When omitted, GitHub Actions runs infer this from
+  italic source notice. The `--folder` path is added to the notice link when it
+  is relative to `--cwd`. When omitted, GitHub Actions runs infer this from
   `GITHUB_SERVER_URL` and `GITHUB_REPOSITORY`.
 - `--skip-unchanged` / `--no-skip-unchanged` — skip pages whose body is unchanged (default: `skip`)
 - `--dry-run` — walk the doc tree and validate every markdown file and local

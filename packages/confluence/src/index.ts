@@ -1,5 +1,5 @@
 import { readFileSync } from 'node:fs';
-import { dirname, isAbsolute, resolve } from 'node:path';
+import { dirname, isAbsolute, relative, resolve } from 'node:path';
 
 import type { FlagSpec } from '@repo-toolkit/publish-package';
 
@@ -303,7 +303,11 @@ export function resolveConfluenceSyncPlan(options: ConfluenceSyncOptions = {}): 
     }
   }
 
-  if (options.repositoryUrl && !isAllowedUrl(options.repositoryUrl)) {
+  const repositoryUrl = options.repositoryUrl
+    ? repositoryNoticeUrl(options.repositoryUrl, cwd, options.folder ?? '')
+    : '';
+
+  if (repositoryUrl && !isAllowedUrl(repositoryUrl)) {
     throw new Error(
       'repositoryUrl must be an http(s), protocol-relative, server-relative, mailto, tel, or relative URL',
     );
@@ -321,7 +325,7 @@ export function resolveConfluenceSyncPlan(options: ConfluenceSyncOptions = {}): 
     skipUnchanged: options.skipUnchanged ?? true,
     dryRun: options.dryRun ?? false,
     renderHtmlBlocks: options.renderHtmlBlocks === true,
-    repositoryUrl: options.repositoryUrl ?? '',
+    repositoryUrl,
   };
 }
 
@@ -576,6 +580,33 @@ function appendRepositoryNotice(html: string, repositoryUrl: string): string {
   const url = escapeXmlAttribute(repositoryUrl);
   const text = escapeHtml(repositoryUrl);
   return html + '\n<p><em>This document is synced from repository <a href="' + url + '">' + text + '</a>.</em></p>';
+}
+
+function repositoryNoticeUrl(repositoryUrl: string, cwd: string, folder: string): string {
+  const folderPath = repositoryFolderPath(cwd, folder);
+  if (folderPath.length === 0) {
+    return repositoryUrl;
+  }
+  const trimmedUrl = repositoryUrl.replace(/\/+$/, '').replace(/\.git$/, '');
+  const encodedFolder = folderPath.split('/').map(encodeURIComponent).join('/');
+  if (/^https?:\/\/github\.com\//i.test(trimmedUrl) && !/\/tree\/|\/blob\//.test(trimmedUrl)) {
+    return trimmedUrl + '/tree/HEAD/' + encodedFolder;
+  }
+  return trimmedUrl + '/' + encodedFolder;
+}
+
+function repositoryFolderPath(cwd: string, folder: string): string {
+  if (folder.length === 0) {
+    return '';
+  }
+  const relativePath = relative(cwd, resolveInputPath(cwd, folder));
+  if (relativePath === '' || relativePath.startsWith('..') || isAbsolute(relativePath)) {
+    return '';
+  }
+  return relativePath
+    .split(/[\\/]+/)
+    .filter((part) => part !== '' && part !== '.')
+    .join('/');
 }
 
 interface PredictContext {
