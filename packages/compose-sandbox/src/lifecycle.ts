@@ -1,3 +1,7 @@
+import { createDefaultClock, getScheduler, type Clock } from './clock';
+
+export type { Clock } from './clock';
+
 export type LifecyclePhase =
   | 'validate'
   | 'prepare'
@@ -8,11 +12,6 @@ export type LifecyclePhase =
   | 'evidence'
   | 'cleanup';
 
-export interface Clock {
-  now(): number;
-  sleep(ms: number): Promise<void>;
-}
-
 export interface SignalTarget {
   on(event: 'SIGINT' | 'SIGTERM', handler: () => void): void;
   off?(event: 'SIGINT' | 'SIGTERM', handler: () => void): void;
@@ -21,13 +20,7 @@ export interface SignalTarget {
 }
 
 function defaultClock(): Clock {
-  return {
-    now: () => Date.now(),
-    sleep: (ms: number) =>
-      new Promise<void>((resolve) => {
-        setTimeout(resolve, ms);
-      }),
-  };
+  return createDefaultClock();
 }
 
 export class ComposeSandboxLifecycleError extends Error {
@@ -65,6 +58,10 @@ export interface LifecycleDeps {
   clock?: Clock;
   signalTarget?: SignalTarget;
   createAbortController?: () => AbortController;
+  totalMs?: number;
+  cleanupMs?: number;
+  evidenceMs?: number;
+  preflightMs?: number;
 }
 
 export interface LifecycleResult {
@@ -79,6 +76,7 @@ export async function runLifecycle(handlers: LifecycleHandlers, deps: LifecycleD
   const clock = deps.clock ?? defaultClock();
   const signalTarget: SignalTarget = deps.signalTarget ?? (process as unknown as SignalTarget);
   const createAbortController = deps.createAbortController ?? (() => new AbortController());
+  const scheduler = getScheduler(clock);
 
   const abortController = createAbortController();
   const startMs = clock.now();
@@ -91,16 +89,60 @@ export async function runLifecycle(handlers: LifecycleHandlers, deps: LifecycleD
   let started = false;
   let cleanupAttempted = false;
   let signalReceived: NodeJS.Signals | undefined;
+  const emergencyControllers: AbortController[] = [];
+  const emergencyTimers: unknown[] = [];
+  let totalTimer: unknown | undefined;
+  if (deps.totalMs !== undefined) {
+    totalTimer = scheduler.setTimeout(() => {
+      const reason = new Error(`total timeout after ${deps.totalMs}ms`);
+      if (!abortController.signal.aborted) {
+        try {
+          abortController.abort(reason);
+        } catch (_unused) {
+          void _unused;
+        }
+      }
+      abortEmergencyControllers(reason);
+    }, deps.totalMs);
+    emergencyTimers.push(totalTimer);
+  }
 
-  const sigHandler = () => {
-    signalReceived = signalReceived ?? 'SIGTERM';
+  function abortEmergencyControllers(reason: Error): void {
+    for (const c of emergencyControllers) {
+      if (!c.signal.aborted) {
+        try {
+          c.abort(reason);
+        } catch (_unused) {
+          void _unused;
+        }
+      }
+    }
+  }
+
+  const sigIntHandler = (): void => {
+    signalReceived = signalReceived ?? 'SIGINT';
+    const reason = new Error(`terminated by ${signalReceived}`);
     if (!abortController.signal.aborted) {
       try {
-        abortController.abort(new Error(`terminated by ${signalReceived}`));
+        abortController.abort(reason);
       } catch (_unused) {
         void _unused;
       }
     }
+    abortEmergencyControllers(reason);
+  };
+
+  const sigTermHandler = (): void => {
+    signalReceived = signalReceived ?? 'SIGTERM';
+    const reason = new Error(`terminated by ${signalReceived}`);
+    if (!abortController.signal.aborted) {
+      try {
+        abortController.abort(reason);
+      } catch (_unused) {
+        void _unused;
+      }
+    }
+    abortEmergencyControllers(reason);
   };
 
   const on = signalTarget.on.bind(signalTarget);
@@ -109,29 +151,87 @@ export async function runLifecycle(handlers: LifecycleHandlers, deps: LifecycleD
     handler: () => void,
   ) => void;
 
-  on('SIGINT', sigHandler);
-  on('SIGTERM', sigHandler);
+  on('SIGINT', sigIntHandler);
+  on('SIGTERM', sigTermHandler);
 
   function removeHandlers(): void {
     try {
-      off.call(signalTarget, 'SIGINT', sigHandler);
+      off.call(signalTarget, 'SIGINT', sigIntHandler);
     } catch (_unused) {
       void _unused;
     }
     try {
-      off.call(signalTarget, 'SIGTERM', sigHandler);
+      off.call(signalTarget, 'SIGTERM', sigTermHandler);
     } catch (_unused2) {
       void _unused2;
     }
   }
 
-  async function attemptCleanup(signal: AbortSignal): Promise<void> {
+  function clearEmergencyTimers(): void {
+    for (const t of emergencyTimers) {
+      try {
+        scheduler.clearTimeout(t);
+      } catch (_unused) {
+        void _unused;
+      }
+    }
+    emergencyTimers.length = 0;
+  }
+
+  function clampedBudget(explicitMs: number | undefined): number | undefined {
+    if (explicitMs === undefined && deps.totalMs === undefined) return undefined;
+    if (explicitMs === undefined && deps.totalMs !== undefined) {
+      const remaining = deps.totalMs - (clock.now() - startMs);
+      if (remaining <= 0) return undefined;
+      return remaining;
+    }
+    if (explicitMs !== undefined && deps.totalMs === undefined) return explicitMs;
+    if (explicitMs !== undefined && deps.totalMs !== undefined) {
+      const remaining = deps.totalMs - (clock.now() - startMs);
+      if (remaining <= 0) return explicitMs;
+      return Math.min(explicitMs, remaining);
+    }
+    return undefined;
+  }
+
+  function createEmergencyContext(budgetMs: number | undefined): { signal: AbortSignal; dispose: () => void } {
+    const ctrl = createAbortController();
+    emergencyControllers.push(ctrl);
+    let timer: unknown | undefined;
+    const effective = clampedBudget(budgetMs);
+    if (effective !== undefined) {
+      timer = scheduler.setTimeout(() => {
+        try {
+          ctrl.abort(new Error(`emergency timeout after ${effective}ms`));
+        } catch (_unused) {
+          void _unused;
+        }
+      }, effective);
+      emergencyTimers.push(timer);
+    }
+    const dispose = (): void => {
+      if (timer !== undefined) {
+        try {
+          scheduler.clearTimeout(timer);
+        } catch (_unused) {
+          void _unused;
+        }
+        const idx = emergencyTimers.indexOf(timer);
+        if (idx >= 0) emergencyTimers.splice(idx, 1);
+      }
+    };
+    return { signal: ctrl.signal, dispose };
+  }
+
+  async function attemptCleanupWithFresh(): Promise<void> {
     if (cleanupAttempted) return;
     if (!started) return;
     cleanupAttempted = true;
     currentPhase = 'cleanup';
+    const budget = deps.cleanupMs;
+    const ctx = createEmergencyContext(budget);
     try {
-      await handlers.cleanup?.(signal);
+      await handlers.cleanup?.(ctx.signal);
     } catch (err) {
       const e = err instanceof Error ? err : new Error(String(err));
       if (primaryError) {
@@ -143,6 +243,39 @@ export async function runLifecycle(handlers: LifecycleHandlers, deps: LifecycleD
         primaryError = e;
         primaryPhase = 'cleanup';
       }
+    } finally {
+      ctx.dispose();
+    }
+  }
+
+  async function attemptEvidenceWithFresh(outcome: 'success' | 'failure', primary?: Error): Promise<void> {
+    currentPhase = 'evidence';
+    const budget = deps.evidenceMs ?? deps.cleanupMs;
+    const ctx = createEmergencyContext(budget);
+    try {
+      await handlers.evidence?.(outcome, ctx.signal, primary);
+    } catch (err) {
+      const e = err instanceof Error ? err : new Error(String(err));
+      if (outcome === 'success') {
+        if (!primaryError) {
+          primaryError = e;
+          primaryPhase = 'evidence';
+        } else if (!secondaryError) {
+          secondaryError = e;
+          secondaryPhase = 'evidence';
+        }
+      } else {
+        if (!primaryError) {
+          primaryError = e;
+          primaryPhase = 'evidence';
+        } else if (!secondaryError) {
+          secondaryError = e;
+          secondaryPhase = 'evidence';
+        }
+      }
+      throw e;
+    } finally {
+      ctx.dispose();
     }
   }
 
@@ -156,7 +289,50 @@ export async function runLifecycle(handlers: LifecycleHandlers, deps: LifecycleD
     if (abortController.signal.aborted) throw abortController.signal.reason ?? new Error('aborted during prepare');
 
     currentPhase = 'preflight';
-    await handlers.preflight?.(abortController.signal);
+    {
+      const budget = deps.preflightMs ?? deps.cleanupMs;
+      const effective = clampedBudget(budget);
+      if (effective !== undefined) {
+        let timeoutTimer: unknown | undefined;
+        let aborted = false;
+        const timeoutPromise = new Promise<never>((_, reject) => {
+          timeoutTimer = scheduler.setTimeout(() => {
+            aborted = true;
+            try {
+              abortController.abort(new Error(`preflight timeout after ${effective}ms`));
+            } catch (_unused) {
+              void _unused;
+            }
+            reject(new Error(`preflight timeout after ${effective}ms`));
+          }, effective);
+        });
+        const handlerPromise = (async () => {
+          await handlers.preflight?.(abortController.signal);
+        })();
+        let raceError: unknown;
+        try {
+          await Promise.race([handlerPromise, timeoutPromise]);
+        } catch (err) {
+          raceError = err;
+        } finally {
+          if (timeoutTimer !== undefined) {
+            try {
+              scheduler.clearTimeout(timeoutTimer);
+            } catch (_unused) {
+              void _unused;
+            }
+          }
+        }
+        if (aborted && !primaryError) {
+          primaryError = new Error(`preflight timeout after ${effective}ms`);
+          primaryPhase = 'preflight';
+          throw primaryError;
+        }
+        if (raceError) throw raceError;
+      } else {
+        await handlers.preflight?.(abortController.signal);
+      }
+    }
     if (abortController.signal.aborted) throw abortController.signal.reason ?? new Error('aborted during preflight');
 
     started = true;
@@ -174,16 +350,9 @@ export async function runLifecycle(handlers: LifecycleHandlers, deps: LifecycleD
 
     currentPhase = 'evidence';
     try {
-      await handlers.evidence?.('success', abortController.signal);
-    } catch (err) {
-      const e = err instanceof Error ? err : new Error(String(err));
-      if (!primaryError) {
-        primaryError = e;
-        primaryPhase = 'evidence';
-      } else if (!secondaryError) {
-        secondaryError = e;
-        secondaryPhase = 'evidence';
-      }
+      await attemptEvidenceWithFresh('success');
+    } catch (_unused) {
+      void _unused;
     }
 
     if (signalReceived && !primaryError) {
@@ -194,11 +363,12 @@ export async function runLifecycle(handlers: LifecycleHandlers, deps: LifecycleD
     if (primaryError) {
       // fallthrough to finally cleanup and then throw
     } else {
-      await attemptCleanup(abortController.signal);
+      await attemptCleanupWithFresh();
       if (primaryError) {
         // cleanup failed after success path; fallthrough to failure handling
       } else {
         const durationMs = clock.now() - startMs;
+        clearEmergencyTimers();
         removeHandlers();
         if (signalReceived) {
           const err = primaryError ?? new Error(`terminated by ${signalReceived}`);
@@ -215,7 +385,7 @@ export async function runLifecycle(handlers: LifecycleHandlers, deps: LifecycleD
     }
     currentPhase = 'evidence';
     try {
-      await handlers.evidence?.('failure', abortController.signal, primaryError);
+      await attemptEvidenceWithFresh('failure', primaryError);
     } catch (evErr) {
       const ev = evErr instanceof Error ? evErr : new Error(String(evErr));
       if (!secondaryError) {
@@ -224,7 +394,8 @@ export async function runLifecycle(handlers: LifecycleHandlers, deps: LifecycleD
       }
     }
   } finally {
-    await attemptCleanup(abortController.signal);
+    await attemptCleanupWithFresh();
+    clearEmergencyTimers();
     removeHandlers();
   }
 

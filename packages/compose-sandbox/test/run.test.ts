@@ -356,6 +356,43 @@ describe('runComposeSandbox orchestrator', () => {
     }
   });
 
+  it('signaled test result cannot be reported as success', async () => {
+    const root = await makeTempRoot();
+    try {
+      const { fn: runProcess } = makeFakeRunProcess({});
+      const wrappedRun = vi.fn(async (opts: { args: ReadonlyArray<string> }) => {
+        if (!opts.args.join(' ').includes('compose')) {
+          return {
+            exitCode: 0,
+            stdout: '',
+            stderr: '',
+            signal: 'SIGTERM',
+            durationMs: 10,
+            timedOut: false,
+            stdoutTruncated: false,
+            stderrTruncated: false,
+            truncatedBytes: 0,
+          };
+        }
+        return (runProcess as unknown as (o: unknown) => Promise<unknown>)(opts) as never;
+      });
+      const clock = fakeClock();
+      const signalTarget = fakeSignalTarget();
+      const options = baseOptions(root, { evidence: { directory: 'evidence', capture: 'onFailure' } });
+      await expect(
+        runComposeSandbox(options, { clock, signalTarget, runProcess: wrappedRun as never }),
+      ).rejects.toThrow(/signal SIGTERM/);
+      const manifest = JSON.parse(await readFile(join(root, 'evidence', 'result.json'), 'utf8')) as Record<
+        string,
+        unknown
+      >;
+      expect(manifest.outcome).toBe('failure');
+      expect((manifest.errors as Record<string, unknown>).primary).toMatch(/signal SIGTERM/);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it('evidence failure does not hide primary test failure', async () => {
     const root = await makeTempRoot();
     try {
@@ -590,7 +627,7 @@ describe('runComposeSandbox orchestrator', () => {
         thrown = e;
       }
       expect(thrown).toBeDefined();
-      expect((thrown as Error).message).toMatch(/symlink target outside/i);
+      expect((thrown as Error).message).toMatch(/escapes|outside/i);
       // outside file should still exist
       const content = await readFile(outsideFile, 'utf8');
       expect(content).toBe('keep');

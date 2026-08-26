@@ -25,6 +25,11 @@ jobs:
         pnpm build
         pnpm build-artifact -- --version "${GITHUB_REF_NAME#v}"
 
+    - name: Verify Compose Sandbox With Real Docker
+      env:
+        COMPOSE_SANDBOX_REQUIRE_DOCKER: '1'
+      run: pnpm --filter @repo-toolkit/compose-sandbox test
+
     - name: Verify Build Artifact
       run: pnpm verify-artifact -- --version "${GITHUB_REF_NAME#v}"
 

@@ -3,6 +3,7 @@ import { isAbsolute, relative, resolve } from 'node:path';
 import { isPlainObject } from '@repo-toolkit/publish-package';
 
 const DEFAULT_COMPOSE_EXECUTABLE = 'docker';
+const DEFAULT_COMPOSE_PREFIX_ARGS: ReadonlyArray<string> = ['compose'];
 const DEFAULT_EVIDENCE_DIRECTORY = '.compose-sandbox-logs';
 const DEFAULT_EVIDENCE_CAPTURE = 'onFailure' as const;
 const DEFAULT_MAX_LOG_BYTES = 1_048_576;
@@ -42,6 +43,7 @@ export interface StructuredCommand {
 
 export interface ComposeSandboxComposeOptions {
   readonly executable?: string;
+  readonly prefixArgs?: ReadonlyArray<string>;
   readonly files: ReadonlyArray<string>;
   readonly envFile?: string;
   readonly projectName?: string;
@@ -52,6 +54,7 @@ export interface ComposeSandboxComposeOptions {
 
 export interface ComposeSandboxComposePlan {
   readonly executable: string;
+  readonly prefixArgs: ReadonlyArray<string>;
   readonly files: ReadonlyArray<string>;
   readonly resolvedFiles: ReadonlyArray<string>;
   readonly envFile?: string;
@@ -86,11 +89,16 @@ export interface TcpProbeOptions {
   readonly intervalMs?: number;
 }
 
+export interface HttpStatusRange {
+  readonly min: number;
+  readonly max: number;
+}
+
 export interface HttpProbeOptions {
   readonly type: 'http';
   readonly url: string;
   readonly method?: string;
-  readonly expectedStatus?: number | ReadonlyArray<number>;
+  readonly expectedStatus?: number | ReadonlyArray<number> | HttpStatusRange;
   readonly headers?: Readonly<Record<string, string>>;
   readonly timeoutMs?: number;
   readonly intervalMs?: number;
@@ -138,6 +146,7 @@ export interface HttpProbe {
   readonly url: string;
   readonly method: string;
   readonly expectedStatus: ReadonlyArray<number>;
+  readonly expectedStatusRange?: HttpStatusRange;
   readonly headers: Readonly<Record<string, string>>;
   readonly timeoutMs: number;
   readonly intervalMs: number;
@@ -248,7 +257,16 @@ const TOP_LEVEL_KEYS = new Set([
   'dryRun',
   'config',
 ]);
-const COMPOSE_KEYS = new Set(['executable', 'files', 'envFile', 'projectName', 'profiles', 'build', 'pull']);
+const COMPOSE_KEYS = new Set([
+  'executable',
+  'prefixArgs',
+  'files',
+  'envFile',
+  'projectName',
+  'profiles',
+  'build',
+  'pull',
+]);
 const PREPARE_KEYS = new Set(['directories', 'copies']);
 const COPY_KEYS = new Set(['from', 'to']);
 const EVIDENCE_KEYS = new Set(['directory', 'capture', 'maxLogBytes', 'stripAnsi']);
@@ -358,6 +376,7 @@ function resolveCompose(value: ComposeSandboxComposeOptions | undefined, cwd: st
   if (executable.includes('\0')) {
     throw new Error('compose.executable must not contain NUL bytes');
   }
+  const prefixArgs = validateComposePrefixArgs(obj.prefixArgs, 'compose.prefixArgs');
   if (obj.build !== undefined && typeof obj.build !== 'boolean') {
     throw new Error('compose.build must be a boolean');
   }
@@ -408,6 +427,7 @@ function resolveCompose(value: ComposeSandboxComposeOptions | undefined, cwd: st
 
   const plan: ComposeSandboxComposePlan = {
     executable,
+    prefixArgs: Object.freeze([...prefixArgs]),
     files: Object.freeze([...files]),
     resolvedFiles: Object.freeze([...resolvedFiles]),
     ...(envFile !== undefined ? { envFile } : {}),
@@ -418,6 +438,20 @@ function resolveCompose(value: ComposeSandboxComposeOptions | undefined, cwd: st
     pull: (obj.pull as boolean) ?? false,
   };
   return plan;
+}
+
+function validateComposePrefixArgs(value: unknown, label: string): ReadonlyArray<string> {
+  if (value === undefined) return [...DEFAULT_COMPOSE_PREFIX_ARGS];
+  if (!Array.isArray(value)) throw new Error(`${label} must be an array`);
+  const out: string[] = [];
+  for (let i = 0; i < (value as unknown[]).length; i += 1) {
+    const entry = (value as unknown[])[i];
+    if (typeof entry !== 'string') throw new Error(`${label}[${i}] must be a string`);
+    if (entry.length === 0) throw new Error(`${label}[${i}] must be non-empty`);
+    if (entry.includes('\0')) throw new Error(`${label}[${i}] must not contain NUL bytes`);
+    out.push(entry);
+  }
+  return out;
 }
 
 function resolvePrepare(value: PrepareOptions | undefined, cwd: string): PreparePlan {
@@ -515,11 +549,34 @@ function resolveReadiness(value: ReadonlyArray<ReadinessProbeOptions> | undefine
       rejectUnknownKeys(entry, HTTP_PROBE_KEYS, label);
       const url = validateHttpUrl(entry.url, `${label}.url`);
       const method = validateHttpMethod(entry.method, `${label}.method`);
-      const expectedStatus = validateExpectedStatus(entry.expectedStatus, `${label}.expectedStatus`);
+      const parsed = validateHttpExpectedStatus(entry.expectedStatus, `${label}.expectedStatus`);
       const headers = validateHeaders(entry.headers, `${label}.headers`);
       const timeoutMs = validateBoundedTimeout(entry.timeoutMs, `${label}.timeoutMs`, DEFAULT_PROBE_TIMEOUT_MS);
       const intervalMs = validateBoundedInterval(entry.intervalMs, `${label}.intervalMs`, DEFAULT_PROBE_INTERVAL_MS);
-      probe = { type: 'http', url, method, expectedStatus, headers, timeoutMs, intervalMs };
+      const httpProbe: HttpProbe = parsed.range
+        ? {
+            type: 'http',
+            url,
+            method,
+            expectedStatus: parsed.statuses,
+            expectedStatusRange: parsed.range,
+            headers,
+            timeoutMs,
+            intervalMs,
+          }
+        : {
+            type: 'http',
+            url,
+            method,
+            expectedStatus: parsed.statuses.length > 0 ? parsed.statuses : Object.freeze([]),
+            ...(parsed.range ? { expectedStatusRange: parsed.range } : {}),
+            headers,
+            timeoutMs,
+            intervalMs,
+          };
+      // For probes with empty discrete but range, keep discrete empty array; default range already handled.
+      // Ensure discrete is always array for backward compat when range present, keep empty.
+      probe = httpProbe;
       dedupeKey = `http:${method}:${url}`;
     } else if (type === 'service-running') {
       rejectUnknownKeys(entry, SERVICE_RUNNING_KEYS, label);
@@ -763,15 +820,18 @@ function validateHttpMethod(value: unknown, label: string): string {
   return method;
 }
 
-function validateExpectedStatus(value: unknown, label: string): ReadonlyArray<number> {
+function validateHttpExpectedStatus(
+  value: unknown,
+  label: string,
+): { statuses: ReadonlyArray<number>; range?: HttpStatusRange } {
   if (value === undefined) {
-    return Object.freeze([200, 299]);
+    return { statuses: Object.freeze([]), range: Object.freeze({ min: 200, max: 299 }) };
   }
   if (typeof value === 'number') {
     if (!Number.isSafeInteger(value) || value < 100 || value > 599) {
       throw new Error(`${label} must be an integer 100-599`);
     }
-    return Object.freeze([value]);
+    return { statuses: Object.freeze([value]) };
   }
   if (Array.isArray(value)) {
     const arr = value as unknown[];
@@ -785,15 +845,30 @@ function validateExpectedStatus(value: unknown, label: string): ReadonlyArray<nu
       }
       nums.push(n);
     }
-    if (arr.length === 2) {
-      const [a, b] = nums as [number, number];
-      if (a > b) {
-        throw new Error(`${label} range min must be <= max`);
-      }
+    if (nums.length === 2) {
+      const min = nums[0] as number;
+      const max = nums[1] as number;
+      if (min > max) throw new Error(`${label} range min must be <= max`);
+      return { statuses: Object.freeze([]), range: Object.freeze({ min, max }) };
     }
-    return Object.freeze([...nums]);
+    return { statuses: Object.freeze([...nums]) };
   }
-  throw new Error(`${label} must be a number or array of numbers`);
+  if (isPlainObject(value)) {
+    const obj = value as Record<string, unknown>;
+    const allowed = new Set(['min', 'max']);
+    for (const k of Object.keys(obj)) if (!allowed.has(k)) throw new Error(`Unknown ${label}: ${k}`);
+    const min = obj.min;
+    const max = obj.max;
+    if (typeof min !== 'number' || !Number.isSafeInteger(min) || min < 100 || min > 599) {
+      throw new Error(`${label}.min must be an integer 100-599`);
+    }
+    if (typeof max !== 'number' || !Number.isSafeInteger(max) || max < 100 || max > 599) {
+      throw new Error(`${label}.max must be an integer 100-599`);
+    }
+    if (min > max) throw new Error(`${label} range min must be <= max`);
+    return { statuses: Object.freeze([]), range: Object.freeze({ min, max }) };
+  }
+  throw new Error(`${label} must be a number, array of numbers, or { min, max } range`);
 }
 
 function validateHeaders(value: unknown, label: string): Readonly<Record<string, string>> {

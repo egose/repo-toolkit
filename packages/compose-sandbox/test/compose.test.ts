@@ -175,8 +175,10 @@ describe('prepareSandbox', () => {
     const mkdir = vi.fn(async () => {});
     const copyFile = vi.fn(async () => {});
     const access = vi.fn(async () => {});
+    const lstat = vi.fn(async () => ({ isSymbolicLink: () => false }));
+    const realpath = vi.fn(async (p: string) => p);
 
-    await prepareSandbox(plan, { fs: { mkdir, copyFile, access } as never });
+    await prepareSandbox(plan, { fs: { mkdir, copyFile, access, lstat, realpath } });
 
     expect(mkdir).toHaveBeenCalled();
     expect(copyFile).toHaveBeenCalledTimes(1);
@@ -203,7 +205,9 @@ describe('prepareSandbox', () => {
       if (p.endsWith('missing.src')) throw new Error('no file');
       if (p.endsWith('also.missing')) throw new Error('no file');
     });
-    await expect(prepareSandbox(plan, { fs: { mkdir, copyFile, access } as never })).rejects.toThrow(
+    const lstat = vi.fn(async () => ({ isSymbolicLink: () => false }));
+    const realpath = vi.fn(async (p: string) => p);
+    await expect(prepareSandbox(plan, { fs: { mkdir, copyFile, access, lstat, realpath } })).rejects.toThrow(
       /source does not exist: missing\.src/,
     );
     expect(mkdir).not.toHaveBeenCalled();
@@ -221,7 +225,9 @@ describe('prepareSandbox', () => {
     const access = vi.fn(async () => {
       throw new Error('ENOENT');
     });
-    await expect(prepareSandbox(plan, { fs: { mkdir, copyFile, access } as never })).rejects.toThrow(
+    const lstat = vi.fn(async () => ({ isSymbolicLink: () => false }));
+    const realpath = vi.fn(async (p: string) => p);
+    await expect(prepareSandbox(plan, { fs: { mkdir, copyFile, access, lstat, realpath } })).rejects.toThrow(
       /prepare copy source does not exist/,
     );
   });
@@ -236,7 +242,9 @@ describe('prepareSandbox', () => {
     const mkdir = vi.fn(async () => {});
     const copyFile = vi.fn(async () => {});
     const access = vi.fn(async () => {});
-    await prepareSandbox(plan, { fs: { mkdir, copyFile, access } as never });
+    const lstat = vi.fn(async () => ({ isSymbolicLink: () => false }));
+    const realpath = vi.fn(async (p: string) => p);
+    await prepareSandbox(plan, { fs: { mkdir, copyFile, access, lstat, realpath } });
     expect(mkdir).toHaveBeenCalledWith(resolve(cwd, 'nested/dir'), { recursive: true });
   });
 });

@@ -35,4 +35,6 @@ jobs:
       uses: ./.github/actions/setup-npm
 
     - name: Run unit tests
+      env:
+        COMPOSE_SANDBOX_REQUIRE_DOCKER: '1'
       run: pnpm test

@@ -16,8 +16,13 @@ describe('@repo-toolkit/compose-sandbox package scaffold', () => {
     const names = exportedNames.split(',');
     expect(names).toContain('resolveComposeSandboxPlan');
     expect(names).toContain('runComposeSandbox');
-    expect(names).toContain('runProcess');
-    expect(names).toContain('runLifecycle');
+    expect(names).toContain('ComposeSandboxLifecycleError');
+    expect(names).toContain('loadAndMergeComposeSandboxOptions');
+    expect(names).toContain('mergeComposeSandboxOptions');
+    expect(names).not.toContain('runProcess');
+    expect(names).not.toContain('runLifecycle');
+    expect(names).not.toContain('buildComposeArgs');
+    expect(names).not.toContain('waitForReadiness');
 
     const cliPath = resolve(packageRoot, 'dist', 'cli.js');
     expect(readFileSync(cliPath, 'utf8').split('\n')[0]).toBe('#!/usr/bin/env node');
