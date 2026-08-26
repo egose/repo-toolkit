@@ -123,7 +123,7 @@ services:
       });
       await rm(root, { recursive: true, force: true });
     }
-  });
+  }, 120_000);
 
   it('verifies no leak after forced test failure and still captures evidence', async () => {
     if (!dockerAvailable()) {
@@ -185,5 +185,5 @@ services:
       });
       await rm(root, { recursive: true, force: true });
     }
-  });
+  }, 120_000);
 });
