@@ -13,20 +13,12 @@ import type {
   ServiceCompletedProbe,
 } from './plan';
 import { runProcess, type ProcessResult } from './process';
+import { createDefaultClock, getScheduler, type Clock } from './clock';
 
-export interface Clock {
-  now(): number;
-  sleep(ms: number): Promise<void>;
-}
+export type { Clock } from './clock';
 
 function defaultClock(): Clock {
-  return {
-    now: () => Date.now(),
-    sleep: (ms) =>
-      new Promise<void>((resolve) => {
-        setTimeout(resolve, ms);
-      }),
-  };
+  return createDefaultClock();
 }
 
 export type TcpConnect = (host: string, port: number, timeoutMs: number, signal?: AbortSignal) => Promise<void>;
@@ -38,15 +30,25 @@ export type HttpFetch = (
 
 export type GetServiceState = (
   service: string,
+  opts?: { signal?: AbortSignal; timeoutMs?: number },
 ) => Promise<{ service: string; state: string; status: string; exitCode?: number; exists: boolean }>;
 
-export type RunCommandProbe = (probe: CommandProbe) => Promise<ProcessResult>;
+export type GetServiceSnapshot = (opts?: {
+  signal?: AbortSignal;
+  timeoutMs?: number;
+}) => Promise<Map<string, { service: string; state: string; status: string; exitCode?: number; exists: boolean }>>;
+
+export type RunCommandProbe = (
+  probe: CommandProbe,
+  opts?: { signal?: AbortSignal; timeoutMs?: number },
+) => Promise<ProcessResult>;
 
 export interface ReadinessDeps {
   readonly clock?: Clock;
   readonly tcpConnect?: TcpConnect;
   readonly httpFetch?: HttpFetch;
   readonly getServiceState?: GetServiceState;
+  readonly getServiceSnapshot?: GetServiceSnapshot;
   readonly runCommandProbe?: RunCommandProbe;
 }
 
@@ -92,13 +94,11 @@ export function describeProbe(probe: ReadinessProbe): string {
     case 'tcp':
       return `tcp ${probe.host}:${probe.port}`;
     case 'http': {
-      const exp =
-        probe.expectedStatus.length === 1
-          ? `${probe.expectedStatus[0]}`
-          : probe.expectedStatus.length === 2
-            ? `${probe.expectedStatus[0]}-${probe.expectedStatus[1]}`
-            : probe.expectedStatus.join(',');
-      return `http ${probe.method} ${probe.url} => ${exp}`;
+      const hp = probe as HttpProbe;
+      const range = (hp as unknown as { expectedStatusRange?: { min: number; max: number } }).expectedStatusRange;
+      if (range) return `http ${hp.method} ${hp.url} => ${range.min}-${range.max}`;
+      const exp = hp.expectedStatus.length === 1 ? `${hp.expectedStatus[0]}` : hp.expectedStatus.join(',');
+      return `http ${hp.method} ${hp.url} => ${exp || 'none'}`;
     }
     case 'service-running':
       return `service-running ${probe.service}`;
@@ -111,20 +111,23 @@ export function describeProbe(probe: ReadinessProbe): string {
   }
 }
 
-function httpStatusMatches(status: number, expected: ReadonlyArray<number>): boolean {
-  if (expected.length === 0) return false;
-  if (expected.length === 1) return status === expected[0];
-  if (expected.length === 2) {
-    const a = expected[0] as number;
-    const b = expected[1] as number;
-    if (a <= b && expected.length === 2) {
-      if (a >= 100 && b <= 599 && b - a <= 400) {
-        return status >= a && status <= b;
-      }
-    }
-    return expected.includes(status);
+export function httpStatusMatches(
+  status: number,
+  expected: ReadonlyArray<number>,
+  range?: { min: number; max: number },
+): boolean {
+  if (range) {
+    if (status >= range.min && status <= range.max) return true;
+    if (expected.length > 0) return expected.includes(status);
+    return false;
   }
+  if (expected.length === 0) return false;
   return expected.includes(status);
+}
+
+function httpStatusMatchesForProbe(status: number, probe: HttpProbe): boolean {
+  const range = (probe as unknown as { expectedStatusRange?: { min: number; max: number } }).expectedStatusRange;
+  return httpStatusMatches(status, probe.expectedStatus, range);
 }
 
 function defaultTcpConnect(host: string, port: number, timeoutMs: number, signal?: AbortSignal): Promise<void> {
@@ -232,10 +235,15 @@ function defaultHttpFetch(
   });
 }
 
-async function checkTcp(probe: TcpProbe, deps: ReadinessDeps, signal?: AbortSignal): Promise<boolean> {
+async function checkTcp(
+  probe: TcpProbe,
+  deps: ReadinessDeps,
+  signal: AbortSignal | undefined,
+  timeoutMs: number,
+): Promise<boolean> {
   const connect = deps.tcpConnect ?? defaultTcpConnect;
   try {
-    await connect(probe.host, probe.port, probe.timeoutMs, signal);
+    await connect(probe.host, probe.port, timeoutMs, signal);
     return true;
   } catch (err) {
     if (signal?.aborted) throw err;
@@ -243,47 +251,31 @@ async function checkTcp(probe: TcpProbe, deps: ReadinessDeps, signal?: AbortSign
   }
 }
 
-async function checkHttp(probe: HttpProbe, deps: ReadinessDeps, signal?: AbortSignal): Promise<boolean> {
+async function checkHttp(
+  probe: HttpProbe,
+  deps: ReadinessDeps,
+  signal: AbortSignal | undefined,
+  timeoutMs: number,
+): Promise<boolean> {
   const fetcher = deps.httpFetch ?? defaultHttpFetch;
   try {
     const res = await fetcher(probe.url, {
       method: probe.method,
       headers: probe.headers,
-      timeoutMs: probe.timeoutMs,
+      timeoutMs,
       signal,
     });
-    return httpStatusMatches(res.status, probe.expectedStatus);
+    return httpStatusMatchesForProbe(res.status, probe);
   } catch (err) {
     if (signal?.aborted) throw err;
     return false;
   }
 }
 
-async function checkServiceRunning(
+async function checkServiceRunningWithState(
   probe: ServiceRunningProbe,
-  deps: ReadinessDeps,
-  plan: ComposeSandboxPlan,
+  state: { service: string; state: string; status: string; exitCode?: number; exists: boolean },
 ): Promise<boolean> {
-  const getter = deps.getServiceState ?? ((svc: string) => defaultGetServiceState(plan, svc));
-  let state: { service: string; state: string; status: string; exitCode?: number; exists: boolean };
-  try {
-    state = await getter(probe.service);
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    if (msg.includes('not found') || msg.includes('never been created')) {
-      throw new ServiceProbeError(
-        `service ${probe.service} not found: ${msg}`,
-        probe.service,
-        'missing',
-        undefined,
-        'service-running',
-      );
-    }
-    if (msg.includes('failed to parse') || msg.includes('failed to inspect')) {
-      throw new ReadinessProbeError(`service ${probe.service} inspect failed: ${msg}`, describeProbe(probe));
-    }
-    throw err;
-  }
   const s = state.state.toLowerCase();
   if (s === 'running') return true;
   if (s === 'dead' || s === 'failed') {
@@ -298,34 +290,14 @@ async function checkServiceRunning(
   return false;
 }
 
-async function checkServiceCompleted(
+async function checkServiceCompletedWithState(
   probe: ServiceCompletedProbe,
-  deps: ReadinessDeps,
-  plan: ComposeSandboxPlan,
+  state: { service: string; state: string; status: string; exitCode?: number; exists: boolean },
 ): Promise<boolean> {
-  const getter = deps.getServiceState ?? ((svc: string) => defaultGetServiceState(plan, svc));
-  let state: { service: string; state: string; status: string; exitCode?: number; exists: boolean };
-  try {
-    state = await getter(probe.service);
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    if (msg.includes('not found') || msg.includes('never been created')) {
-      throw new ServiceProbeError(
-        `service ${probe.service} not found: ${msg}`,
-        probe.service,
-        'missing',
-        undefined,
-        'service-completed',
-      );
-    }
-    if (msg.includes('failed to parse') || msg.includes('failed to inspect')) {
-      throw new ReadinessProbeError(`service ${probe.service} inspect failed: ${msg}`, describeProbe(probe));
-    }
-    throw err;
-  }
   const s = state.state.toLowerCase();
   if (s === 'exited') {
-    const code = state.exitCode ?? 0;
+    if (state.exitCode === undefined) return false;
+    const code = state.exitCode;
     if (code === 0) return true;
     throw new ServiceProbeError(
       `service ${probe.service} completed with failure: state=${state.state} exitCode=${code} status=${state.status}`,
@@ -350,44 +322,144 @@ async function checkServiceCompleted(
   return false;
 }
 
-async function checkCommand(probe: CommandProbe, deps: ReadinessDeps): Promise<boolean> {
+async function fetchServiceStateWithBudget(
+  service: string,
+  deps: ReadinessDeps,
+  plan: ComposeSandboxPlan,
+  signal: AbortSignal | undefined,
+  timeoutMs: number,
+): Promise<{ service: string; state: string; status: string; exitCode?: number; exists: boolean }> {
+  const getter =
+    deps.getServiceState ??
+    ((svc: string, opts?: { signal?: AbortSignal; timeoutMs?: number }) => defaultGetServiceState(plan, svc, {}, opts));
+  try {
+    return await getter(service, { signal, timeoutMs });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (msg.includes('not found') || msg.includes('never been created')) {
+      throw new ServiceProbeError(`service ${service} not found: ${msg}`, service, 'missing', undefined, 'service');
+    }
+    if (msg.includes('failed to parse') || msg.includes('failed to inspect')) {
+      throw new ReadinessProbeError(`service ${service} inspect failed: ${msg}`, `service ${service}`);
+    }
+    throw err;
+  }
+}
+
+async function checkCommand(
+  probe: CommandProbe,
+  deps: ReadinessDeps,
+  signal: AbortSignal | undefined,
+  timeoutMs: number,
+): Promise<boolean> {
   const runner =
     deps.runCommandProbe ??
-    ((p: CommandProbe) =>
+    ((p: CommandProbe, opts?: { signal?: AbortSignal; timeoutMs?: number }) =>
       runProcess({
         executable: p.executable,
         args: [...p.args],
         env: p.env as Record<string, string>,
-        timeoutMs: p.timeoutMs,
+        timeoutMs: opts?.timeoutMs ?? p.timeoutMs,
+        signal: opts?.signal,
         captureOutput: true,
       }));
   try {
-    const result = await runner(probe);
+    const result = await runner(probe, { signal, timeoutMs });
+    if (result.timedOut) return false;
+    if (result.signal !== null) return false;
     return result.exitCode === 0;
-  } catch {
+  } catch (err) {
+    if (signal?.aborted) throw err;
     return false;
   }
 }
 
-async function checkProbeOnce(
-  probe: ReadinessProbe,
-  deps: ReadinessDeps,
-  plan: ComposeSandboxPlan,
-  signal?: AbortSignal,
-): Promise<boolean> {
-  switch (probe.type) {
-    case 'tcp':
-      return checkTcp(probe, deps, signal);
-    case 'http':
-      return checkHttp(probe, deps, signal);
-    case 'service-running':
-      return checkServiceRunning(probe, deps, plan);
-    case 'service-completed':
-      return checkServiceCompleted(probe, deps, plan);
-    case 'command':
-      return checkCommand(probe, deps);
-    default:
-      return false;
+async function sleepWithAbort(
+  clock: Clock,
+  scheduler: ReturnType<typeof getScheduler>,
+  ms: number,
+  signal: AbortSignal,
+): Promise<void> {
+  if (ms <= 0) return;
+  if (signal.aborted) throw signal.reason ?? new Error('aborted');
+  await new Promise<void>((resolve, reject) => {
+    let finished = false;
+    const onAbort = () => {
+      if (finished) return;
+      finished = true;
+      try {
+        signal.removeEventListener('abort', onAbort);
+      } catch (_unused) {
+        void _unused;
+      }
+      reject(signal.reason ?? new Error('aborted'));
+    };
+    signal.addEventListener('abort', onAbort, { once: true });
+    const sleepP = clock.sleep(ms);
+    sleepP.then(
+      () => {
+        if (finished) return;
+        finished = true;
+        try {
+          signal.removeEventListener('abort', onAbort);
+        } catch (_unused) {
+          void _unused;
+        }
+        resolve();
+      },
+      (e) => {
+        if (finished) return;
+        finished = true;
+        try {
+          signal.removeEventListener('abort', onAbort);
+        } catch (_unused) {
+          void _unused;
+        }
+        reject(e);
+      },
+    );
+  });
+}
+
+async function raceWithBudgetAndSignal<T>(
+  promise: Promise<T>,
+  budgetMs: number,
+  signal: AbortSignal,
+  scheduler: ReturnType<typeof getScheduler>,
+): Promise<T> {
+  if (signal.aborted) throw signal.reason ?? new Error('aborted');
+  if (budgetMs <= 0) throw signal.reason ?? new Error('aborted');
+  let timeoutHandle: unknown | undefined;
+  let abortHandler: (() => void) | undefined;
+  try {
+    const timeoutP = new Promise<never>((_, reject) => {
+      timeoutHandle = scheduler.setTimeout(() => reject(new Error('probe budget exceeded')), budgetMs);
+    });
+    const abortP = new Promise<never>((_, reject) => {
+      if (signal.aborted) {
+        reject(signal.reason ?? new Error('aborted'));
+      } else {
+        abortHandler = () => reject(signal.reason ?? new Error('aborted'));
+        signal.addEventListener('abort', abortHandler, { once: true });
+      }
+    });
+    const result = await Promise.race([promise, timeoutP, abortP]);
+    return result as T;
+  } finally {
+    if (timeoutHandle !== undefined) {
+      try {
+        scheduler.clearTimeout(timeoutHandle);
+      } catch (_unused) {
+        void _unused;
+      }
+    }
+    if (abortHandler) {
+      try {
+        signal.removeEventListener('abort', abortHandler);
+      } catch (_unused) {
+        void _unused;
+      }
+    }
   }
 }
 
@@ -397,6 +469,7 @@ export async function waitForReadiness(
   outerSignal?: AbortSignal,
 ): Promise<void> {
   const clock = deps.clock ?? defaultClock();
+  const scheduler = getScheduler(clock);
   const probes = plan.readiness;
   if (probes.length === 0) return;
 
@@ -416,73 +489,272 @@ export async function waitForReadiness(
     if (outerSignal.aborted) abortInner.abort(outerSignal.reason);
     else outerSignal.addEventListener('abort', onOuterAbort, { once: true });
   }
+  const abortSignal = abortInner.signal;
 
-  const probeStatus = new Map<string, { probe: ReadinessProbe; done: boolean; lastError?: Error }>();
+  const probeStatus = new Map<string, { probe: ReadinessProbe; done: boolean; lastError?: Error; nextAt: number }>();
   for (const p of probes) {
-    probeStatus.set(describeProbe(p), { probe: p, done: false });
+    const interval = (p as unknown as { intervalMs?: number }).intervalMs ?? 1000;
+    probeStatus.set(describeProbe(p), { probe: p, done: false, nextAt: startMs });
+    void interval;
   }
 
   let fatalError: Error | undefined;
 
-  async function runOne(probe: ReadinessProbe): Promise<void> {
-    const key = describeProbe(probe);
-    const interval = (probe as unknown as { intervalMs?: number }).intervalMs ?? 1000;
-    while (true) {
-      if (abortInner.signal.aborted || outerSignal?.aborted) {
-        throw abortInner.signal.reason ?? outerSignal?.reason ?? new Error('aborted');
-      }
-      const now = clock.now();
-      if (now >= deadline) {
-        break;
-      }
-      let ok: boolean;
-      try {
-        ok = await checkProbeOnce(probe, deps, plan, abortInner.signal);
-      } catch (err) {
-        const e = err instanceof Error ? err : new Error(String(err));
-        if (e instanceof ServiceProbeError) {
-          throw e;
-        }
-        if (e instanceof ReadinessProbeError) {
-          throw e;
-        }
-        probeStatus.get(key)!.lastError = e;
-        ok = false;
-      }
-      if (ok) {
-        probeStatus.get(key)!.done = true;
-        return;
-      }
-      const remaining = deadline - clock.now();
-      if (remaining <= 0) break;
-      const sleepMs = Math.min(interval, remaining);
-      if (sleepMs > 0) {
-        await clock.sleep(sleepMs);
-      } else {
-        break;
-      }
-    }
+  function remainingMs(): number {
+    return deadline - clock.now();
   }
 
-  const promises = probes.map((probe) =>
-    runOne(probe).catch((err) => {
-      if (err instanceof ServiceProbeError || err instanceof ReadinessProbeError) {
-        if (!fatalError) {
-          fatalError = err;
+  function clampTimeout(probeTimeout: number): number {
+    const rem = remainingMs();
+    if (rem <= 0) return 0;
+    return Math.min(probeTimeout, rem);
+  }
+
+  let snapshotCache: Map<
+    string,
+    { service: string; state: string; status: string; exitCode?: number; exists: boolean }
+  > | null = null;
+  let snapshotAt = 0;
+  const SNAPSHOT_TTL_MS = 5;
+
+  async function getSnapshot(
+    rem: number,
+  ): Promise<Map<string, { service: string; state: string; status: string; exitCode?: number; exists: boolean }>> {
+    const now = clock.now();
+    if (snapshotCache && now - snapshotAt < SNAPSHOT_TTL_MS) {
+      return snapshotCache;
+    }
+    const effective = clampTimeout(rem);
+    if (deps.getServiceSnapshot) {
+      const m = await deps.getServiceSnapshot({ signal: abortSignal, timeoutMs: effective });
+      snapshotCache = m;
+      snapshotAt = clock.now();
+      return m;
+    }
+    const pendingServices = [...probeStatus.values()]
+      .filter((v) => !v.done && (v.probe.type === 'service-running' || v.probe.type === 'service-completed'))
+      .map((v) => (v.probe as ServiceRunningProbe | ServiceCompletedProbe).service);
+    const distinct = [...new Set(pendingServices)];
+    if (distinct.length === 0) {
+      const empty = new Map();
+      snapshotCache = empty;
+      snapshotAt = now;
+      return empty;
+    }
+    const entries: Array<
+      [string, { service: string; state: string; status: string; exitCode?: number; exists: boolean }]
+    > = [];
+    for (const svc of distinct) {
+      try {
+        const st = await fetchServiceStateWithBudget(svc, deps, plan, abortSignal, effective);
+        entries.push([svc, st]);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        if (
+          msg.includes('not found') ||
+          msg.includes('never been created') ||
+          msg.includes('failed to parse') ||
+          msg.includes('failed to inspect')
+        ) {
+          const probeForSvc = [...probeStatus.values()].find(
+            (v) => (v.probe as { service?: string }).service === svc,
+          )?.probe;
+          const pType = probeForSvc ? probeForSvc.type : 'service';
+          if (msg.includes('failed to parse') || msg.includes('failed to inspect')) {
+            throw new ReadinessProbeError(
+              `service ${svc} inspect failed: ${msg}`,
+              describeProbe(probeForSvc as ReadinessProbe),
+            );
+          }
+          throw new ServiceProbeError(`service ${svc} not found: ${msg}`, svc, 'missing', undefined, pType);
+        }
+        throw err;
+      }
+    }
+    const m = new Map<string, { service: string; state: string; status: string; exitCode?: number; exists: boolean }>();
+    for (const [svc, st] of entries) m.set(svc, st);
+    snapshotCache = m;
+    snapshotAt = clock.now();
+    return m;
+  }
+
+  async function checkOneWithBudget(
+    probe: ReadinessProbe,
+    snapshot: Map<
+      string,
+      { service: string; state: string; status: string; exitCode?: number; exists: boolean }
+    > | null,
+  ): Promise<boolean> {
+    const rem = remainingMs();
+    if (rem <= 0) return false;
+    const effective = clampTimeout((probe as unknown as { timeoutMs: number }).timeoutMs ?? 5000);
+    if (effective <= 0) return false;
+    let inner: Promise<boolean>;
+    switch (probe.type) {
+      case 'tcp':
+        inner = checkTcp(probe, deps, abortSignal, effective);
+        break;
+      case 'http':
+        inner = checkHttp(probe, deps, abortSignal, effective);
+        break;
+      case 'service-running': {
+        const st = snapshot?.get((probe as ServiceRunningProbe).service);
+        if (!st) {
+          inner = (async () => {
+            const s = await fetchServiceStateWithBudget(
+              (probe as ServiceRunningProbe).service,
+              deps,
+              plan,
+              abortSignal,
+              effective,
+            );
+            return checkServiceRunningWithState(probe as ServiceRunningProbe, s);
+          })();
+        } else {
+          inner = checkServiceRunningWithState(probe as ServiceRunningProbe, st);
+        }
+        break;
+      }
+      case 'service-completed': {
+        const st = snapshot?.get((probe as ServiceCompletedProbe).service);
+        if (!st) {
+          inner = (async () => {
+            const s = await fetchServiceStateWithBudget(
+              (probe as ServiceCompletedProbe).service,
+              deps,
+              plan,
+              abortSignal,
+              effective,
+            );
+            return checkServiceCompletedWithState(probe as ServiceCompletedProbe, s);
+          })();
+        } else {
+          inner = checkServiceCompletedWithState(probe as ServiceCompletedProbe, st);
+        }
+        break;
+      }
+      case 'command':
+        inner = checkCommand(probe as CommandProbe, deps, abortSignal, effective);
+        break;
+      default:
+        inner = Promise.resolve(false);
+    }
+    return raceWithBudgetAndSignal(inner, effective, abortSignal, scheduler);
+  }
+
+  try {
+    while (true) {
+      if (abortSignal.aborted) {
+        throw abortSignal.reason ?? new Error('aborted');
+      }
+      const rem = remainingMs();
+      if (rem <= 0) break;
+
+      const pendingEntries = [...probeStatus.entries()].filter(([, v]) => !v.done);
+      if (pendingEntries.length === 0) break;
+
+      const now = clock.now();
+      const due = pendingEntries.filter(([, v]) => now >= v.nextAt);
+      if (due.length === 0) {
+        const nextAt = Math.min(...pendingEntries.map(([, v]) => v.nextAt));
+        const sleepMs = Math.min(nextAt - now, rem);
+        if (sleepMs <= 0) continue;
+        await sleepWithAbort(clock, scheduler, sleepMs, abortSignal);
+        continue;
+      }
+
+      // Determine if any due is service probe needing snapshot
+      const needsSnapshot = due.some(
+        ([, v]) => v.probe.type === 'service-running' || v.probe.type === 'service-completed',
+      );
+      let snapshot: Map<
+        string,
+        { service: string; state: string; status: string; exitCode?: number; exists: boolean }
+      > | null = null;
+      if (needsSnapshot) {
+        try {
+          snapshot = await raceWithBudgetAndSignal(getSnapshot(rem), clampTimeout(5000), abortSignal, scheduler);
+        } catch (err) {
+          const e = err instanceof Error ? err : new Error(String(err));
+          if (e instanceof ServiceProbeError || e instanceof ReadinessProbeError) {
+            if (!fatalError) {
+              fatalError = e;
+              try {
+                abortInner.abort(e);
+              } catch (_unused) {
+                void _unused;
+              }
+            }
+            throw e;
+          }
+          if (abortSignal.aborted) throw abortSignal.reason ?? e;
+          // Snapshot fetch failed non-fatally: treat as not ready for this cycle
+          snapshot = null;
+        }
+      }
+
+      // Process due probes in input order for deterministic fatal selection
+      const orderedDue = [...due].sort((a, b) => probes.indexOf(a[1].probe) - probes.indexOf(b[1].probe));
+      const results = await Promise.allSettled(
+        orderedDue.map(async ([key, entry]) => {
           try {
-            abortInner.abort(err);
-          } catch (_unused) {
-            void _unused;
+            const ok = await checkOneWithBudget(entry.probe, snapshot);
+            return { key, ok };
+          } catch (err) {
+            const e = err instanceof Error ? err : new Error(String(err));
+            throw { key, err: e };
+          }
+        }),
+      );
+
+      let hadFatalInThisCycle = false;
+      for (const res of results) {
+        if (res.status === 'fulfilled') {
+          const { key, ok } = res.value as { key: string; ok: boolean };
+          if (ok) {
+            const ent = probeStatus.get(key);
+            if (ent) ent.done = true;
+          } else {
+            const ent = probeStatus.get(key);
+            if (ent) {
+              const interval = (ent.probe as unknown as { intervalMs?: number }).intervalMs ?? 1000;
+              ent.nextAt = clock.now() + Math.min(interval, remainingMs());
+            }
+          }
+        } else {
+          const reason = (res.reason as { key: string; err: Error }) ?? { key: '', err: new Error(String(res.reason)) };
+          const e = reason.err;
+          const key = reason.key;
+          if (e instanceof ServiceProbeError || e instanceof ReadinessProbeError) {
+            if (!fatalError) {
+              fatalError = e;
+              try {
+                abortInner.abort(e);
+              } catch (_unused) {
+                void _unused;
+              }
+            }
+            hadFatalInThisCycle = true;
+          } else {
+            if (String(e.message).toLowerCase().includes('abort')) {
+              throw e;
+            }
+            const ent = probeStatus.get(key);
+            if (ent) {
+              ent.lastError = e;
+              const interval = (ent.probe as unknown as { intervalMs?: number }).intervalMs ?? 1000;
+              ent.nextAt = clock.now() + Math.min(interval, remainingMs());
+            }
           }
         }
       }
-      throw err;
-    }),
-  );
+      if (hadFatalInThisCycle && fatalError) throw fatalError;
 
-  let settled: PromiseSettledResult<void>[] | undefined;
-  try {
-    settled = await Promise.allSettled(promises);
+      const remainingAfter = remainingMs();
+      if (remainingAfter <= 0) break;
+      if ([...probeStatus.values()].every((v) => v.done)) break;
+      // If no progress and no fatal, loop will sleep to next due
+    }
   } finally {
     if (outerSignal) {
       try {
@@ -492,49 +764,40 @@ export async function waitForReadiness(
       }
     }
   }
-  const settledSnapshot = settled ?? [];
 
-  if (abortInner.signal.aborted) {
-    throw abortInner.signal.reason ?? new Error('aborted');
-  }
-  if (outerSignal?.aborted) {
-    throw outerSignal.reason ?? new Error('aborted');
-  }
-
-  const nonFatalAbort = settledSnapshot.find(
-    (r) =>
-      r.status === 'rejected' &&
-      String((r as PromiseRejectedResult).reason?.message ?? '')
+  if (abortSignal.aborted) {
+    const reason = abortInner.signal.reason;
+    if (fatalError && reason === fatalError) throw fatalError;
+    // If abort due to deadline, fall through to timeout handling
+    if (fatalError) throw fatalError;
+    if (outerSignal?.aborted) throw outerSignal.reason ?? reason ?? new Error('aborted');
+    if (
+      String((reason as Error)?.message ?? '')
         .toLowerCase()
-        .includes('abort'),
-  );
-  if (nonFatalAbort) {
-    throw (nonFatalAbort as PromiseRejectedResult).reason;
+        .includes('aborted')
+    )
+      throw reason as Error;
+    // If deadline abort, continue to unsatisfied handling unless fatal
+    if (!fatalError && remainingMs() <= 0) {
+      // treat as timeout
+    } else {
+      throw reason ?? new Error('aborted');
+    }
   }
-
-  if (fatalError) {
-    throw fatalError;
-  }
+  if (outerSignal?.aborted) throw outerSignal.reason ?? new Error('aborted');
+  if (fatalError) throw fatalError;
 
   const unsatisfied: string[] = [];
   for (const [key, val] of probeStatus.entries()) {
     if (!val.done) unsatisfied.push(key);
   }
-
   if (unsatisfied.length > 0) {
     const elapsed = clock.now() - startMs;
-    const redacted = unsatisfied.join(', ');
     throw new ReadinessTimeoutError(
-      `readiness timeout after ${elapsed}ms: unsatisfied probes: ${redacted}`,
+      `readiness timeout after ${elapsed}ms: unsatisfied probes: ${unsatisfied.join(', ')}`,
       unsatisfied,
       elapsed,
     );
-  }
-
-  const rejected = settledSnapshot.filter((r) => r.status === 'rejected') as PromiseRejectedResult[];
-  if (rejected.length > 0) {
-    const first = rejected[0] as PromiseRejectedResult;
-    throw first.reason;
   }
 }
 

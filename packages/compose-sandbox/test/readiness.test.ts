@@ -52,7 +52,10 @@ describe('waitForReadiness', () => {
     });
     expect(tcpConnect).toHaveBeenCalled();
     expect(httpFetch).toHaveBeenCalled();
-    expect(getServiceState).toHaveBeenCalledWith('minio-init');
+    expect(getServiceState).toHaveBeenCalledWith(
+      'minio-init',
+      expect.objectContaining({ timeoutMs: expect.any(Number) }),
+    );
   });
 
   it('reproduces template-shaped HTTP probes', async () => {

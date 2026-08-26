@@ -527,3 +527,7 @@ real-compose fixtures                  → 2 integration tests skipped with expl
 - Release prerequisite for ACTBOX-02: current root `package.json` version `0.6.0`; `@repo-toolkit/compose-sandbox` uses `0.0.0-PLACEHOLDER` pending `pnpm release` (release-it bumps `VERSION` + root package.json, publish via `pnpm publish-packages -- --version <tag>`). Recorded in related action task.
 
 All CSBOX-07 acceptance criteria met.
+
+## Remediation Note (CSREM-10 – 2026-08-26)
+
+The CSBOX-07 evidence above is historical and was later found stale by `docs/tasks/20260826-092501-compose-sandbox-review-remediation.md` Task CSREM-10. In particular, real-Compose tests used early returns counted as passes when Docker was unavailable, and some implementation/export/process details changed during CSREM-01 through CSREM-09. CSREM-10 replaced those early returns with explicit local skips plus `COMPOSE_SANDBOX_REQUIRE_DOCKER=1` required mode for CI/release verification, expanded real Docker fixtures, and aligned package/website docs with the remediated contract.

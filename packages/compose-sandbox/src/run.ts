@@ -1,15 +1,7 @@
-import { isAbsolute, relative, join } from 'node:path';
-import {
-  mkdir as fsMkdir,
-  writeFile as fsWriteFile,
-  lstat as fsLstat,
-  realpath as fsRealpath,
-  rm as fsRm,
-} from 'node:fs/promises';
-import { loadConfigFile, isPlainObject } from '@repo-toolkit/publish-package';
+import { join } from 'node:path';
 
-import { resolveComposeSandboxPlan, type ComposeSandboxPlan } from './plan';
-import { runProcess as defaultRunProcess, type Clock as ProcessClock } from './process';
+import { loadAndMergeComposeSandboxOptions } from './config';
+import { isProcessSuccess, runProcess as defaultRunProcess, type Clock as ProcessClock } from './process';
 import {
   runLifecycle,
   ComposeSandboxLifecycleError,
@@ -19,38 +11,44 @@ import {
   type SignalTarget,
 } from './lifecycle';
 import {
-  runCompose,
   preflightCompose,
   prepareSandbox,
   getServiceState as defaultGetServiceState,
+  getServiceSnapshot as defaultGetServiceSnapshot,
   startSandbox,
+  type ComposeDeps,
 } from './compose';
 import {
   waitForReadiness,
   type TcpConnect,
   type HttpFetch,
   type GetServiceState,
+  type GetServiceSnapshot,
   type RunCommandProbe,
 } from './readiness';
+import { createDefaultFs, ensurePathInsideRoot, resolveRealRoot, type SandboxFs } from './fs';
+import { createDefaultClock, getScheduler, type Clock } from './clock';
+import { collectSecrets, redactManifestObject, safeEmit } from './redact';
+import type { Logger } from './redact';
+import { runPhase } from './phase';
+import { collectEvidence } from './evidence';
+import { performCleanup } from './cleanup';
+
+export { loadAndMergeComposeSandboxOptions, mergeComposeSandboxOptions } from './config';
+export type { Logger } from './redact';
 
 export interface RunDeps {
-  readonly clock?: LifecycleClock & ProcessClock;
+  readonly clock?: Clock;
   readonly signalTarget?: SignalTarget;
   readonly createAbortController?: () => AbortController;
   readonly runProcess?: typeof defaultRunProcess;
   readonly tcpConnect?: TcpConnect;
   readonly httpFetch?: HttpFetch;
   readonly getServiceState?: GetServiceState;
+  readonly getServiceSnapshot?: GetServiceSnapshot;
   readonly runCommandProbe?: RunCommandProbe;
-  readonly fs?: {
-    mkdir(path: string, opts: { recursive: boolean }): Promise<void>;
-    writeFile(path: string, data: string, encoding: string): Promise<void>;
-    lstat?: (path: string) => Promise<{ isSymbolicLink(): boolean }>;
-    stat?: (path: string) => Promise<{ isSymbolicLink(): boolean }>;
-    realpath?: (path: string) => Promise<string>;
-    rm?: (path: string, opts: { recursive: boolean; force: boolean }) => Promise<void>;
-    unlink?: (path: string) => Promise<void>;
-  };
+  readonly logger?: Logger;
+  readonly fs?: SandboxFs;
 }
 
 export interface RunResult {
@@ -61,74 +59,43 @@ export interface RunResult {
   readonly manifestPath: string;
 }
 
-function defaultClock(): LifecycleClock & ProcessClock {
-  return {
-    now: () => Date.now(),
-    sleep: (ms: number) =>
-      new Promise<void>((resolve) => {
-        setTimeout(resolve, ms);
-      }),
-  };
+function defaultClock(): Clock {
+  return createDefaultClock();
 }
 
-function stripAnsi(input: string): string {
-  // eslint-disable-next-line no-control-regex
-  return input.replace(/\x1B\[[0-9;]*m/gu, '');
-}
+export async function runComposeSandbox(options: unknown = {}, deps: RunDeps = {}): Promise<RunResult> {
+  const { plan } = await loadAndMergeComposeSandboxOptions(options);
+  const logger = deps.logger;
+  let composeVersion = '';
 
-function truncateToBytes(text: string, maxBytes: number): string {
-  const len = Buffer.byteLength(text, 'utf8');
-  if (len <= maxBytes) return text;
-  return Buffer.from(text, 'utf8').subarray(0, maxBytes).toString('utf8');
-}
-
-function sanitizeMessage(msg: string): string {
-  return stripAnsi(msg).slice(0, 2000);
-}
-
-function redactSecrets(content: string, plan: ComposeSandboxPlan): string {
-  let out = content;
-  const secrets: string[] = [];
-  for (const v of Object.values(plan.test.env)) {
-    if (typeof v === 'string' && v.length > 0) secrets.push(v);
-  }
-  for (const probe of plan.readiness) {
-    if (probe.type === 'command') {
-      for (const v of Object.values(probe.env)) {
-        if (typeof v === 'string' && v.length > 0) secrets.push(v);
-      }
-    }
-  }
-  for (const s of secrets) {
-    if (s.length === 0) continue;
-    out = out.split(s).join('[REDACTED]');
-  }
-  return out;
-}
-
-export async function runComposeSandbox(options: unknown = {}, deps: RunDeps = {}): Promise<void> {
-  let mergedOptions: unknown = options;
-  if (isPlainObject(options) && typeof (options as Record<string, unknown>).config === 'string') {
-    const cfg = options as Record<string, unknown>;
-    const configPath = cfg.config as string;
-    const cwdHint = typeof cfg.cwd === 'string' ? (cfg.cwd as string) : undefined;
-    const loaded = await loadConfigFile<Record<string, unknown>>(configPath, cwdHint);
-    const withoutConfig = { ...cfg };
-    delete withoutConfig.config;
-    mergedOptions = { ...loaded, ...withoutConfig };
-  }
-
-  const plan = resolveComposeSandboxPlan(mergedOptions);
-
+  const composeInvocation = [plan.compose.executable, ...plan.compose.prefixArgs].join(' ').trim();
   if (plan.dryRun) {
-    return;
+    safeEmit(
+      `[compose-sandbox] dry-run cwd=${plan.cwd} files=${plan.compose.files.join(', ')} project=${plan.compose.projectName ?? '-'} compose=${composeInvocation}`,
+      logger,
+      plan,
+    );
+    return {
+      phase: 'validate',
+      outcome: 'success',
+      timings: {},
+      evidenceFiles: Object.freeze([]),
+      manifestPath: join(plan.evidence.resolvedDirectory, 'result.json'),
+    };
   }
+
+  safeEmit(
+    `[compose-sandbox] starting cwd=${plan.cwd} files=${plan.compose.files.join(', ')} project=${plan.compose.projectName ?? '-'} evidence=${plan.evidence.directory} compose=${composeInvocation}`,
+    logger,
+    plan,
+  );
 
   const clock = deps.clock ?? defaultClock();
   const signalTarget = deps.signalTarget ?? (process as unknown as SignalTarget);
   const createAbortController = deps.createAbortController ?? (() => new AbortController());
   const runProcessFn = deps.runProcess ?? defaultRunProcess;
-  const fs = deps.fs ?? { mkdir: fsMkdir, writeFile: fsWriteFile, lstat: fsLstat, realpath: fsRealpath, rm: fsRm };
+  const fs = deps.fs ?? createDefaultFs();
+  const realRoot = await resolveRealRoot(plan.cwd, fs);
 
   const timings: Record<string, number> = {};
   const evidenceFiles: string[] = [];
@@ -136,29 +103,42 @@ export async function runComposeSandbox(options: unknown = {}, deps: RunDeps = {
   let cleanupError: Error | undefined;
   const totalStart = clock.now();
   let currentPhase: LifecyclePhase = 'validate';
-  let failedPhase: LifecyclePhase | undefined;
 
-  const composeDeps = {
+  const composeDeps: ComposeDeps = {
     runProcess: runProcessFn,
     clock,
-    fs: fs as never,
+    fs,
   };
 
-  const readinessDeps = {
+  const readinessDeps: {
+    readonly clock: typeof clock;
+    readonly tcpConnect?: TcpConnect;
+    readonly httpFetch?: HttpFetch;
+    readonly getServiceState?: GetServiceState;
+    readonly getServiceSnapshot?: GetServiceSnapshot;
+    readonly runCommandProbe?: RunCommandProbe;
+  } = {
     clock,
     tcpConnect: deps.tcpConnect,
     httpFetch: deps.httpFetch,
-    getServiceState: deps.getServiceState ?? ((svc: string) => defaultGetServiceState(plan, svc, composeDeps)),
+    getServiceState:
+      deps.getServiceState ??
+      ((svc: string, opts?: { signal?: AbortSignal; timeoutMs?: number }) =>
+        defaultGetServiceState(plan, svc, composeDeps, opts)),
+    getServiceSnapshot:
+      deps.getServiceSnapshot ??
+      ((opts?: { signal?: AbortSignal; timeoutMs?: number }) => defaultGetServiceSnapshot(plan, composeDeps, opts)),
     runCommandProbe: deps.runCommandProbe,
   };
 
-  let totalTimer: ReturnType<typeof setTimeout> | undefined;
+  const scheduler = getScheduler(clock as unknown as LifecycleClock & ProcessClock);
+  let totalTimer: unknown | undefined;
   let lifecycleController: AbortController | undefined;
   const wrappedCreate = (): AbortController => {
     const c = createAbortController();
     lifecycleController = c;
     if (plan.timeouts.totalMs !== undefined) {
-      totalTimer = setTimeout(() => {
+      totalTimer = scheduler.setTimeout(() => {
         try {
           c.abort(new Error(`total timeout after ${plan.timeouts.totalMs}ms`));
         } catch (_unused) {
@@ -173,74 +153,98 @@ export async function runComposeSandbox(options: unknown = {}, deps: RunDeps = {
 
   const lifecycleCreate = plan.timeouts.totalMs !== undefined ? wrappedCreate : createAbortController;
 
+  function remainingTotalMs(): number | undefined {
+    if (plan.timeouts.totalMs === undefined) return undefined;
+    const elapsed = clock.now() - totalStart;
+    const rem = plan.timeouts.totalMs - elapsed;
+    return rem <= 0 ? 0 : rem;
+  }
+
+  function clampedTimeout(explicitMs: number): number {
+    const rem = remainingTotalMs();
+    if (rem === undefined) return explicitMs;
+    if (rem <= 0) return explicitMs;
+    return Math.min(explicitMs, rem);
+  }
+
+  const failedPhaseRef: { value: LifecyclePhase | undefined } = { value: undefined };
+
   const handlers: LifecycleHandlers = {
     validate: async (signal) => {
       currentPhase = 'validate';
-      const s = clock.now();
-      try {
+      await runPhase('validate', clock, logger, plan, timings, failedPhaseRef, async () => {
         if (signal.aborted) throw signal.reason ?? new Error('aborted during validate');
-      } catch (err) {
-        if (!failedPhase) failedPhase = currentPhase;
-        throw err;
-      } finally {
-        timings.validate = clock.now() - s;
-      }
+        safeEmit(`[compose-sandbox] validate files=${plan.compose.files.join(', ')} cwd=${plan.cwd}`, logger, plan);
+      });
     },
     prepare: async (signal) => {
       currentPhase = 'prepare';
-      const s = clock.now();
-      try {
-        await prepareSandbox(plan, { ...composeDeps, signal } as never);
+      await runPhase('prepare', clock, logger, plan, timings, failedPhaseRef, async () => {
+        safeEmit(
+          `[compose-sandbox] prepare directories=${plan.prepare.directories.length} copies=${plan.prepare.copies.length}`,
+          logger,
+          plan,
+        );
+        await prepareSandbox(plan, composeDeps);
         if (signal.aborted) throw signal.reason ?? new Error('aborted during prepare');
-      } catch (err) {
-        if (!failedPhase) failedPhase = currentPhase;
-        throw err;
-      } finally {
-        timings.prepare = clock.now() - s;
-      }
+      });
     },
     preflight: async (signal) => {
       currentPhase = 'preflight';
-      const s = clock.now();
-      try {
-        await preflightCompose(plan, composeDeps);
+      await runPhase('preflight', clock, logger, plan, timings, failedPhaseRef, async () => {
+        safeEmit(`[compose-sandbox] preflight ${composeInvocation} version`, logger, plan);
+        const preflightBudget = clampedTimeout(plan.timeouts.cleanupMs);
+        composeVersion = await preflightCompose(plan, composeDeps, { signal, timeoutMs: preflightBudget });
+        safeEmit(`[compose-sandbox] preflight version: ${composeVersion}`, logger, plan);
         if (signal.aborted) throw signal.reason ?? new Error('aborted during preflight');
-      } catch (err) {
-        if (!failedPhase) failedPhase = currentPhase;
-        throw err;
-      } finally {
-        timings.preflight = clock.now() - s;
-      }
+      });
     },
     start: async (signal) => {
       currentPhase = 'start';
-      const s = clock.now();
-      try {
+      await runPhase('start', clock, logger, plan, timings, failedPhaseRef, async () => {
+        safeEmit(
+          `[compose-sandbox] start ${composeInvocation} up -d project=${plan.compose.projectName ?? '-'} build=${String(plan.compose.build)} pull=${String(plan.compose.pull)}`,
+          logger,
+          plan,
+        );
         await startSandbox(plan, { ...composeDeps, signal });
         if (signal.aborted) throw signal.reason ?? new Error('aborted during start');
-      } catch (err) {
-        if (!failedPhase) failedPhase = currentPhase;
-        throw err;
-      } finally {
-        timings.start = clock.now() - s;
-      }
+      });
     },
     readiness: async (signal) => {
       currentPhase = 'readiness';
-      const s = clock.now();
-      try {
+      await runPhase('readiness', clock, logger, plan, timings, failedPhaseRef, async () => {
+        const probeSummary =
+          plan.readiness.length === 0
+            ? 'none'
+            : plan.readiness
+                .map((p) => {
+                  const rec = p as unknown as Record<string, unknown>;
+                  if (p.type === 'tcp' && typeof rec.port === 'number') return `${p.type}:${String(rec.port)}`;
+                  if (p.type === 'http' && typeof rec.url === 'string') return `${p.type}:${String(rec.url)}`;
+                  if (
+                    (p.type === 'service-running' || p.type === 'service-completed') &&
+                    typeof rec.service === 'string'
+                  )
+                    return `${p.type}:${String(rec.service)}`;
+                  if (p.type === 'command' && typeof rec.executable === 'string')
+                    return `${p.type}:${String(rec.executable)}`;
+                  return p.type;
+                })
+                .join(', ');
+        safeEmit(`[compose-sandbox] readiness ${plan.readiness.length} probe(s): ${probeSummary}`, logger, plan);
         await waitForReadiness(plan, readinessDeps, signal);
-      } catch (err) {
-        if (!failedPhase) failedPhase = currentPhase;
-        throw err;
-      } finally {
-        timings.readiness = clock.now() - s;
-      }
+        safeEmit(`[compose-sandbox] readiness all probes passed`, logger, plan);
+      });
     },
     test: async (signal) => {
       currentPhase = 'test';
-      const s = clock.now();
-      try {
+      await runPhase('test', clock, logger, plan, timings, failedPhaseRef, async () => {
+        safeEmit(
+          `[compose-sandbox] test ${plan.test.executable} ${plan.test.args.join(' ')} cwd=${plan.test.resolvedCwd ?? plan.cwd}`,
+          logger,
+          plan,
+        );
         const result = await runProcessFn(
           {
             executable: plan.test.executable,
@@ -252,7 +256,7 @@ export async function runComposeSandbox(options: unknown = {}, deps: RunDeps = {
             inheritStdio: true,
             captureOutput: false,
           },
-          { clock } as never,
+          { clock },
         );
         if (result.timedOut) {
           const err = new Error(`test command timed out after ${plan.timeouts.testMs}ms`);
@@ -260,207 +264,55 @@ export async function runComposeSandbox(options: unknown = {}, deps: RunDeps = {
           (err as unknown as Record<string, unknown>).exitCode = result.exitCode;
           throw err;
         }
-        if (result.exitCode !== 0) {
-          const err = new Error(`test command failed with exitCode ${result.exitCode}`);
+        if (!isProcessSuccess(result)) {
+          const err = new Error(`test command failed with exitCode ${result.exitCode} signal ${result.signal}`);
           (err as unknown as Record<string, unknown>).exitCode = result.exitCode;
           (err as unknown as Record<string, unknown>).signal = result.signal;
           throw err;
         }
         if (signal.aborted) throw signal.reason ?? new Error('aborted during test');
-      } catch (err) {
-        if (!failedPhase) failedPhase = currentPhase;
-        throw err;
-      } finally {
-        timings.test = clock.now() - s;
-      }
+        safeEmit(
+          `[compose-sandbox] test exitCode=${result.exitCode} ${result.timedOut ? 'timedOut' : ''} duration=${timings.test ?? 0}ms`,
+          logger,
+          plan,
+        );
+      });
     },
     evidence: async (outcome, signal, primary) => {
       currentPhase = 'evidence';
-      const s = clock.now();
-      try {
+      await runPhase('evidence', clock, logger, plan, timings, failedPhaseRef, async () => {
         const shouldCapture = plan.evidence.capture === 'always' || outcome === 'failure' || primary !== undefined;
-        if (!shouldCapture) return;
+        if (!shouldCapture) {
+          safeEmit(`[compose-sandbox] evidence skip capture=${plan.evidence.capture} outcome=${outcome}`, logger, plan);
+          return;
+        }
+        safeEmit(
+          `[compose-sandbox] evidence capture=${plan.evidence.capture} outcome=${outcome} dir=${plan.evidence.directory} stripAnsi=${String(plan.evidence.stripAnsi)}`,
+          logger,
+          plan,
+        );
         try {
-          await fs.mkdir(plan.evidence.resolvedDirectory, { recursive: true });
+          const evidenceBudget = clampedTimeout(plan.timeouts.cleanupMs);
+          await collectEvidence(plan, { ...composeDeps, fs }, realRoot, logger, signal, evidenceBudget, evidenceFiles);
         } catch (err) {
           const e = err instanceof Error ? err : new Error(String(err));
           if (!evidenceError) evidenceError = e;
           throw e;
         }
-
-        let psFailed: Error | undefined;
-        try {
-          const psResult = await runCompose(
-            plan,
-            'ps',
-            ['-a', '--format', 'json'],
-            { captureOutput: true, maxOutputBytes: plan.evidence.maxLogBytes, signal },
-            composeDeps,
-          );
-          let psOutput = psResult.stdout ?? '';
-          if (plan.evidence.stripAnsi) psOutput = stripAnsi(psOutput);
-          psOutput = truncateToBytes(psOutput, plan.evidence.maxLogBytes);
-          const psPath = join(plan.evidence.resolvedDirectory, 'ps.json');
-          await fs.writeFile(psPath, psOutput, 'utf8');
-          if (!evidenceFiles.includes('ps.json')) evidenceFiles.push('ps.json');
-        } catch (err) {
-          const e = err instanceof Error ? err : new Error(String(err));
-          psFailed = e;
-          if (!evidenceError) evidenceError = e;
-        }
-
-        let logsFailed: Error | undefined;
-        try {
-          const logsResult = await runCompose(
-            plan,
-            'logs',
-            ['--no-color'],
-            { captureOutput: true, maxOutputBytes: plan.evidence.maxLogBytes, signal },
-            composeDeps,
-          );
-          let combined = logsResult.stdout ?? '';
-          if (logsResult.stderr) combined += (combined ? '\n' : '') + logsResult.stderr;
-          if (plan.evidence.stripAnsi) combined = stripAnsi(combined);
-          combined = truncateToBytes(combined, plan.evidence.maxLogBytes);
-          const logsPath = join(plan.evidence.resolvedDirectory, 'logs.txt');
-          await fs.writeFile(logsPath, combined, 'utf8');
-          if (!evidenceFiles.includes('logs.txt')) evidenceFiles.push('logs.txt');
-        } catch (err) {
-          const e = err instanceof Error ? err : new Error(String(err));
-          logsFailed = e;
-          if (!evidenceError) evidenceError = e;
-        }
-
-        if (psFailed || logsFailed) {
-          const first = psFailed ?? (logsFailed as Error);
-          throw first;
-        }
-      } catch (err) {
-        if (!failedPhase) failedPhase = currentPhase;
-        throw err;
-      } finally {
-        timings.evidence = clock.now() - s;
-      }
+      });
     },
     cleanup: async (signal) => {
       currentPhase = 'cleanup';
-      const s = clock.now();
-      try {
-        const downArgs: string[] = [];
-        if (plan.cleanup.volumes) downArgs.push('--volumes');
-        if (plan.cleanup.removeOrphans) downArgs.push('--remove-orphans');
+      await runPhase('cleanup', clock, logger, plan, timings, failedPhaseRef, async () => {
         try {
-          await runCompose(
-            plan,
-            'down',
-            downArgs,
-            { timeoutMs: plan.timeouts.cleanupMs, signal, captureOutput: true, maxOutputBytes: 65536 },
-            composeDeps,
-          );
+          const cleanupBudget = clampedTimeout(plan.timeouts.cleanupMs);
+          await performCleanup(plan, { ...composeDeps, fs }, realRoot, logger, signal, cleanupBudget);
         } catch (err) {
           const e = err instanceof Error ? err : new Error(String(err));
           if (!cleanupError) cleanupError = e;
           throw e;
         }
-
-        for (let i = 0; i < plan.cleanup.paths.length; i += 1) {
-          const rel = plan.cleanup.paths[i] as string;
-          const resolved = plan.cleanup.resolvedPaths[i] as string;
-          if (resolved === plan.cwd) {
-            const e = new Error(`cleanup path resolves to project root: ${rel}`);
-            if (!cleanupError) cleanupError = e;
-            throw e;
-          }
-          const relToCwd = relative(plan.cwd, resolved);
-          if (relToCwd.startsWith('..') || isAbsolute(relToCwd)) {
-            const e = new Error(`cleanup path escapes project root: ${rel}`);
-            if (!cleanupError) cleanupError = e;
-            throw e;
-          }
-          try {
-            const fsAny = fs as unknown as {
-              lstat?: (p: string) => Promise<{ isSymbolicLink(): boolean }>;
-              stat?: (p: string) => Promise<{ isSymbolicLink(): boolean }>;
-            };
-            const lstatFn = fsAny.lstat ?? fsAny.stat;
-            if (lstatFn) {
-              let st: { isSymbolicLink(): boolean } | undefined;
-              try {
-                st = await (lstatFn as (p: string) => Promise<{ isSymbolicLink(): boolean }>)(resolved);
-              } catch (err) {
-                const msg = err instanceof Error ? err.message : String(err);
-                if (msg.includes('ENOENT') || msg.toLowerCase().includes('no such file')) {
-                  continue;
-                }
-                throw err;
-              }
-              if (st && typeof st.isSymbolicLink === 'function' && st.isSymbolicLink()) {
-                const realpathFn = (fs as unknown as { realpath?: (p: string) => Promise<string> }).realpath;
-                if (realpathFn) {
-                  let target = '';
-                  try {
-                    target = await realpathFn(resolved);
-                  } catch (err) {
-                    const msg = err instanceof Error ? err.message : String(err);
-                    if (msg.includes('ENOENT') || msg.toLowerCase().includes('no such file')) {
-                      continue;
-                    }
-                    throw err;
-                  }
-                  const relTarget = relative(plan.cwd, target);
-                  if (relTarget.startsWith('..') || isAbsolute(relTarget)) {
-                    const e = new Error(`cleanup path symlink target outside project: ${rel} -> ${target}`);
-                    if (!cleanupError) cleanupError = e;
-                    throw e;
-                  }
-                } else {
-                  const e = new Error(`cleanup path is symlink without realpath check: ${rel}`);
-                  if (!cleanupError) cleanupError = e;
-                  throw e;
-                }
-              }
-            }
-          } catch (err) {
-            const msg = err instanceof Error ? err.message : String(err);
-            if (
-              msg.includes('symlink target outside') ||
-              msg.includes('escapes') ||
-              msg.includes('project root') ||
-              msg.includes('without realpath')
-            ) {
-              throw err;
-            }
-            const isEnoent = msg.includes('ENOENT') || msg.toLowerCase().includes('no such file');
-            if (isEnoent) continue;
-          }
-
-          try {
-            const fsAny2 = fs as unknown as {
-              rm?: (p: string, opts: { recursive: boolean; force: boolean }) => Promise<void>;
-              unlink?: (p: string) => Promise<void>;
-            };
-            const rmFn = fsAny2.rm;
-            if (rmFn) {
-              await rmFn(resolved, { recursive: true, force: true });
-            } else if (fsAny2.unlink) {
-              await (fsAny2.unlink as (p: string) => Promise<void>)(resolved);
-            }
-          } catch (err) {
-            const msg = err instanceof Error ? err.message : String(err);
-            if (msg.includes('ENOENT') || msg.toLowerCase().includes('no such file')) {
-              continue;
-            }
-            const e = err instanceof Error ? err : new Error(String(err));
-            if (!cleanupError) cleanupError = e;
-            throw e;
-          }
-        }
-      } catch (err) {
-        if (!failedPhase) failedPhase = currentPhase;
-        throw err;
-      } finally {
-        timings.cleanup = clock.now() - s;
-      }
+      });
     },
   };
 
@@ -472,7 +324,15 @@ export async function runComposeSandbox(options: unknown = {}, deps: RunDeps = {
   let lifecycleSuccess = false;
 
   try {
-    const result = await runLifecycle(handlers, { clock, signalTarget, createAbortController: lifecycleCreate });
+    const result = await runLifecycle(handlers, {
+      clock,
+      signalTarget,
+      createAbortController: lifecycleCreate,
+      totalMs: plan.timeouts.totalMs,
+      cleanupMs: plan.timeouts.cleanupMs,
+      evidenceMs: plan.timeouts.cleanupMs,
+      preflightMs: plan.timeouts.cleanupMs,
+    });
     lifecycleSuccess = true;
     lifecyclePhase = result.phase;
   } catch (err) {
@@ -483,7 +343,7 @@ export async function runComposeSandbox(options: unknown = {}, deps: RunDeps = {
       lifecyclePhase = err.phase;
     } else if (err instanceof Error) {
       primaryError = err;
-      lifecyclePhase = failedPhase ?? currentPhase;
+      lifecyclePhase = failedPhaseRef.value ?? currentPhase;
       if (evidenceError && !secondaryError && evidenceError !== primaryError) {
         secondaryError = evidenceError;
       } else if (cleanupError && !secondaryError && cleanupError !== primaryError) {
@@ -496,7 +356,7 @@ export async function runComposeSandbox(options: unknown = {}, deps: RunDeps = {
       }
     } else {
       primaryError = new Error(String(err));
-      lifecyclePhase = failedPhase ?? currentPhase;
+      lifecyclePhase = failedPhaseRef.value ?? currentPhase;
     }
     if (primaryError && !secondaryError) {
       if (evidenceError && evidenceError !== primaryError) secondaryError = evidenceError;
@@ -507,60 +367,109 @@ export async function runComposeSandbox(options: unknown = {}, deps: RunDeps = {
     }
   }
 
-  if (totalTimer) clearTimeout(totalTimer);
+  if (totalTimer) scheduler.clearTimeout(totalTimer);
   timings.total = clock.now() - totalStart;
 
-  const manifestPhase = primaryError ? lifecyclePhase : 'cleanup';
+  const manifestPhase: LifecyclePhase = primaryError ? lifecyclePhase : 'cleanup';
   const outcome: 'success' | 'failure' = primaryError ? 'failure' : 'success';
 
-  const manifestEvidenceFiles = [...evidenceFiles];
-  if (!manifestEvidenceFiles.includes('result.json')) manifestEvidenceFiles.push('result.json');
-
-  const manifest: Record<string, unknown> = {
-    phase: manifestPhase,
-    outcome,
-    timings: {
-      total: timings.total,
-      validate: timings.validate,
-      prepare: timings.prepare,
-      preflight: timings.preflight,
-      start: timings.start,
-      readiness: timings.readiness,
-      test: timings.test,
-      evidence: timings.evidence,
-      cleanup: timings.cleanup,
-    },
-    evidenceFiles: manifestEvidenceFiles,
-    errors: {
-      primary: primaryError ? sanitizeMessage(primaryError.message) : undefined,
-      secondary: secondaryError ? sanitizeMessage(secondaryError.message) : undefined,
-    },
-  };
-
-  let manifestContent = JSON.stringify(manifest, null, 2);
-  manifestContent = redactSecrets(manifestContent, plan);
+  const secrets = collectSecrets(plan);
+  let manifestPathForLog = join(plan.evidence.resolvedDirectory, 'result.json');
+  let manifestWritten: boolean;
+  let finalEvidenceFiles: string[];
+  let finalOutcome: 'success' | 'failure';
+  let finalPhase: LifecyclePhase;
 
   try {
+    await ensurePathInsideRoot(plan.evidence.resolvedDirectory, realRoot, fs);
     await fs.mkdir(plan.evidence.resolvedDirectory, { recursive: true });
     const manifestPath = join(plan.evidence.resolvedDirectory, 'result.json');
+    await ensurePathInsideRoot(manifestPath, realRoot, fs);
+    manifestPathForLog = manifestPath;
+    const optimisticEvidenceFiles = [...evidenceFiles];
+    if (!optimisticEvidenceFiles.includes('result.json')) optimisticEvidenceFiles.push('result.json');
+    const rawManifest: Record<string, unknown> = {
+      phase: manifestPhase,
+      outcome,
+      timings: {
+        total: timings.total,
+        validate: timings.validate,
+        prepare: timings.prepare,
+        preflight: timings.preflight,
+        start: timings.start,
+        readiness: timings.readiness,
+        test: timings.test,
+        evidence: timings.evidence,
+        cleanup: timings.cleanup,
+      },
+      evidenceFiles: optimisticEvidenceFiles,
+      errors: {
+        primary: primaryError ? primaryError.message : undefined,
+        secondary: secondaryError ? secondaryError.message : undefined,
+      },
+    };
+    const redactedManifest = redactManifestObject(rawManifest, secrets);
+    const manifestContent = JSON.stringify(redactedManifest, null, 2);
     await fs.writeFile(manifestPath, manifestContent, 'utf8');
     if (!evidenceFiles.includes('result.json')) evidenceFiles.push('result.json');
+    finalEvidenceFiles = [...evidenceFiles];
+    manifestWritten = true;
+    finalOutcome = outcome;
+    finalPhase = manifestPhase;
   } catch (err) {
     const me = err instanceof Error ? err : new Error(String(err));
+    manifestWritten = false;
+    finalEvidenceFiles = [...evidenceFiles];
     if (!primaryError) {
       primaryError = me;
+      // eslint-disable-next-line no-useless-assignment
       lifecyclePhase = 'evidence';
-    } else if (!secondaryError) {
-      secondaryError = me;
+      finalPhase = 'evidence';
+      finalOutcome = 'failure';
+    } else {
+      if (!secondaryError) secondaryError = me;
+      finalOutcome = 'failure';
+      finalPhase = manifestPhase;
+      if (outcome === 'success') finalPhase = 'evidence';
     }
   }
 
+  const summaryIcon = finalOutcome === 'success' ? '✅' : '❌';
+  safeEmit(
+    `[compose-sandbox] ${summaryIcon} ${finalOutcome} phase=${finalPhase} total=${timings.total ?? 0}ms`,
+    logger,
+    plan,
+  );
+  if (composeVersion) safeEmit(`[compose-sandbox] version: ${composeVersion}`, logger, plan);
+  safeEmit(
+    `[compose-sandbox] timings validate=${timings.validate ?? 0}ms prepare=${timings.prepare ?? 0}ms preflight=${timings.preflight ?? 0}ms start=${timings.start ?? 0}ms readiness=${timings.readiness ?? 0}ms test=${timings.test ?? 0}ms evidence=${timings.evidence ?? 0}ms cleanup=${timings.cleanup ?? 0}ms`,
+    logger,
+    plan,
+  );
+  safeEmit(
+    `[compose-sandbox] evidence dir=${plan.evidence.directory} files=${finalEvidenceFiles.join(', ')}`,
+    logger,
+    plan,
+  );
+  safeEmit(`[compose-sandbox] manifest ${manifestPathForLog}`, logger, plan);
+  if (primaryError) safeEmit(`[compose-sandbox] primary error: ${primaryError.message}`, logger, plan);
+  if (secondaryError) safeEmit(`[compose-sandbox] secondary error: ${secondaryError.message}`, logger, plan);
+
   if (primaryError) {
     if (secondaryError) {
-      throw new ComposeSandboxLifecycleError(lifecyclePhase, primaryError, secondaryError);
+      throw new ComposeSandboxLifecycleError(finalPhase, primaryError, secondaryError);
     }
     throw primaryError;
   }
 
   void lifecycleSuccess;
+  void manifestWritten;
+  const result: RunResult = {
+    phase: finalPhase,
+    outcome: finalOutcome,
+    timings: { ...timings },
+    evidenceFiles: Object.freeze([...finalEvidenceFiles]),
+    manifestPath: manifestPathForLog,
+  };
+  return result;
 }

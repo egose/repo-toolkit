@@ -1,5 +1,9 @@
 import { spawn as defaultSpawn } from 'node:child_process';
 import type { ChildProcess } from 'node:child_process';
+import { createDefaultClock, type Clock } from './clock';
+import { byteLengthUtf8, truncateUtf8ToBytes } from './output';
+
+export { truncateUtf8ToBytes } from './output';
 
 export interface ProcessOptions {
   readonly executable: string;
@@ -14,7 +18,7 @@ export interface ProcessOptions {
 }
 
 export interface ProcessResult {
-  readonly exitCode: number;
+  readonly exitCode: number | null;
   readonly signal: string | null;
   readonly stdout: string;
   readonly stderr: string;
@@ -25,10 +29,7 @@ export interface ProcessResult {
   readonly truncatedBytes: number;
 }
 
-export interface Clock {
-  now(): number;
-  sleep(ms: number): Promise<void>;
-}
+export type { Clock } from './clock';
 
 export interface ProcessDeps {
   readonly spawn?: typeof defaultSpawn;
@@ -41,17 +42,23 @@ const DEFAULT_MAX_OUTPUT_BYTES = 1_048_576;
 const DEFAULT_GRACE_MS = 2000;
 
 function defaultClock(): Clock {
-  return {
-    now: () => Date.now(),
-    sleep: (ms: number) =>
-      new Promise<void>((resolve) => {
-        setTimeout(resolve, ms);
-      }),
-  };
+  return createDefaultClock();
 }
 
 function byteLength(str: string): number {
-  return Buffer.byteLength(str, 'utf8');
+  return byteLengthUtf8(str);
+}
+
+function truncateChunkToBytes(chunk: string, maxBytes: number): string {
+  return truncateUtf8ToBytes(chunk, maxBytes);
+}
+
+export function isProcessSuccess(result: ProcessResult): boolean {
+  return result.exitCode === 0 && result.signal === null && result.timedOut === false;
+}
+
+export function isSuccessfulProcessResult(result: ProcessResult): boolean {
+  return isProcessSuccess(result);
 }
 
 export async function runProcess(options: ProcessOptions, deps: ProcessDeps = {}): Promise<ProcessResult> {
@@ -77,6 +84,15 @@ export async function runProcess(options: ProcessOptions, deps: ProcessDeps = {}
       throw new Error('maxOutputBytes must be a positive safe integer');
     }
   }
+  if (options.captureOutput === true && options.inheritStdio === true) {
+    throw new Error('captureOutput and inheritStdio are mutually exclusive');
+  }
+
+  if (options.signal?.aborted) {
+    const err = new Error(`process aborted before spawn: ${options.executable}`);
+    (err as unknown as Record<string, unknown>).cause = options.signal.reason;
+    throw err;
+  }
 
   const spawnFn = deps.spawn ?? defaultSpawn;
   const clock = deps.clock ?? defaultClock();
@@ -87,8 +103,10 @@ export async function runProcess(options: ProcessOptions, deps: ProcessDeps = {}
     });
   const graceMs = deps.graceMs ?? DEFAULT_GRACE_MS;
   const inheritStdio = options.inheritStdio ?? false;
+  const shouldCapture = !inheritStdio && options.captureOutput !== false;
   const maxOutputBytes = options.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES;
   const startMs = clock.now();
+  const useProcessGroup = process.platform !== 'win32';
 
   let timedOut = false;
   let stdout = '';
@@ -100,6 +118,10 @@ export async function runProcess(options: ProcessOptions, deps: ProcessDeps = {}
   let truncatedBytes = 0;
 
   function appendStdout(chunk: string): void {
+    if (!shouldCapture) {
+      truncatedBytes += byteLength(chunk);
+      return;
+    }
     if (stdoutTruncated) {
       truncatedBytes += byteLength(chunk);
       return;
@@ -108,12 +130,15 @@ export async function runProcess(options: ProcessOptions, deps: ProcessDeps = {}
     if (stdoutBytes + len > maxOutputBytes) {
       const remaining = maxOutputBytes - stdoutBytes;
       if (remaining > 0) {
-        const buf = Buffer.from(chunk, 'utf8').subarray(0, remaining).toString('utf8');
-        stdout += buf;
-        stdoutBytes += byteLength(buf);
+        const safe = truncateChunkToBytes(chunk, remaining);
+        const safeBytes = byteLength(safe);
+        stdout += safe;
+        stdoutBytes += safeBytes;
+        truncatedBytes += len - safeBytes;
+      } else {
+        truncatedBytes += len;
       }
       stdoutTruncated = true;
-      truncatedBytes += len - Math.max(0, remaining);
     } else {
       stdout += chunk;
       stdoutBytes += len;
@@ -121,6 +146,10 @@ export async function runProcess(options: ProcessOptions, deps: ProcessDeps = {}
   }
 
   function appendStderr(chunk: string): void {
+    if (!shouldCapture) {
+      truncatedBytes += byteLength(chunk);
+      return;
+    }
     if (stderrTruncated) {
       truncatedBytes += byteLength(chunk);
       return;
@@ -129,12 +158,15 @@ export async function runProcess(options: ProcessOptions, deps: ProcessDeps = {}
     if (stderrBytes + len > maxOutputBytes) {
       const remaining = maxOutputBytes - stderrBytes;
       if (remaining > 0) {
-        const buf = Buffer.from(chunk, 'utf8').subarray(0, remaining).toString('utf8');
-        stderr += buf;
-        stderrBytes += byteLength(buf);
+        const safe = truncateChunkToBytes(chunk, remaining);
+        const safeBytes = byteLength(safe);
+        stderr += safe;
+        stderrBytes += safeBytes;
+        truncatedBytes += len - safeBytes;
+      } else {
+        truncatedBytes += len;
       }
       stderrTruncated = true;
-      truncatedBytes += len - Math.max(0, remaining);
     } else {
       stderr += chunk;
       stderrBytes += len;
@@ -155,19 +187,40 @@ export async function runProcess(options: ProcessOptions, deps: ProcessDeps = {}
     }
 
     function terminate(sig: NodeJS.Signals): void {
-      if (!child || (child.exitCode as unknown) != null || (child.signalCode as unknown) != null) return;
+      if (!child) return;
+      const ec = (child as unknown as { exitCode: number | null }).exitCode;
+      const sc = (child as unknown as { signalCode: NodeJS.Signals | null }).signalCode;
+      if (ec !== null && ec !== undefined) return;
+      if (sc !== null && sc !== undefined) return;
       const pid = child.pid;
       if (pid !== undefined) {
+        if (useProcessGroup) {
+          try {
+            killFn(-pid, sig);
+          } catch (_unused) {
+            void _unused;
+          }
+        }
         try {
-          killFn(-pid, sig);
-        } catch (_unused) {
-          void _unused;
+          killFn(pid, sig);
+        } catch (_unused2) {
+          void _unused2;
         }
       }
       try {
         child.kill(sig);
-      } catch (_unused2) {
-        void _unused2;
+      } catch (_unused3) {
+        void _unused3;
+      }
+    }
+
+    function cleanupSignal(): void {
+      if (abortHandler && options.signal) {
+        try {
+          options.signal.removeEventListener('abort', abortHandler);
+        } catch (_unused) {
+          void _unused;
+        }
       }
     }
 
@@ -175,13 +228,7 @@ export async function runProcess(options: ProcessOptions, deps: ProcessDeps = {}
       if (settled) return;
       settled = true;
       cleanupTimers();
-      if (abortHandler && options.signal) {
-        try {
-          options.signal.removeEventListener('abort', abortHandler);
-        } catch (_unused) {
-          void _unused;
-        }
-      }
+      cleanupSignal();
       resolve(result);
     }
 
@@ -189,13 +236,7 @@ export async function runProcess(options: ProcessOptions, deps: ProcessDeps = {}
       if (settled) return;
       settled = true;
       cleanupTimers();
-      if (abortHandler && options.signal) {
-        try {
-          options.signal.removeEventListener('abort', abortHandler);
-        } catch (_unused) {
-          void _unused;
-        }
-      }
+      cleanupSignal();
       reject(err);
     }
 
@@ -209,12 +250,8 @@ export async function runProcess(options: ProcessOptions, deps: ProcessDeps = {}
         }
       : undefined;
 
-    if (options.signal) {
-      if (options.signal.aborted) {
-        abortHandler?.();
-      } else {
-        options.signal.addEventListener('abort', abortHandler as EventListener, { once: true });
-      }
+    if (options.signal && abortHandler) {
+      options.signal.addEventListener('abort', abortHandler as EventListener, { once: true });
     }
 
     if (options.timeoutMs !== undefined) {
@@ -237,7 +274,7 @@ export async function runProcess(options: ProcessOptions, deps: ProcessDeps = {}
         cwd: options.cwd,
         env: options.env ? { ...process.env, ...options.env } : undefined,
         stdio: inheritStdio ? 'inherit' : 'pipe',
-        detached: false,
+        detached: useProcessGroup,
         shell: false,
       };
       child = spawnFn(options.executable, args, spawnOpts as never) as ChildProcess;
@@ -253,7 +290,15 @@ export async function runProcess(options: ProcessOptions, deps: ProcessDeps = {}
       return;
     }
 
-    if (!inheritStdio) {
+    if (options.signal?.aborted) {
+      terminate('SIGTERM');
+      killTimer = setTimeout(() => terminate('SIGKILL'), graceMs);
+      if (typeof (killTimer as unknown as { unref?: () => void }).unref === 'function') {
+        (killTimer as unknown as { unref: () => void }).unref();
+      }
+    }
+
+    if (shouldCapture) {
       const stdoutStream = (child as unknown as { stdout: NodeJS.ReadableStream | null }).stdout;
       const stderrStream = (child as unknown as { stderr: NodeJS.ReadableStream | null }).stderr;
       if (stdoutStream) {
@@ -276,7 +321,7 @@ export async function runProcess(options: ProcessOptions, deps: ProcessDeps = {}
 
     child.on('close', (code: number | null, sig: NodeJS.Signals | null) => {
       const durationMs = clock.now() - startMs;
-      const exitCode = code ?? 0;
+      const exitCode: number | null = code;
       if (options.signal?.aborted && !timedOut) {
         const err = new Error(`process aborted: ${options.executable}`);
         (err as unknown as Record<string, unknown>).cause = options.signal.reason;

@@ -11,12 +11,12 @@ sidebar_position: 7
 validate -> prepare -> start -> wait -> test -> collect evidence -> clean up
 ```
 
-The runner uses structured `docker compose` commands (executable + argument arrays, no shell), bounded probes, and deterministic cleanup. It is usable from a developer shell and from a thin wrapper in `_egose-actions` without knowing about PostgreSQL, MongoDB, MinIO, Keycloak, Playwright, Bats, or GitHub Actions.
+The runner uses structured Compose commands — a configured `executable` plus fixed `prefixArgs` (no shell, no whitespace splitting) — bounded probes, and deterministic cleanup. Default invocation is `docker compose`; standalone or version-managed binaries use `docker-compose` or a custom wrapper. It is usable from a developer shell and from a thin wrapper in `_egose-actions` without knowing about PostgreSQL, MongoDB, MinIO, Keycloak, Playwright, Bats, or GitHub Actions.
 
 ## Requirements
 
 - Node.js 20 or newer.
-- Docker with Compose v2 (`docker compose`) for any non-`--dry-run` execution.
+- Docker with Compose v2 (`docker compose` by default; configurable to `docker-compose` or a wrapper) for any non-`--dry-run` execution.
 
 `--dry-run` and `--help` require neither Docker nor network access. No YAML runtime dependency in the first release; JSON and JavaScript config only.
 
@@ -50,22 +50,22 @@ repo-toolkit-compose-sandbox --config compose-sandbox.mjs --project-name ci-$GIT
 | `--dry-run`             | Resolve, validate, and print the redacted plan (JSON) without running Docker.                                        |
 | `-h, --help`            | Show help and exit 0.                                                                                                |
 
-`--dry-run` prints a redacted plan (`test.env` and `readiness[].env` values -> `[REDACTED]`, HTTP auth/token headers -> `[REDACTED]`) to stdout and exits 0 without spawning Docker. Invalid config exits nonzero with a concise message, no stack trace, and no secrets. `--config` JS execution trusts the config as repository code; `--config` JSON is parsed via `JSON.parse`.
+`--dry-run` prints a redacted plan (`test.env` and `readiness[].env` values -> `[REDACTED]`, HTTP auth/token headers -> `[REDACTED]`) to stdout and exits 0 without spawning Docker. Both the JSON plan (`compose.executable` + `compose.prefixArgs`) and the log line show the resolved invocation — `docker compose` by default (`executable: "docker", prefixArgs: ["compose"]`) and `docker-compose` standalone (`executable: "docker-compose", prefixArgs: []`). Invalid config exits nonzero with a concise message, no stack trace, and no secrets. `--config` JS execution trusts the config as repository code; `--config` JSON is parsed via `JSON.parse`.
 
-Overrides are intentionally narrow: only `cwd`, `compose.files`, `compose.projectName`, `evidence.directory`, and `dryRun` are CLI-overridable; all other behavior belongs in the config file.
+Overrides are intentionally narrow: only `cwd`, `compose.files`, `compose.projectName`, `evidence.directory`, and `dryRun` are CLI-overridable; `compose.executable`/`compose.prefixArgs` belong in the config file. All other behavior belongs in the config file.
 
 ## Lifecycle
 
-| Phase                | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                                                | Failure handling                                                                                                                    |
-| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------- |
-| **validate**         | Strict runtime type checks, unknown-key rejection, duplicate-probe rejection, project/service/URL/port/timeout/env validation, relative-path + `..` + NUL + containment checks. No I/O.                                                                                                                                                                                                                                                                                                    | Returns primary immediately; no side effects.                                                                                       |
-| **prepare**          | Create `prepare.directories` and copy `prepare.copies` (`from` -> `to`) under `cwd` after validating sources.                                                                                                                                                                                                                                                                                                                                                                              | Primary preserved; evidence + cleanup still run.                                                                                    |
-| **preflight**        | `docker compose version` check using `compose.executable` (`docker` by default).                                                                                                                                                                                                                                                                                                                                                                                                           | Primary preserved.                                                                                                                  |
-| **start**            | `docker compose up -d` with `--build`/`--pull`/`--profile`/`--env-file`/`--project-name` per plan.                                                                                                                                                                                                                                                                                                                                                                                         | Primary preserved.                                                                                                                  |
-| **wait**             | Poll probes until `timeouts.readinessMs` (default 120s): `tcp` (connect), `http` (status range `expectedStatus`, default `200-299`), `service-running`, `service-completed` (exit code 0 with actionable state/exit-code diagnostics), `command` (structured probe, `timeoutMs` 30s default). Independent probes run concurrently with cancellation-safe diagnostics.                                                                                                                      | Timeout lists every unsatisfied probe; failed one-shot fails immediately with `ServiceProbeError` including service/state/exitCode. |
-| **test**             | `spawn(test.executable, test.args, { cwd: test.resolvedCwd ?? cwd, env: { ...process.env, ...test.env } })`, `inheritStdio: true`, `timeoutMs: timeouts.testMs` (default 300s). Runs only after all readiness passes.                                                                                                                                                                                                                                                                      | Nonzero exit code -> primary `exitCode`; timeout -> primary timedOut.                                                               |
-| **collect evidence** | If `evidence.capture === 'always'` or outcome is failure, `docker compose ps -a --format json` -> `ps.json` and `docker compose logs --no-color` -> `logs.txt` (bounded by `evidence.maxLogBytes`, default 1 MiB, max 10 MiB, ANSI stripped if `stripAnsi`). Writes `result.json` manifest `{ phase, outcome, timings, evidenceFiles, errors: { primary, secondary } }` with sanitized (ANSI-stripped, truncated, redacted) messages, no env secrets. Evidence is written before teardown. | Evidence failure becomes primary if no earlier failure, otherwise secondary.                                                        |
-| **clean up**         | `docker compose down` (`--volumes`/`--remove-orphans` per `cleanup`) then `rm -rf` each `cleanup.paths` (contained, non-root, symlink-target-inside-project-checked, idempotent). Runs on success, failure, timeout, and `SIGINT`/`SIGTERM`; at most once and only after `start` began. `cleanupMs` default 30s.                                                                                                                                                                           | Cleanup failure never replaces primary; reported as secondary.                                                                      |
+| Phase                | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        | Failure handling                                                                                                                    |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------- |
+| **validate**         | Strict runtime type checks, unknown-key rejection, duplicate-probe rejection, project/service/URL/port/timeout/env validation, relative-path + `..` + NUL + containment checks. No I/O.                                                                                                                                                                                                                                                                                                                                                                            | Returns primary immediately; no side effects.                                                                                       |
+| **prepare**          | Create `prepare.directories` and copy `prepare.copies` (`from` -> `to`) under `cwd` after validating sources.                                                                                                                                                                                                                                                                                                                                                                                                                                                      | Primary preserved; evidence + cleanup still run.                                                                                    |
+| **preflight**        | `<compose> version` check (`docker compose version` by default; `docker-compose version` when `prefixArgs: []`). Same `executable` + `prefixArgs` prefix for every operation, with `shell: false` and no name inference.                                                                                                                                                                                                                                                                                                                                           | Primary preserved.                                                                                                                  |
+| **start**            | `<compose> up -d` with `--build`/`--pull`/`--profile`/`--env-file`/`--project-name` per plan (same prefix).                                                                                                                                                                                                                                                                                                                                                                                                                                                        | Primary preserved.                                                                                                                  |
+| **wait**             | Poll probes until `timeouts.readinessMs` (default 120s): `tcp` (connect), `http` (status range `expectedStatus`, default `200-299`), `service-running`, `service-completed` (exit code 0 with actionable state/exit-code diagnostics), `command` (structured probe, `timeoutMs` 30s default). Independent probes run concurrently with cancellation-safe diagnostics.                                                                                                                                                                                              | Timeout lists every unsatisfied probe; failed one-shot fails immediately with `ServiceProbeError` including service/state/exitCode. |
+| **test**             | `spawn(test.executable, test.args, { cwd: test.resolvedCwd ?? cwd, env: { ...process.env, ...test.env } })`, `inheritStdio: true`, `timeoutMs: timeouts.testMs` (default 300s). Runs only after all readiness passes.                                                                                                                                                                                                                                                                                                                                              | Nonzero exit code -> primary `exitCode`; timeout -> primary timedOut.                                                               |
+| **collect evidence** | If `evidence.capture === 'always'` or outcome is failure, `<compose> ps -a --format json` -> `ps.json` and `<compose> logs --no-color` -> `logs.txt` (bounded by `evidence.maxLogBytes`, default 1 MiB, max 10 MiB, ANSI stripped if `stripAnsi`). Writes `result.json` manifest `{ phase, outcome, timings, evidenceFiles, errors: { primary, secondary } }` with sanitized (ANSI-stripped, truncated, redacted) error messages. Captured Compose logs are bounded and optionally ANSI-stripped, but are not secret-scanned. Evidence is written before teardown. | Evidence failure becomes primary if no earlier failure, otherwise secondary.                                                        |
+| **clean up**         | `<compose> down` (`--volumes`/`--remove-orphans` per `cleanup`) then `rm -rf` each `cleanup.paths` (contained, non-root, symlink-target-inside-project-checked, idempotent). Runs on success, failure, timeout, and `SIGINT`/`SIGTERM`; at most once and only after `start` began. `cleanupMs` default 30s.                                                                                                                                                                                                                                                        | Cleanup failure never replaces primary; reported as secondary.                                                                      |
 
 `timeouts.totalMs` (optional) aborts the whole lifecycle via a single `AbortController`; `startupMs`/`readinessMs`/`testMs`/`cleanupMs` bound individual phases. Signal handlers for `SIGINT`/`SIGTERM` are registered per `runLifecycle` invocation and removed afterwards (no cross-call leaks). Child processes are terminated via process-group where supported.
 
@@ -78,6 +78,7 @@ type ComposeSandboxOptions = {
   cwd?: string; // default '.'
   compose: {
     executable?: string; // default 'docker'
+    prefixArgs?: string[]; // default ['compose']; [] for standalone docker-compose, validated non-empty NUL-free
     files: string[]; // required, >=1, relative, contained
     envFile?: string; // relative, contained
     projectName?: string; // ^[a-z0-9][a-z0-9_-]*$
@@ -113,11 +114,11 @@ type ComposeSandboxOptions = {
 };
 ```
 
-Defaults: `evidence.directory='.compose-sandbox-logs'`, `capture='onFailure'`, `maxLogBytes=1_048_576`, `stripAnsi=true`, `cleanup.removeOrphans=true`, `timeouts={ startupMs: 120000, readinessMs: 120000, testMs: 300000, cleanupMs: 30000 }`, probe `timeoutMs=5000`/`intervalMs=1000` (command 30000), `compose.executable='docker'`.
+Defaults: `evidence.directory='.compose-sandbox-logs'`, `capture='onFailure'`, `maxLogBytes=1_048_576`, `stripAnsi=true`, `cleanup.removeOrphans=true`, `timeouts={ startupMs: 120000, readinessMs: 120000, testMs: 300000, cleanupMs: 30000 }`, probe `timeoutMs=5000`/`intervalMs=1000` (command 30000), `compose.executable='docker'` with `compose.prefixArgs=['compose']` (standalone `docker-compose` uses `prefixArgs: []`; custom wrappers use explicit exact argv prefix, no shell splitting or name inference).
 
-Path rules: every configurable path is normalized (backslash->slash, `.` segments removed), must be relative, must not contain `..` or NUL, must resolve inside `cwd`. `cleanup.paths` duplicates and project-root targets rejected. Symmetric validation ensures plan resolution is side-effect free and supports `--dry-run` without requiring files to exist.
+Path rules: every configurable path is normalized (backslash->slash, `.` segments removed), must be relative, must not contain `..` or NUL, must resolve inside `cwd`. `cleanup.paths` duplicates and project-root targets rejected. Runtime prepare, evidence, manifest, and cleanup operations re-check existing ancestors against the real project root, including symlinked ancestors. Plan resolution is side-effect free and supports `--dry-run` without requiring files to exist; the runtime checks are not atomic against every possible filesystem race.
 
-Security boundaries: structured commands never evaluated as shell source; config is trusted repository code but still validated; environment secrets are redacted from dry-run output, logs, and `result.json` errors; HTTP `Authorization`/`token`/`secret` headers are redacted; cleanup cannot escape the project (including via symlink targets).
+Security boundaries: structured commands are never evaluated as shell source and never whitespace-split (`shell: false`, exact argv); `compose.prefixArgs` entries are validated NUL-free non-empty strings; bare executable names may still be resolved by Node through `PATH`; config is trusted repository code but still validated; configured environment values and HTTP `Authorization`/`token`/`secret` headers are redacted from dry-run output, lifecycle log messages, thrown error text, and `result.json` errors. Captured `logs.txt` content is not secret-scanned, so services should not print secrets. Cleanup cannot escape the project, including through symlinked ancestors checked immediately before deletion.
 
 ## Working configurations (reference repositories)
 
@@ -196,8 +197,8 @@ await runComposeSandbox({
 });
 ```
 
-- `resolveComposeSandboxPlan(options?)` is side-effect free, deep-freezes the plan, never touches the filesystem or network.
-- `runComposeSandbox(options?, deps?)` injects `clock`, `signalTarget`, `createAbortController`, `runProcess`, `tcpConnect`, `httpFetch`, `getServiceState`, `runCommandProbe`, and `fs` for isolated unit/integration testing.
+- `resolveComposeSandboxPlan(options?)` is side-effect free, freezes the plan, never touches the filesystem or network.
+- `runComposeSandbox(options?, deps?)` injects `clock`, `signalTarget`, `createAbortController`, `runProcess`, `tcpConnect`, `httpFetch`, `getServiceState`, `getServiceSnapshot`, `runCommandProbe`, `fs`, and `logger` for isolated unit/integration testing. It resolves to `RunResult` on success and throws a validation error or `ComposeSandboxLifecycleError` on failure.
 
 ## Local / CI examples
 
@@ -214,7 +215,7 @@ repo-toolkit-compose-sandbox --config compose-sandbox.json --evidence-dir .compo
 cat .compose-logs/result.json | jq .
 ```
 
-GitHub Actions (GitHub-hosted Linux, Docker available), forced failure + leak check verified by `test/real-compose.test.ts`:
+GitHub Actions (GitHub-hosted Linux, Docker available), with real Docker required:
 
 ```yaml
 jobs:
@@ -224,16 +225,24 @@ jobs:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
       - run: pnpm install
+      - run: pnpm --filter @repo-toolkit/compose-sandbox test
+        env:
+          COMPOSE_SANDBOX_REQUIRE_DOCKER: '1'
       - run: pnpm compose-sandbox -- --config compose-sandbox.json --project-name ci-${{ github.run_id }} --evidence-dir .ci-logs
       - uses: actions/upload-artifact@v4
         if: always()
         with: { name: compose-logs, path: .ci-logs }
 ```
 
+Without `COMPOSE_SANDBOX_REQUIRE_DOCKER=1`, the package's real-Compose tests are explicit local skips when Docker Compose is unavailable. With it set, Docker absence fails the suite; when Docker is available, the suite runs success, forced-failure, timeout/process-tree cleanup, evidence, leak-check, and symlink path-boundary fixtures using unique Compose project names.
+
+## Compose executable
+
+Default `compose.executable: "docker"` with `compose.prefixArgs: ["compose"]` invokes Docker Compose v2 via the plugin (`docker compose`). A standalone binary such as asdf-managed `docker-compose` uses `executable: "docker-compose", prefixArgs: []`; custom wrappers and version-managed paths use an explicit `prefixArgs` array that is passed as exact argv elements with `shell: false`.
+
 ## Deferred
 
 - YAML configuration (deferred; add only after demonstrated demand and an explicit runtime-dependency decision).
-- Legacy `docker-compose` (Python) executable — use `docker compose` only.
 - Shared/published Compose service definitions.
 - GitHub artifact upload, summary, or environment-variable dependency.
 - Automatic Make/shell-snippet translation or consumer repository migrations.
