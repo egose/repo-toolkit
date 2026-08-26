@@ -79,6 +79,10 @@ const toc = [{
   "id": "local--ci-examples",
   "level": 2
 }, {
+  "value": "Compose executable",
+  "id": "compose-executable",
+  "level": 2
+}, {
   "value": "Deferred",
   "id": "deferred",
   "level": 2
@@ -122,9 +126,15 @@ function _createMdxContent(props) {
         children: "validate -> prepare -> start -> wait -> test -> collect evidence -> clean up\n"
       })
     }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
-      children: ["The runner uses structured ", (0,jsx_runtime.jsx)(_components.code, {
+      children: ["The runner uses structured Compose commands — a configured ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "executable"
+      }), " plus fixed ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "prefixArgs"
+      }), " (no shell, no whitespace splitting) — bounded probes, and deterministic cleanup. Default invocation is ", (0,jsx_runtime.jsx)(_components.code, {
         children: "docker compose"
-      }), " commands (executable + argument arrays, no shell), bounded probes, and deterministic cleanup. It is usable from a developer shell and from a thin wrapper in ", (0,jsx_runtime.jsx)(_components.code, {
+      }), "; standalone or version-managed binaries use ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "docker-compose"
+      }), " or a custom wrapper. It is usable from a developer shell and from a thin wrapper in ", (0,jsx_runtime.jsx)(_components.code, {
         children: "_egose-actions"
       }), " without knowing about PostgreSQL, MongoDB, MinIO, Keycloak, Playwright, Bats, or GitHub Actions."]
     }), "\n", (0,jsx_runtime.jsx)(_components.h2, {
@@ -136,7 +146,9 @@ function _createMdxContent(props) {
       }), "\n", (0,jsx_runtime.jsxs)(_components.li, {
         children: ["Docker with Compose v2 (", (0,jsx_runtime.jsx)(_components.code, {
           children: "docker compose"
-        }), ") for any non-", (0,jsx_runtime.jsx)(_components.code, {
+        }), " by default; configurable to ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "docker-compose"
+        }), " or a wrapper) for any non-", (0,jsx_runtime.jsx)(_components.code, {
           children: "--dry-run"
         }), " execution."]
       }), "\n"]
@@ -268,7 +280,19 @@ function _createMdxContent(props) {
         children: "[REDACTED]"
       }), ", HTTP auth/token headers -> ", (0,jsx_runtime.jsx)(_components.code, {
         children: "[REDACTED]"
-      }), ") to stdout and exits 0 without spawning Docker. Invalid config exits nonzero with a concise message, no stack trace, and no secrets. ", (0,jsx_runtime.jsx)(_components.code, {
+      }), ") to stdout and exits 0 without spawning Docker. Both the JSON plan (", (0,jsx_runtime.jsx)(_components.code, {
+        children: "compose.executable"
+      }), " + ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "compose.prefixArgs"
+      }), ") and the log line show the resolved invocation — ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "docker compose"
+      }), " by default (", (0,jsx_runtime.jsx)(_components.code, {
+        children: "executable: \"docker\", prefixArgs: [\"compose\"]"
+      }), ") and ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "docker-compose"
+      }), " standalone (", (0,jsx_runtime.jsx)(_components.code, {
+        children: "executable: \"docker-compose\", prefixArgs: []"
+      }), "). Invalid config exits nonzero with a concise message, no stack trace, and no secrets. ", (0,jsx_runtime.jsx)(_components.code, {
         children: "--config"
       }), " JS execution trusts the config as repository code; ", (0,jsx_runtime.jsx)(_components.code, {
         children: "--config"
@@ -286,7 +310,11 @@ function _createMdxContent(props) {
         children: "evidence.directory"
       }), ", and ", (0,jsx_runtime.jsx)(_components.code, {
         children: "dryRun"
-      }), " are CLI-overridable; all other behavior belongs in the config file."]
+      }), " are CLI-overridable; ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "compose.executable"
+      }), "/", (0,jsx_runtime.jsx)(_components.code, {
+        children: "compose.prefixArgs"
+      }), " belong in the config file. All other behavior belongs in the config file."]
     }), "\n", (0,jsx_runtime.jsx)(_components.h2, {
       id: "lifecycle",
       children: "Lifecycle"
@@ -341,12 +369,20 @@ function _createMdxContent(props) {
             })
           }), (0,jsx_runtime.jsxs)(_components.td, {
             children: [(0,jsx_runtime.jsx)(_components.code, {
+              children: "<compose> version"
+            }), " check (", (0,jsx_runtime.jsx)(_components.code, {
               children: "docker compose version"
-            }), " check using ", (0,jsx_runtime.jsx)(_components.code, {
-              children: "compose.executable"
-            }), " (", (0,jsx_runtime.jsx)(_components.code, {
-              children: "docker"
-            }), " by default)."]
+            }), " by default; ", (0,jsx_runtime.jsx)(_components.code, {
+              children: "docker-compose version"
+            }), " when ", (0,jsx_runtime.jsx)(_components.code, {
+              children: "prefixArgs: []"
+            }), "). Same ", (0,jsx_runtime.jsx)(_components.code, {
+              children: "executable"
+            }), " + ", (0,jsx_runtime.jsx)(_components.code, {
+              children: "prefixArgs"
+            }), " prefix for every operation, with ", (0,jsx_runtime.jsx)(_components.code, {
+              children: "shell: false"
+            }), " and no name inference."]
           }), (0,jsx_runtime.jsx)(_components.td, {
             children: "Primary preserved."
           })]
@@ -357,7 +393,7 @@ function _createMdxContent(props) {
             })
           }), (0,jsx_runtime.jsxs)(_components.td, {
             children: [(0,jsx_runtime.jsx)(_components.code, {
-              children: "docker compose up -d"
+              children: "<compose> up -d"
             }), " with ", (0,jsx_runtime.jsx)(_components.code, {
               children: "--build"
             }), "/", (0,jsx_runtime.jsx)(_components.code, {
@@ -368,7 +404,7 @@ function _createMdxContent(props) {
               children: "--env-file"
             }), "/", (0,jsx_runtime.jsx)(_components.code, {
               children: "--project-name"
-            }), " per plan."]
+            }), " per plan (same prefix)."]
           }), (0,jsx_runtime.jsx)(_components.td, {
             children: "Primary preserved."
           })]
@@ -429,11 +465,11 @@ function _createMdxContent(props) {
             children: ["If ", (0,jsx_runtime.jsx)(_components.code, {
               children: "evidence.capture === 'always'"
             }), " or outcome is failure, ", (0,jsx_runtime.jsx)(_components.code, {
-              children: "docker compose ps -a --format json"
+              children: "<compose> ps -a --format json"
             }), " -> ", (0,jsx_runtime.jsx)(_components.code, {
               children: "ps.json"
             }), " and ", (0,jsx_runtime.jsx)(_components.code, {
-              children: "docker compose logs --no-color"
+              children: "<compose> logs --no-color"
             }), " -> ", (0,jsx_runtime.jsx)(_components.code, {
               children: "logs.txt"
             }), " (bounded by ", (0,jsx_runtime.jsx)(_components.code, {
@@ -444,7 +480,7 @@ function _createMdxContent(props) {
               children: "result.json"
             }), " manifest ", (0,jsx_runtime.jsx)(_components.code, {
               children: "{ phase, outcome, timings, evidenceFiles, errors: { primary, secondary } }"
-            }), " with sanitized (ANSI-stripped, truncated, redacted) messages, no env secrets. Evidence is written before teardown."]
+            }), " with sanitized (ANSI-stripped, truncated, redacted) error messages. Captured Compose logs are bounded and optionally ANSI-stripped, but are not secret-scanned. Evidence is written before teardown."]
           }), (0,jsx_runtime.jsx)(_components.td, {
             children: "Evidence failure becomes primary if no earlier failure, otherwise secondary."
           })]
@@ -455,7 +491,7 @@ function _createMdxContent(props) {
             })
           }), (0,jsx_runtime.jsxs)(_components.td, {
             children: [(0,jsx_runtime.jsx)(_components.code, {
-              children: "docker compose down"
+              children: "<compose> down"
             }), " (", (0,jsx_runtime.jsx)(_components.code, {
               children: "--volumes"
             }), "/", (0,jsx_runtime.jsx)(_components.code, {
@@ -508,7 +544,7 @@ function _createMdxContent(props) {
     }), "\n", (0,jsx_runtime.jsx)(_components.pre, {
       children: (0,jsx_runtime.jsx)(_components.code, {
         className: "language-ts",
-        children: "type ComposeSandboxOptions = {\n  cwd?: string; // default '.'\n  compose: {\n    executable?: string; // default 'docker'\n    files: string[]; // required, >=1, relative, contained\n    envFile?: string; // relative, contained\n    projectName?: string; // ^[a-z0-9][a-z0-9_-]*$\n    profiles?: string[]; // service-name shaped\n    build?: boolean;\n    pull?: boolean;\n  };\n  prepare?: {\n    directories?: string[]; // relative, contained, not '.'\n    copies?: Array<{ from: string; to: string }>; // both relative, contained, not '.'\n  };\n  readiness?: Array<\n    | { type: 'tcp'; host: string; port: number; timeoutMs?: number; intervalMs?: number }\n    | {\n        type: 'http';\n        url: string;\n        method?: string;\n        expectedStatus?: number | number[] | [number, number];\n        headers?: Record<string, string>;\n        timeoutMs?: number;\n        intervalMs?: number;\n      }\n    | { type: 'service-running'; service: string; timeoutMs?: number; intervalMs?: number }\n    | { type: 'service-completed'; service: string; timeoutMs?: number; intervalMs?: number }\n    | { type: 'command'; executable: string; args?: string[]; env?: Record<string, string>; timeoutMs?: number }\n  >;\n  test: { executable: string; args?: string[]; env?: Record<string, string>; cwd?: string };\n  evidence?: { directory?: string; capture?: 'always' | 'onFailure'; maxLogBytes?: number; stripAnsi?: boolean };\n  cleanup?: { volumes?: boolean; removeOrphans?: boolean; paths?: string[] };\n  timeouts?: { startupMs?: number; readinessMs?: number; testMs?: number; cleanupMs?: number; totalMs?: number };\n  dryRun?: boolean;\n  config?: string; // CLI only: path to config file\n};\n"
+        children: "type ComposeSandboxOptions = {\n  cwd?: string; // default '.'\n  compose: {\n    executable?: string; // default 'docker'\n    prefixArgs?: string[]; // default ['compose']; [] for standalone docker-compose, validated non-empty NUL-free\n    files: string[]; // required, >=1, relative, contained\n    envFile?: string; // relative, contained\n    projectName?: string; // ^[a-z0-9][a-z0-9_-]*$\n    profiles?: string[]; // service-name shaped\n    build?: boolean;\n    pull?: boolean;\n  };\n  prepare?: {\n    directories?: string[]; // relative, contained, not '.'\n    copies?: Array<{ from: string; to: string }>; // both relative, contained, not '.'\n  };\n  readiness?: Array<\n    | { type: 'tcp'; host: string; port: number; timeoutMs?: number; intervalMs?: number }\n    | {\n        type: 'http';\n        url: string;\n        method?: string;\n        expectedStatus?: number | number[] | [number, number];\n        headers?: Record<string, string>;\n        timeoutMs?: number;\n        intervalMs?: number;\n      }\n    | { type: 'service-running'; service: string; timeoutMs?: number; intervalMs?: number }\n    | { type: 'service-completed'; service: string; timeoutMs?: number; intervalMs?: number }\n    | { type: 'command'; executable: string; args?: string[]; env?: Record<string, string>; timeoutMs?: number }\n  >;\n  test: { executable: string; args?: string[]; env?: Record<string, string>; cwd?: string };\n  evidence?: { directory?: string; capture?: 'always' | 'onFailure'; maxLogBytes?: number; stripAnsi?: boolean };\n  cleanup?: { volumes?: boolean; removeOrphans?: boolean; paths?: string[] };\n  timeouts?: { startupMs?: number; readinessMs?: number; testMs?: number; cleanupMs?: number; totalMs?: number };\n  dryRun?: boolean;\n  config?: string; // CLI only: path to config file\n};\n"
       })
     }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
       children: ["Defaults: ", (0,jsx_runtime.jsx)(_components.code, {
@@ -529,7 +565,13 @@ function _createMdxContent(props) {
         children: "intervalMs=1000"
       }), " (command 30000), ", (0,jsx_runtime.jsx)(_components.code, {
         children: "compose.executable='docker'"
-      }), "."]
+      }), " with ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "compose.prefixArgs=['compose']"
+      }), " (standalone ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "docker-compose"
+      }), " uses ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "prefixArgs: []"
+      }), "; custom wrappers use explicit exact argv prefix, no shell splitting or name inference)."]
     }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
       children: ["Path rules: every configurable path is normalized (backslash->slash, ", (0,jsx_runtime.jsx)(_components.code, {
         children: "."
@@ -539,19 +581,27 @@ function _createMdxContent(props) {
         children: "cwd"
       }), ". ", (0,jsx_runtime.jsx)(_components.code, {
         children: "cleanup.paths"
-      }), " duplicates and project-root targets rejected. Symmetric validation ensures plan resolution is side-effect free and supports ", (0,jsx_runtime.jsx)(_components.code, {
+      }), " duplicates and project-root targets rejected. Runtime prepare, evidence, manifest, and cleanup operations re-check existing ancestors against the real project root, including symlinked ancestors. Plan resolution is side-effect free and supports ", (0,jsx_runtime.jsx)(_components.code, {
         children: "--dry-run"
-      }), " without requiring files to exist."]
+      }), " without requiring files to exist; the runtime checks are not atomic against every possible filesystem race."]
     }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
-      children: ["Security boundaries: structured commands never evaluated as shell source; config is trusted repository code but still validated; environment secrets are redacted from dry-run output, logs, and ", (0,jsx_runtime.jsx)(_components.code, {
-        children: "result.json"
-      }), " errors; HTTP ", (0,jsx_runtime.jsx)(_components.code, {
+      children: ["Security boundaries: structured commands are never evaluated as shell source and never whitespace-split (", (0,jsx_runtime.jsx)(_components.code, {
+        children: "shell: false"
+      }), ", exact argv); ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "compose.prefixArgs"
+      }), " entries are validated NUL-free non-empty strings; bare executable names may still be resolved by Node through ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "PATH"
+      }), "; config is trusted repository code but still validated; configured environment values and HTTP ", (0,jsx_runtime.jsx)(_components.code, {
         children: "Authorization"
       }), "/", (0,jsx_runtime.jsx)(_components.code, {
         children: "token"
       }), "/", (0,jsx_runtime.jsx)(_components.code, {
         children: "secret"
-      }), " headers are redacted; cleanup cannot escape the project (including via symlink targets)."]
+      }), " headers are redacted from dry-run output, lifecycle log messages, thrown error text, and ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "result.json"
+      }), " errors. Captured ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "logs.txt"
+      }), " content is not secret-scanned, so services should not print secrets. Cleanup cannot escape the project, including through symlinked ancestors checked immediately before deletion."]
     }), "\n", (0,jsx_runtime.jsx)(_components.h2, {
       id: "working-configurations-reference-repositories",
       children: "Working configurations (reference repositories)"
@@ -619,7 +669,7 @@ function _createMdxContent(props) {
       children: ["\n", (0,jsx_runtime.jsxs)(_components.li, {
         children: [(0,jsx_runtime.jsx)(_components.code, {
           children: "resolveComposeSandboxPlan(options?)"
-        }), " is side-effect free, deep-freezes the plan, never touches the filesystem or network."]
+        }), " is side-effect free, freezes the plan, never touches the filesystem or network."]
       }), "\n", (0,jsx_runtime.jsxs)(_components.li, {
         children: [(0,jsx_runtime.jsx)(_components.code, {
           children: "runComposeSandbox(options?, deps?)"
@@ -638,10 +688,18 @@ function _createMdxContent(props) {
         }), ", ", (0,jsx_runtime.jsx)(_components.code, {
           children: "getServiceState"
         }), ", ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "getServiceSnapshot"
+        }), ", ", (0,jsx_runtime.jsx)(_components.code, {
           children: "runCommandProbe"
-        }), ", and ", (0,jsx_runtime.jsx)(_components.code, {
+        }), ", ", (0,jsx_runtime.jsx)(_components.code, {
           children: "fs"
-        }), " for isolated unit/integration testing."]
+        }), ", and ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "logger"
+        }), " for isolated unit/integration testing. It resolves to ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "RunResult"
+        }), " on success and throws a validation error or ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "ComposeSandboxLifecycleError"
+        }), " on failure."]
       }), "\n"]
     }), "\n", (0,jsx_runtime.jsx)(_components.h2, {
       id: "local--ci-examples",
@@ -660,27 +718,42 @@ function _createMdxContent(props) {
         className: "language-sh",
         children: "repo-toolkit-compose-sandbox --config compose-sandbox.json --evidence-dir .compose-logs\ncat .compose-logs/result.json | jq .\n"
       })
-    }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
-      children: ["GitHub Actions (GitHub-hosted Linux, Docker available), forced failure + leak check verified by ", (0,jsx_runtime.jsx)(_components.code, {
-        children: "test/real-compose.test.ts"
-      }), ":"]
+    }), "\n", (0,jsx_runtime.jsx)(_components.p, {
+      children: "GitHub Actions (GitHub-hosted Linux, Docker available), with real Docker required:"
     }), "\n", (0,jsx_runtime.jsx)(_components.pre, {
       children: (0,jsx_runtime.jsx)(_components.code, {
         className: "language-yaml",
-        children: "jobs:\n  integration:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n      - uses: pnpm/action-setup@v4\n      - run: pnpm install\n      - run: pnpm compose-sandbox -- --config compose-sandbox.json --project-name ci-${{ github.run_id }} --evidence-dir .ci-logs\n      - uses: actions/upload-artifact@v4\n        if: always()\n        with: { name: compose-logs, path: .ci-logs }\n"
+        children: "jobs:\n  integration:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n      - uses: pnpm/action-setup@v4\n      - run: pnpm install\n      - run: pnpm --filter @repo-toolkit/compose-sandbox test\n        env:\n          COMPOSE_SANDBOX_REQUIRE_DOCKER: '1'\n      - run: pnpm compose-sandbox -- --config compose-sandbox.json --project-name ci-${{ github.run_id }} --evidence-dir .ci-logs\n      - uses: actions/upload-artifact@v4\n        if: always()\n        with: { name: compose-logs, path: .ci-logs }\n"
       })
+    }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
+      children: ["Without ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "COMPOSE_SANDBOX_REQUIRE_DOCKER=1"
+      }), ", the package's real-Compose tests are explicit local skips when Docker Compose is unavailable. With it set, Docker absence fails the suite; when Docker is available, the suite runs success, forced-failure, timeout/process-tree cleanup, evidence, leak-check, and symlink path-boundary fixtures using unique Compose project names."]
+    }), "\n", (0,jsx_runtime.jsx)(_components.h2, {
+      id: "compose-executable",
+      children: "Compose executable"
+    }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
+      children: ["Default ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "compose.executable: \"docker\""
+      }), " with ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "compose.prefixArgs: [\"compose\"]"
+      }), " invokes Docker Compose v2 via the plugin (", (0,jsx_runtime.jsx)(_components.code, {
+        children: "docker compose"
+      }), "). A standalone binary such as asdf-managed ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "docker-compose"
+      }), " uses ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "executable: \"docker-compose\", prefixArgs: []"
+      }), "; custom wrappers and version-managed paths use an explicit ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "prefixArgs"
+      }), " array that is passed as exact argv elements with ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "shell: false"
+      }), "."]
     }), "\n", (0,jsx_runtime.jsx)(_components.h2, {
       id: "deferred",
       children: "Deferred"
     }), "\n", (0,jsx_runtime.jsxs)(_components.ul, {
       children: ["\n", (0,jsx_runtime.jsx)(_components.li, {
         children: "YAML configuration (deferred; add only after demonstrated demand and an explicit runtime-dependency decision)."
-      }), "\n", (0,jsx_runtime.jsxs)(_components.li, {
-        children: ["Legacy ", (0,jsx_runtime.jsx)(_components.code, {
-          children: "docker-compose"
-        }), " (Python) executable — use ", (0,jsx_runtime.jsx)(_components.code, {
-          children: "docker compose"
-        }), " only."]
       }), "\n", (0,jsx_runtime.jsx)(_components.li, {
         children: "Shared/published Compose service definitions."
       }), "\n", (0,jsx_runtime.jsx)(_components.li, {
