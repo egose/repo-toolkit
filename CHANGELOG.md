@@ -1,3 +1,13 @@
+## [0.17.0](https://github.com/egose/repo-toolkit/compare/v0.16.0...v0.17.0) (2026-08-26)
+
+### Features
+
+* add compose sandbox runner package and docs ([058b4e9](https://github.com/egose/repo-toolkit/commit/058b4e9f6f189d103cdb73cbbbc14fc3efdd5500))
+
+### Bug Fixes
+
+* **compose-sandbox:** extend compose sandbox test timeout for real compose runs ([39df2a0](https://github.com/egose/repo-toolkit/commit/39df2a0209819ae1183b9e5128fff94bd9220ffa))
+
 ## [0.16.0](https://github.com/egose/repo-toolkit/compare/v0.15.0...v0.16.0) (2026-08-25)
 
 ### Features
