@@ -1,3 +1,9 @@
+## [0.18.0](https://github.com/egose/repo-toolkit/compare/v0.17.0...v0.18.0) (2026-08-26)
+
+### Features
+
+* expand compose sandbox configuration, lifecycle, and CLI handling ([61d4087](https://github.com/egose/repo-toolkit/commit/61d4087d846a6e3e3a097832b6ea3e16a27a0af0))
+
 ## [0.17.0](https://github.com/egose/repo-toolkit/compare/v0.16.0...v0.17.0) (2026-08-26)
 
 ### Features
