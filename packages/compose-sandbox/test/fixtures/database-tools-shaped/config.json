@@ -1,0 +1,21 @@
+{
+  "cwd": ".",
+  "compose": {
+    "files": ["docker-compose.yml", "docker-compose-ci.yml"],
+    "envFile": ".env.dev",
+    "projectName": "database-tools"
+  },
+  "prepare": {
+    "directories": ["data/pg", "data/mongo", "data/minio"]
+  },
+  "readiness": [
+    { "type": "tcp", "host": "127.0.0.1", "port": 5432 },
+    { "type": "tcp", "host": "127.0.0.1", "port": 27017 },
+    { "type": "http", "url": "http://127.0.0.1:9000/minio/health/live" },
+    { "type": "service-completed", "service": "minio-init" }
+  ],
+  "test": { "executable": "pnpm", "args": ["exec", "bats", "tests/integration"] },
+  "evidence": { "directory": ".compose-logs", "capture": "onFailure", "maxLogBytes": 1048576, "stripAnsi": true },
+  "cleanup": { "volumes": true, "removeOrphans": true, "paths": ["data/pg", "data/mongo"] },
+  "timeouts": { "startupMs": 120000, "readinessMs": 120000, "testMs": 300000, "cleanupMs": 30000 }
+}

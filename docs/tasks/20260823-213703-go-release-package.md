@@ -21,16 +21,6 @@ All three reference repositories implement the same release concepts independent
 - Temporary staging or atomic replacement to prevent failed builds from publishing partial output.
 - Release verification that feeds GitHub Release SBOM and provenance steps.
 
-Primary evidence:
-
-- `/home/jahn/projects/_aiproxy/Makefile:9-122`
-- `/home/jahn/projects/_aiproxy/scripts/check-reproducible-archives.sh:1-19`
-- `/home/jahn/projects/_aiproxy/scripts/validate-build-atomicity.sh:1-74`
-- `/home/jahn/projects/_database-tools/Makefile:6-115`
-- `/home/jahn/projects/_database-tools/.github/workflows/release.yml:65-100`
-- `/home/jahn/projects/_s3proxy/Makefile:11-100`
-- `/home/jahn/projects/_s3proxy/.github/workflows/release.yml:41-74`
-
 The existing `@repo-toolkit/release-artifact` package is not the implementation home for this work. It discovers npm package bins, generates Node wrappers, installs pnpm production dependencies, and creates one Node application archive. Its bounded runner, path containment, archive safety, manifest validation, and atomic installation patterns are relevant, but Go-specific branching must not be added to its Node-oriented build pipeline.
 
 Relevant toolkit evidence:
@@ -62,7 +52,6 @@ The first release must provide:
 
 ## Working Rules
 
-- Treat `/home/jahn/projects/_database-tools`, `/home/jahn/projects/_aiproxy`, and `/home/jahn/projects/_s3proxy` as read-only reference repositories. Consumer migrations require separate maintainer approval and are not part of this task file.
 - Do not revert or rewrite unrelated worktree changes. Inspect `git status --short` before each task and coordinate if another agent owns a shared file.
 - Do not add a runtime dependency unless the standard library and existing toolkit dependencies cannot implement the requirement safely. Record the concrete reason before adding one.
 - Use structured executable and argument arrays. Do not interpolate repository configuration into shell commands.
@@ -246,9 +235,6 @@ The reference repositories hardcode binary names, main packages, linker symbols,
 
 References:
 
-- `/home/jahn/projects/_aiproxy/Makefile:9-34`
-- `/home/jahn/projects/_database-tools/Makefile:12-58,94-105`
-- `/home/jahn/projects/_s3proxy/Makefile:11-35`
 - `packages/publish-package/src/plan.ts:100-195,246-272`
 - `packages/publish-packages/src/index.ts:374-436`
 
@@ -346,13 +332,6 @@ Finding:
 
 The reference repositories implement related but inconsistent atomicity boundaries. `_aiproxy` stages each target and has dedicated fault-injection tests; `_s3proxy` stages the complete matrix; `_database-tools` verifies nonempty outputs after parallel builds. The shared contract must not expose stale or partial release output when any target fails.
 
-References:
-
-- `/home/jahn/projects/_aiproxy/Makefile:49-74`
-- `/home/jahn/projects/_aiproxy/scripts/validate-build-atomicity.sh:1-74`
-- `/home/jahn/projects/_database-tools/Makefile:28-58`
-- `/home/jahn/projects/_s3proxy/Makefile:63-84`
-
 Implementation requirements:
 
 1. Build every binary for every target through the injected runner using `go build` with explicit argv and target-specific environment.
@@ -399,13 +378,6 @@ Primary ownership:
 Finding:
 
 All reference repositories create deterministic gzip-compressed tar archives, but archive layouts differ: one executable for the proxy projects and two executables plus `LICENSE` for `_database-tools`. Checksum filenames also differ. Creation needs one explicit, testable contract.
-
-References:
-
-- `/home/jahn/projects/_aiproxy/Makefile:76-93`
-- `/home/jahn/projects/_database-tools/Makefile:94-105`
-- `/home/jahn/projects/_s3proxy/Makefile:86-100`
-- `/home/jahn/projects/_s3proxy/.github/workflows/release.yml:48-57`
 
 Implementation requirements:
 
@@ -457,9 +429,6 @@ The consumer repositories validate expected member names and regular files with 
 
 References:
 
-- `/home/jahn/projects/_aiproxy/Makefile:95-116`
-- `/home/jahn/projects/_database-tools/bin/install:15-76`
-- `/home/jahn/projects/_s3proxy/bin/install:15-48`
 - `packages/release-artifact/src/index.ts:998-1089`
 - `packages/release-artifact/src/index.ts:1266-1306`
 - `packages/release-artifact/src/index.ts:1431-1511`
@@ -515,12 +484,6 @@ Primary ownership:
 Finding:
 
 `_aiproxy` and `_database-tools` independently rebuild archives and compare checksums; `_s3proxy` creates deterministic archives but has no independent rebuild comparison. Reproducibility must be an explicit verification operation rather than an assumption based on tar flags.
-
-References:
-
-- `/home/jahn/projects/_aiproxy/scripts/check-reproducible-archives.sh:1-19`
-- `/home/jahn/projects/_database-tools/Makefile:107-115`
-- `/home/jahn/projects/_s3proxy/Makefile:86-100`
 
 Implementation requirements:
 
@@ -639,9 +602,6 @@ References:
 - `README.md:5-20`
 - `AGENTS.md:5-65`
 - `website/docs/packages/index.md`
-- `/home/jahn/projects/_aiproxy/Makefile:9-122`
-- `/home/jahn/projects/_database-tools/Makefile:6-115`
-- `/home/jahn/projects/_s3proxy/Makefile:11-100`
 
 Implementation requirements:
 

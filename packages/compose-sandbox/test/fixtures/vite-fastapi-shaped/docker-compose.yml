@@ -1,0 +1,7 @@
+services:
+  db:
+    image: alpine:3.19
+    command: [sh, -c, while true; do echo db; sleep 10; done]
+  keycloak:
+    image: alpine:3.19
+    command: [sh, -c, while true; do echo kc; sleep 10; done]
