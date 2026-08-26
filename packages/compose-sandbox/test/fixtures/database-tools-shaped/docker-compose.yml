@@ -1,0 +1,13 @@
+services:
+  postgres:
+    image: alpine:3.19
+    command: [sh, -c, while true; do echo ok; sleep 10; done]
+  mongo:
+    image: alpine:3.19
+    command: [sh, -c, while true; do echo ok; sleep 10; done]
+  minio:
+    image: alpine:3.19
+    command: [sh, -c, while true; do echo ok; sleep 10; done]
+  minio-init:
+    image: alpine:3.19
+    command: [sh, -c, echo init && exit 0]

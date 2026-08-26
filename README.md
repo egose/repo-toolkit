@@ -8,6 +8,7 @@ Shared monorepo for repository tooling packages.
 - `@repo-toolkit/publish-package`: build, stage, and publish a single package to npm
 - `@repo-toolkit/publish-packages`: build, stage, and publish every package in a monorepo to npm in dependency order
 - `@repo-toolkit/release-artifact`: assemble, verify, and distribute a self-contained CLI release artifact (tarball) from a monorepo
+- `@repo-toolkit/compose-sandbox`: run a repository-defined Docker Compose test sandbox through a deterministic lifecycle
 - `@repo-toolkit/confluence`: sync a folder of markdown docs to Confluence pages and attachments (GitHub Action compatible)
 - `@repo-toolkit/go-release`: build and verify deterministic cross-platform Go binary releases
 
@@ -17,6 +18,7 @@ Shared monorepo for repository tooling packages.
 - `packages/publish-package`: single-package publish pipeline and `repo-toolkit-publish-package` CLI
 - `packages/publish-packages`: monorepo publish pipeline and `repo-toolkit-publish-packages` CLI
 - `packages/release-artifact`: release artifact builder/verifier and `repo-toolkit-build-artifact` / `repo-toolkit-verify-artifact` CLIs
+- `packages/compose-sandbox`: Docker Compose sandbox runner and `repo-toolkit-compose-sandbox` CLI
 - `packages/confluence`: docs-as-code sync to Confluence and `repo-toolkit-confluence` CLI
 - `packages/go-release`: Go release builder/verifier and `repo-toolkit-build-go-release` / `repo-toolkit-verify-go-release` CLIs
 - `website/`: standalone Docusaurus docs site for the workspace packages

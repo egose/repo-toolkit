@@ -1,0 +1,7 @@
+services:
+  api:
+    image: alpine:3.19
+    command: [sh, -c, while true; do echo api; sleep 10; done]
+  frontend:
+    image: alpine:3.19
+    command: [sh, -c, while true; do echo fe; sleep 10; done]

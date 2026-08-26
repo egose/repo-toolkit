@@ -10,6 +10,8 @@
       "@repo-toolkit/publish-packages/*": ["packages/publish-packages/src/*"],
       "@repo-toolkit/release-artifact": ["packages/release-artifact/src/index.ts"],
       "@repo-toolkit/release-artifact/*": ["packages/release-artifact/src/*"],
+      "@repo-toolkit/compose-sandbox": ["packages/compose-sandbox/src/index.ts"],
+      "@repo-toolkit/compose-sandbox/*": ["packages/compose-sandbox/src/*"],
       "@repo-toolkit/confluence": ["packages/confluence/src/index.ts"],
       "@repo-toolkit/confluence/*": ["packages/confluence/src/*"],
       "@repo-toolkit/go-release": ["packages/go-release/src/index.ts"],
