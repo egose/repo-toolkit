@@ -27,6 +27,7 @@
     "build-artifact": "pnpm --filter @repo-toolkit/release-artifact... build && node packages/release-artifact/dist/cli-build.js",
     "verify-artifact": "pnpm --filter @repo-toolkit/release-artifact... build && node packages/release-artifact/dist/cli-verify.js",
     "install-artifact": "pnpm --filter @repo-toolkit/release-artifact... build && node packages/release-artifact/dist/cli-install.js",
+    "release-artifact": "pnpm --filter @repo-toolkit/release-artifact... build && node packages/release-artifact/dist/cli.js",
     "gen-install": "pnpm --filter @repo-toolkit/release-artifact gen-install",
     "confluence": "pnpm --filter @repo-toolkit/confluence... build && node packages/confluence/dist/cli.js",
     "compose-sandbox": "pnpm --filter @repo-toolkit/compose-sandbox... build && node packages/compose-sandbox/dist/cli.js",

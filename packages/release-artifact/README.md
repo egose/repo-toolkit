@@ -11,16 +11,14 @@ pnpm add -D @repo-toolkit/release-artifact
 
 ## CLI
 
-### Build
-
 ```sh
+repo-toolkit-release-artifact build --version v1.2.3
+repo-toolkit-release-artifact verify --version v1.2.3
+repo-toolkit-release-artifact install --archive-path ./dist/repo-toolkit-v1.2.3.tar.gz --install-path /tmp/install --version v1.2.3
+# Standalone aliases remain available:
 repo-toolkit-build-artifact --version v1.2.3
-```
-
-### Verify
-
-```sh
 repo-toolkit-verify-artifact --version v1.2.3
+repo-toolkit-install-artifact --archive-path ./dist/repo-toolkit-v1.2.3.tar.gz --install-path /tmp/install --version v1.2.3
 ```
 
 Useful flags:
