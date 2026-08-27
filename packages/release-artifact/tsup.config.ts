@@ -11,6 +11,7 @@ export default defineConfig([
   },
   {
     entry: {
+      cli: 'src/cli.ts',
       'cli-build': 'src/cli-build.ts',
       'cli-verify': 'src/cli-verify.ts',
       'cli-install': 'src/cli-install.ts',

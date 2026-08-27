@@ -17,10 +17,10 @@ Shared monorepo for repository tooling packages.
 - `packages/changelog`: changelog preset, JavaScript API, and `repo-toolkit-changelog` CLI
 - `packages/publish-package`: single-package publish pipeline and `repo-toolkit-publish-package` CLI
 - `packages/publish-packages`: monorepo publish pipeline and `repo-toolkit-publish-packages` CLI
-- `packages/release-artifact`: release artifact builder/verifier and `repo-toolkit-build-artifact` / `repo-toolkit-verify-artifact` CLIs
+- `packages/release-artifact`: release artifact builder/verifier and `repo-toolkit-release-artifact` / `repo-toolkit-build-artifact` / `repo-toolkit-verify-artifact` CLIs
 - `packages/compose-sandbox`: Docker Compose sandbox runner and `repo-toolkit-compose-sandbox` CLI
 - `packages/confluence`: docs-as-code sync to Confluence and `repo-toolkit-confluence` CLI
-- `packages/go-release`: Go release builder/verifier and `repo-toolkit-build-go-release` / `repo-toolkit-verify-go-release` CLIs
+- `packages/go-release`: Go release builder/verifier and `repo-toolkit-go-release` / `repo-toolkit-build-go-release` / `repo-toolkit-verify-go-release` CLIs
 - `website/`: standalone Docusaurus docs site for the workspace packages
 
 ## Development
@@ -45,8 +45,13 @@ Useful root scripts:
 - `pnpm publish-packages -- --version v1.2.3`
 - `pnpm build-artifact -- --version v1.2.3`
 - `pnpm verify-artifact -- --version v1.2.3`
+- `pnpm release-artifact -- build --version v1.2.3`
+- `pnpm release-artifact -- verify --version v1.2.3`
+- `pnpm release-artifact -- install --archive-path ./dist/repo-toolkit-v1.2.3.tar.gz --install-path /tmp/install --version v1.2.3`
 - `pnpm build-go-release -- --config go-release.json --version 1.2.3`
 - `pnpm verify-go-release -- --config go-release.json --version 1.2.3`
+- `pnpm go-release -- build --config go-release.json --version 1.2.3`
+- `pnpm go-release -- verify --config go-release.json --version 1.2.3 --reproducibility`
 - `pnpm confluence -- --folder docs --space-key ENG --parent-page-id 123456789`
 - `pnpm release`
 
@@ -67,9 +72,12 @@ Available commands after install:
 - `repo-toolkit-changelog`
 - `repo-toolkit-publish-package`
 - `repo-toolkit-publish-packages`
+- `repo-toolkit-release-artifact` (`build`/`verify`/`install` subcommands, aliases `repo-toolkit-build-artifact` / `repo-toolkit-verify-artifact` / `repo-toolkit-install-artifact` remain available)
 - `repo-toolkit-build-artifact`
 - `repo-toolkit-verify-artifact`
+- `repo-toolkit-install-artifact`
 - `repo-toolkit-confluence`
+- `repo-toolkit-go-release` (`build`/`verify` subcommands, aliases `repo-toolkit-build-go-release` / `repo-toolkit-verify-go-release` remain available)
 - `repo-toolkit-build-go-release`
 - `repo-toolkit-verify-go-release`
 

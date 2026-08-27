@@ -15,6 +15,9 @@ pnpm add -D @repo-toolkit/go-release
 Put the binary and target matrix in `go-release.json`, then run:
 
 ```sh
+repo-toolkit-go-release build --config go-release.json --version 1.2.3
+repo-toolkit-go-release verify --config go-release.json
+# Standalone aliases remain available:
 repo-toolkit-build-go-release --config go-release.json --version 1.2.3
 repo-toolkit-verify-go-release --config go-release.json
 ```

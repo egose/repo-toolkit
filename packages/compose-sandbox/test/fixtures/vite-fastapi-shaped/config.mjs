@@ -1,6 +1,8 @@
 export default {
   cwd: '.',
   compose: {
+    executable: 'docker-compose',
+    prefixArgs: [],
     files: ['docker-compose.yml', 'docker-compose-apps.yml'],
     projectName: 'vfpt',
   },

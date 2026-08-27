@@ -16,6 +16,7 @@
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "bin": {
+    "repo-toolkit-release-artifact": "dist/cli.js",
     "repo-toolkit-build-artifact": "dist/cli-build.js",
     "repo-toolkit-verify-artifact": "dist/cli-verify.js",
     "repo-toolkit-install-artifact": "dist/cli-install.js"
@@ -33,6 +34,7 @@
     "build-artifact": "node dist/cli-build.js",
     "verify-artifact": "node dist/cli-verify.js",
     "install-artifact": "node dist/cli-install.js",
+    "release-artifact": "node dist/cli.js",
     "gen-install": "pnpm build && node scripts/generate-install.mjs"
   },
   "dependencies": {
