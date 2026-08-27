@@ -1,3 +1,15 @@
+## [0.19.0](https://github.com/egose/repo-toolkit/compare/v0.18.0...v0.19.0) (2026-08-27)
+
+### Features
+
+* **compose-sandbox:** add docker-compose support to compose sandbox fixtures and CI ([e4f6e5f](https://github.com/egose/repo-toolkit/commit/e4f6e5f25ccbe7e74920cf68e9dc1c861d777878))
+* **go-release:** add unified go release cli with build and verify commands ([860adab](https://github.com/egose/repo-toolkit/commit/860adabe6649ed19b60c8a33c9ff37ba9b63c315))
+* **release-artifact:** add unified release artifact cli ([bf4884c](https://github.com/egose/repo-toolkit/commit/bf4884c3e9973db1c3fc0df7bdf32df45e2be865))
+
+### Bug Fixes
+
+* **compose-sandbox:** stabilize compose sandbox regression tests under serial execution ([3f4af77](https://github.com/egose/repo-toolkit/commit/3f4af775e81ba4d6fc99f7f2b451514a0ed1436b))
+
 ## [0.18.0](https://github.com/egose/repo-toolkit/compare/v0.17.0...v0.18.0) (2026-08-26)
 
 ### Features
