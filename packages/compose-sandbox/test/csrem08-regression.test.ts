@@ -287,7 +287,6 @@ describe('CSREM-08 regression: library vs CLI merge consistency', () => {
   });
 
   it('RunResult and runComposeSandbox declarations no longer contradict', async () => {
-    await execSync('pnpm --filter @repo-toolkit/compose-sandbox build', { stdio: 'pipe' });
     const dts = await readFile(join(packageRoot, 'dist', 'index.d.ts'), 'utf8');
     expect(dts).toContain('RunResult');
     // runComposeSandbox should return Promise<RunResult>
@@ -378,7 +377,6 @@ describe('CSREM-08 regression: library vs CLI merge consistency', () => {
   });
 
   it('supported export list documented and protected by contract test', async () => {
-    await execSync('pnpm --filter @repo-toolkit/compose-sandbox build', { stdio: 'pipe' });
     const exported = execSync(
       `node --input-type=module --eval "import('./dist/index.js').then(m=>console.log(Object.keys(m).sort().join(',')))"`,
       { cwd: packageRoot, encoding: 'utf8' },
@@ -411,7 +409,6 @@ describe('CSREM-08 regression: library vs CLI merge consistency', () => {
   });
 
   it('built declaration consumer tests against dist output', async () => {
-    await execSync('pnpm --filter @repo-toolkit/compose-sandbox build', { stdio: 'pipe' });
     const result = spawnSync(
       process.execPath,
       [
@@ -441,7 +438,6 @@ describe('CSREM-08 regression: library vs CLI merge consistency', () => {
   });
 
   it('built CLI integration preserves test exitCode while still proving cleanup occurred', async () => {
-    await execSync('pnpm --filter @repo-toolkit/compose-sandbox build', { stdio: 'pipe' });
     const dir = await mkdtemp(join(tmpdir(), 'csrem08-cli-int-'));
     try {
       const marker = join(dir, 'down.marker');

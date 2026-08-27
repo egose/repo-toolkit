@@ -5,5 +5,9 @@ export default defineConfig({
     environment: 'node',
     include: ['test/**/*.test.ts'],
     testTimeout: 120_000,
+    sequence: { concurrent: false },
+  },
+  poolOptions: {
+    forks: { singleFork: true },
   },
 });
