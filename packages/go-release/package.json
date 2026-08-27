@@ -16,6 +16,7 @@
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "bin": {
+    "repo-toolkit-go-release": "dist/cli.js",
     "repo-toolkit-build-go-release": "dist/cli-build.js",
     "repo-toolkit-verify-go-release": "dist/cli-verify.js"
   },
@@ -30,7 +31,8 @@
     "build": "tsup --config tsup.config.ts",
     "test": "pnpm --filter @repo-toolkit/go-release... build && vitest run --config vitest.config.ts",
     "build-go-release": "node dist/cli-build.js",
-    "verify-go-release": "node dist/cli-verify.js"
+    "verify-go-release": "node dist/cli-verify.js",
+    "go-release": "node dist/cli.js"
   },
   "dependencies": {
     "@repo-toolkit/publish-package": "workspace:*"
