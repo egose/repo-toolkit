@@ -93,6 +93,14 @@ const toc = [{
   "id": "additive-non-pruning-sync",
   "level": 2
 }, {
+  "value": "Leaf page title strategies",
+  "id": "leaf-page-title-strategies",
+  "level": 2
+}, {
+  "value": "Migration and uniqueness notes",
+  "id": "migration-and-uniqueness-notes",
+  "level": 3
+}, {
   "value": "JavaScript API",
   "id": "javascript-api",
   "level": 2
@@ -112,6 +120,7 @@ const toc = [{
 function _createMdxContent(props) {
   const _components = {
     a: "a",
+    blockquote: "blockquote",
     code: "code",
     h1: "h1",
     h2: "h2",
@@ -364,6 +373,30 @@ function _createMdxContent(props) {
         }), (0,jsx_runtime.jsxs)(_components.tr, {
           children: [(0,jsx_runtime.jsx)(_components.td, {
             children: (0,jsx_runtime.jsx)(_components.code, {
+              children: "--page-title-strategy <val>"
+            })
+          }), (0,jsx_runtime.jsxs)(_components.td, {
+            children: ["Leaf page title strategy — ", (0,jsx_runtime.jsx)(_components.code, {
+              children: "filename-stem"
+            }), " (default, filename without final ", (0,jsx_runtime.jsx)(_components.code, {
+              children: ".md"
+            }), "), ", (0,jsx_runtime.jsx)(_components.code, {
+              children: "filename"
+            }), " (with extension), ", (0,jsx_runtime.jsx)(_components.code, {
+              children: "sentence-case-parent"
+            }), " (stem + immediate parent), ", (0,jsx_runtime.jsx)(_components.code, {
+              children: "sentence-case-parents"
+            }), " (stem + all parents), ", (0,jsx_runtime.jsx)(_components.code, {
+              children: "sentence-case-path"
+            }), " (stem + all parents + filename with extension). Folder pages keep raw directory names."]
+          }), (0,jsx_runtime.jsx)(_components.td, {
+            children: (0,jsx_runtime.jsx)(_components.code, {
+              children: "filename-stem"
+            })
+          })]
+        }), (0,jsx_runtime.jsxs)(_components.tr, {
+          children: [(0,jsx_runtime.jsx)(_components.td, {
+            children: (0,jsx_runtime.jsx)(_components.code, {
               children: "--skip-unchanged"
             })
           }), (0,jsx_runtime.jsx)(_components.td, {
@@ -601,6 +634,18 @@ function _createMdxContent(props) {
           }), (0,jsx_runtime.jsx)(_components.td, {
             children: (0,jsx_runtime.jsx)(_components.code, {
               children: "INPUT_VERSION-MESSAGE"
+            })
+          })]
+        }), (0,jsx_runtime.jsxs)(_components.tr, {
+          children: [(0,jsx_runtime.jsx)(_components.td, {
+            children: "pageTitleStrategy"
+          }), (0,jsx_runtime.jsx)(_components.td, {
+            children: (0,jsx_runtime.jsx)(_components.code, {
+              children: "CONFLUENCE_PAGE_TITLE_STRATEGY"
+            })
+          }), (0,jsx_runtime.jsx)(_components.td, {
+            children: (0,jsx_runtime.jsx)(_components.code, {
+              children: "INPUT_PAGE-TITLE-STRATEGY"
             })
           })]
         }), (0,jsx_runtime.jsxs)(_components.tr, {
@@ -1095,12 +1140,188 @@ function _createMdxContent(props) {
         children: "Pages are cached per space+title+parent within a single sync run; the cache\nis not persisted, so cross-sync concurrency is governed by the 409 path\nabove."
       }), "\n"]
     }), "\n", (0,jsx_runtime.jsx)(_components.h2, {
+      id: "leaf-page-title-strategies",
+      children: "Leaf page title strategies"
+    }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
+      children: ["Leaf Confluence page titles are derived from the Markdown file's relative path segments. Directory segments become synthetic parent-page titles and retain their raw segment text for every strategy — only the Markdown leaf file uses ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "pageTitleStrategy"
+      }), " (JS/config: ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "pageTitleStrategy"
+      }), ", CLI: ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "--page-title-strategy"
+      }), ", env: ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "CONFLUENCE_PAGE_TITLE_STRATEGY"
+      }), " / GitHub Action ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "INPUT_PAGE-TITLE-STRATEGY"
+      }), "; default: ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "filename-stem"
+      }), ")."]
+    }), "\n", (0,jsx_runtime.jsxs)(_components.table, {
+      children: [(0,jsx_runtime.jsx)(_components.thead, {
+        children: (0,jsx_runtime.jsxs)(_components.tr, {
+          children: [(0,jsx_runtime.jsx)(_components.th, {
+            children: "Strategy value"
+          }), (0,jsx_runtime.jsx)(_components.th, {
+            children: "Behavior"
+          }), (0,jsx_runtime.jsxs)(_components.th, {
+            children: ["Example for ", (0,jsx_runtime.jsx)(_components.code, {
+              children: "community-nodes/cdogs-document-generator/credentials.md"
+            })]
+          })]
+        })
+      }), (0,jsx_runtime.jsxs)(_components.tbody, {
+        children: [(0,jsx_runtime.jsxs)(_components.tr, {
+          children: [(0,jsx_runtime.jsx)(_components.td, {
+            children: (0,jsx_runtime.jsx)(_components.code, {
+              children: "filename-stem"
+            })
+          }), (0,jsx_runtime.jsxs)(_components.td, {
+            children: ["Original filename without the final ", (0,jsx_runtime.jsx)(_components.code, {
+              children: ".md"
+            }), " extension"]
+          }), (0,jsx_runtime.jsx)(_components.td, {
+            children: (0,jsx_runtime.jsx)(_components.code, {
+              children: "credentials"
+            })
+          })]
+        }), (0,jsx_runtime.jsxs)(_components.tr, {
+          children: [(0,jsx_runtime.jsx)(_components.td, {
+            children: (0,jsx_runtime.jsx)(_components.code, {
+              children: "filename"
+            })
+          }), (0,jsx_runtime.jsx)(_components.td, {
+            children: "Original filename including extension"
+          }), (0,jsx_runtime.jsx)(_components.td, {
+            children: (0,jsx_runtime.jsx)(_components.code, {
+              children: "credentials.md"
+            })
+          })]
+        }), (0,jsx_runtime.jsxs)(_components.tr, {
+          children: [(0,jsx_runtime.jsx)(_components.td, {
+            children: (0,jsx_runtime.jsx)(_components.code, {
+              children: "sentence-case-parent"
+            })
+          }), (0,jsx_runtime.jsx)(_components.td, {
+            children: "Sentence-case filename stem plus immediate parent folder"
+          }), (0,jsx_runtime.jsx)(_components.td, {
+            children: (0,jsx_runtime.jsx)(_components.code, {
+              children: "Credentials (cdogs-document-generator)"
+            })
+          })]
+        }), (0,jsx_runtime.jsxs)(_components.tr, {
+          children: [(0,jsx_runtime.jsx)(_components.td, {
+            children: (0,jsx_runtime.jsx)(_components.code, {
+              children: "sentence-case-parents"
+            })
+          }), (0,jsx_runtime.jsx)(_components.td, {
+            children: "Sentence-case filename stem plus all parent folders"
+          }), (0,jsx_runtime.jsx)(_components.td, {
+            children: (0,jsx_runtime.jsx)(_components.code, {
+              children: "Credentials (community-nodes/cdogs-document-generator)"
+            })
+          })]
+        }), (0,jsx_runtime.jsxs)(_components.tr, {
+          children: [(0,jsx_runtime.jsx)(_components.td, {
+            children: (0,jsx_runtime.jsx)(_components.code, {
+              children: "sentence-case-path"
+            })
+          }), (0,jsx_runtime.jsx)(_components.td, {
+            children: "Sentence-case filename stem plus all parent folders and original filename including extension"
+          }), (0,jsx_runtime.jsx)(_components.td, {
+            children: (0,jsx_runtime.jsx)(_components.code, {
+              children: "Credentials (community-nodes/cdogs-document-generator/credentials.md)"
+            })
+          })]
+        })]
+      })]
+    }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
+      children: ["Sentence case is deterministic and dependency-free: remove only the final case-insensitive ", (0,jsx_runtime.jsx)(_components.code, {
+        children: ".md"
+      }), "; replace each run of ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "-"
+      }), " and ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "_"
+      }), " with one space; trim; lowercase ASCII letters; uppercase the first ASCII letter. Preserve digits and other punctuation. Examples: ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "failed-deployment.md"
+      }), " → ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "Failed deployment"
+      }), ", ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "n8n_setup.md"
+      }), " → ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "N8n setup"
+      }), ", ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "README.md"
+      }), " → ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "Readme"
+      }), ". Preserve the original filename and extension casing in ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "filename"
+      }), " and inside ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "sentence-case-path"
+      }), "; for example, ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "Guide.MD"
+      }), " remains ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "Guide.MD"
+      }), " where the original filename is included."]
+    }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
+      children: ["Parent folders are the ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "DocEntry.segments"
+      }), " before the filename. Exclude the configured documentation root itself and preserve each folder segment exactly as stored; join multiple folders with ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "/"
+      }), " on every platform. For ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "sentence-case-parent"
+      }), " and ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "sentence-case-parents"
+      }), ", omit the parentheses when a file is directly under the documentation root (", (0,jsx_runtime.jsx)(_components.code, {
+        children: "overview.md"
+      }), " → ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "Overview"
+      }), "). For ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "sentence-case-path"
+      }), ", the parenthesized path for a root file is the filename itself (", (0,jsx_runtime.jsx)(_components.code, {
+        children: "overview.md"
+      }), " → ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "Overview (overview.md)"
+      }), "). Folder-generated parent pages keep their existing raw segment titles for every strategy."]
+    }), "\n", (0,jsx_runtime.jsx)(_components.h3, {
+      id: "migration-and-uniqueness-notes",
+      children: "Migration and uniqueness notes"
+    }), "\n", (0,jsx_runtime.jsxs)(_components.blockquote, {
+      children: ["\n", (0,jsx_runtime.jsxs)(_components.p, {
+        children: [(0,jsx_runtime.jsx)(_components.strong, {
+          children: "Changing the strategy changes title-based identity — migration is manual."
+        }), " Confluence lookup is title-under-parent with no persisted source-path-to-page-id mapping, and sync is strictly additive and non-pruning: it creates pages that do not yet exist and updates bodies it can map, but never deletes or renames pages. Switching ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "pageTitleStrategy"
+        }), " therefore seeks a new title and may ", (0,jsx_runtime.jsx)(_components.strong, {
+          children: "create a new page while leaving the old page untouched"
+        }), ". Operators must manually rename, delete, or archive the previously generated pages (or migrate them) before switching strategies in production. In particular, ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "--dry-run"
+        }), " is the recommended way to verify generated titles — it logs ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "would sync <path> as \"<title>\""
+        }), " for every entry — before any remote mutation."]
+      }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
+        children: ["Path-based strategies (", (0,jsx_runtime.jsx)(_components.code, {
+          children: "sentence-case-parent"
+        }), " / ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "sentence-case-parents"
+        }), " / ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "sentence-case-path"
+        }), ") reduce predictable local collisions (for example, repeated basenames such as ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "credentials.md"
+        }), ", ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "architecture.md"
+        }), ", or ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "README.md"
+        }), " in separate subtrees) but ", (0,jsx_runtime.jsx)(_components.strong, {
+          children: "do not guarantee uniqueness against unrelated or manually created pages"
+        }), " already present under the same Confluence parent. Existing unrelated pages can still cause Confluence API conflicts. Local preflight detects only conflicts within the supplied doc tree. Do not truncate or hash generated titles; if Confluence imposes a remote title-length limit, retain the existing API error behavior and document that path-based strategies can produce longer titles."]
+      }), "\n"]
+    }), "\n", (0,jsx_runtime.jsx)(_components.h2, {
       id: "javascript-api",
       children: "JavaScript API"
     }), "\n", (0,jsx_runtime.jsx)(_components.pre, {
       children: (0,jsx_runtime.jsx)(_components.code, {
         className: "language-ts",
-        children: "import { syncConfluenceToDocs, resolveConfluenceSyncPlan, ConfluenceClient } from '@repo-toolkit/confluence';\n\n// resolveConfluenceSyncPlan validates options without starting a sync:\nconst plan = resolveConfluenceSyncPlan({\n  folder: 'docs',\n  username: 'user@example.com',\n  apiToken: process.env.CONFLUENCE_API_TOKEN!,\n  baseUrl: 'https://mydomain.atlassian.net/wiki',\n  spaceKey: 'ENG',\n  parentPageId: '123456789',\n});\n\nawait syncConfluenceToDocs({ ...plan, renderHtmlBlocks: false });\n"
+        children: "import { syncConfluenceToDocs, resolveConfluenceSyncPlan, ConfluenceClient } from '@repo-toolkit/confluence';\n\n// resolveConfluenceSyncPlan validates options without starting a sync:\nconst plan = resolveConfluenceSyncPlan({\n  folder: 'docs',\n  username: 'user@example.com',\n  apiToken: process.env.CONFLUENCE_API_TOKEN!,\n  baseUrl: 'https://mydomain.atlassian.net/wiki',\n  spaceKey: 'ENG',\n  parentPageId: '123456789',\n  pageTitleStrategy: 'sentence-case-parents', // optional; default: 'filename-stem'\n});\n\nawait syncConfluenceToDocs({ ...plan, renderHtmlBlocks: false });\n"
       })
     }), "\n", (0,jsx_runtime.jsx)(_components.h3, {
       id: "custom-gateway-typed-testing--non-confluence-backends",
@@ -1212,6 +1433,26 @@ function _createMdxContent(props) {
         }), ",\n", (0,jsx_runtime.jsx)(_components.code, {
           children: "DocTree"
         }), " — the local documentation-tree reader used by the sync."]
+      }), "\n", (0,jsx_runtime.jsxs)(_components.li, {
+        children: [(0,jsx_runtime.jsx)(_components.code, {
+          children: "pageTitleFromSegments(segments, strategy)"
+        }), ", ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "resolvePageTitleStrategy(value)"
+        }), ", ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "PAGE_TITLE_STRATEGIES"
+        }), ", ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "DEFAULT_PAGE_TITLE_STRATEGY"
+        }), ", ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "PageTitleStrategy"
+        }), " — leaf page title strategy contract (default: ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "filename-stem"
+        }), "). ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "resolvePageTitleStrategy"
+        }), " validates runtime values and ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "pageTitleFromSegments"
+        }), " implements all five Naming Contract outputs. ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "titleFromSegment"
+        }), " is retained for external consumers and directory-title compatibility."]
       }), "\n"]
     }), "\n", (0,jsx_runtime.jsx)(_components.h2, {
       id: "github-action-usage",
@@ -1248,7 +1489,7 @@ function _createMdxContent(props) {
     }), "\n", (0,jsx_runtime.jsx)(_components.pre, {
       children: (0,jsx_runtime.jsx)(_components.code, {
         className: "language-yaml",
-        children: "runs:\n  using: 'node20'\n  main: 'action-dist/index.js'\ninputs:\n  folder: { required: true }\n  username: { required: true }\n  password: { required: true }\n  password-file: { required: false }\n  confluence-base-url: { required: true }\n  space-key: { required: true }\n  parent-page-id: { required: true }\n  version-message: { required: false }\n  dry-run: { required: false, default: 'false' }\n  skip-unchanged: { required: false, default: 'true' }\n  render-html-blocks: { required: false, default: 'false' }\n"
+        children: "runs:\n  using: 'node20'\n  main: 'action-dist/index.js'\ninputs:\n  folder: { required: true }\n  username: { required: true }\n  password: { required: true }\n  password-file: { required: false }\n  confluence-base-url: { required: true }\n  space-key: { required: true }\n  parent-page-id: { required: true }\n  version-message: { required: false }\n  page-title-strategy: { required: false, default: 'filename-stem' }\n  dry-run: { required: false, default: 'false' }\n  skip-unchanged: { required: false, default: 'true' }\n  render-html-blocks: { required: false, default: 'false' }\n"
       })
     }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
       children: ["A runnable smoke fixture lives under\n", (0,jsx_runtime.jsx)(_components.a, {
