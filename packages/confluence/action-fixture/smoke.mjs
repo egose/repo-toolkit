@@ -29,6 +29,7 @@ async function main() {
       'INPUT_CONFLUENCE-BASE-URL': 'http://fixture.example/wiki',
       'INPUT_SPACE-KEY': 'FX',
       'INPUT_PARENT-PAGE-ID': '123456789',
+      'INPUT_PAGE-TITLE-STRATEGY': 'sentence-case-parent',
       'INPUT_DRY-RUN': 'true',
       'INPUT_SKIP-UNCHANGED': 'true',
       'INPUT_RENDER-HTML-BLOCKS': 'false',
@@ -47,10 +48,12 @@ async function main() {
     delete env.CONFLUENCE_SKIP_UNCHANGED;
     delete env.CONFLUENCE_RENDER_HTML_BLOCKS;
     delete env.CONFLUENCE_API_TOKEN_FILE;
-    delete env['INPUT_API-TOKEN'];
+    delete env.CONFLUENCE_PAGE_TITLE_STRATEGY;
     delete env['INPUT_PASSWORD'];
     delete env['INPUT_API-TOKEN-FILE'];
     delete env['INPUT_PASSWORD-FILE'];
+    // keep INPUT_API-TOKEN (MOCK_TOKEN) for dry-run token-non-echo check; original fixture deleted it but dry-run no longer requires it
+    // Do NOT delete INPUT_PAGE-TITLE-STRATEGY — the non-default strategy must reach the sync plan
 
     const result = spawnSync(process.execPath, [cliPath], {
       env,
@@ -72,6 +75,12 @@ async function main() {
     }
     if (!stdout.includes('sub/page.md')) {
       failures.push('expected dry-run plan to list sub/page.md');
+    }
+    if (!stdout.includes('Page (sub)')) {
+      failures.push('expected dry-run plan to contain generated title "Page (sub)" for page-title-strategy sentence-case-parent (sub/page.md)');
+    }
+    if (!stdout.includes('Index')) {
+      failures.push('expected dry-run plan to contain generated title "Index" for sentence-case-parent root (index.md)');
     }
     if (stdout.includes(MOCK_TOKEN) || stderr.includes(MOCK_TOKEN)) {
       failures.push(`token "${MOCK_TOKEN}" was echoed to stdout or stderr`);

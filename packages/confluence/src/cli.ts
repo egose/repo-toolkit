@@ -29,6 +29,7 @@ export const SPECS: FlagSpec[] = [
   { name: 'parent-page-id' },
   { name: 'version-message' },
   { name: 'repository-url' },
+  { name: 'page-title-strategy' },
   { name: 'skip-unchanged', boolean: true, negatable: true },
   { name: 'dry-run', boolean: true },
   { name: 'render-html-blocks', boolean: true },
@@ -79,6 +80,7 @@ Environment variables (CLI form; GitHub Action INPUT_* form is also read):
   CONFLUENCE_PARENT_PAGE_ID            Numeric parent page id
   CONFLUENCE_VERSION_MESSAGE            Version-message suffix for every PUT
   CONFLUENCE_REPOSITORY_URL            Repository URL appended to synced pages
+  CONFLUENCE_PAGE_TITLE_STRATEGY       Leaf page title strategy (default: filename-stem)
   CONFLUENCE_SKIP_UNCHANGED            true|false (default: true)
   CONFLUENCE_DRY_RUN                   true|false (default: false)
   CONFLUENCE_RENDER_HTML_BLOCKS        true|false (default: false)
@@ -99,6 +101,8 @@ Options:
   --parent-page-id <id>         Numeric page id under which docs will be published (required)
   --version-message <text>      Commit message appended to every page/attachment PUT
   --repository-url <url>        Repository URL appended to synced pages as an italic notice
+  --page-title-strategy <value> Leaf page title strategy: filename-stem (default), filename,
+                                sentence-case-parent, sentence-case-parents, sentence-case-path
   --skip-unchanged               Skip pages whose body is unchanged (default: true)
   --no-skip-unchanged           Re-upload every page even when unchanged
   --dry-run                     Walk the doc tree and print the plan without API calls
@@ -119,6 +123,7 @@ type StringOptionKey =
   | 'parentPageId'
   | 'versionMessage'
   | 'repositoryUrl'
+  | 'pageTitleStrategy'
   | 'cwd';
 
 const STRING_OPTION_KEYS: ReadonlyArray<StringOptionKey> = [
@@ -162,6 +167,7 @@ const ENV_BINDINGS: ReadonlyArray<EnvBinding> = [
   { envName: 'INPUT_PARENT-PAGE-ID', key: 'parentPageId', kind: 'string' },
   { envName: 'INPUT_VERSION-MESSAGE', key: 'versionMessage', kind: 'string' },
   { envName: 'INPUT_REPOSITORY-URL', key: 'repositoryUrl', kind: 'string' },
+  { envName: 'INPUT_PAGE-TITLE-STRATEGY', key: 'pageTitleStrategy', kind: 'string' },
   { envName: 'INPUT_DRY-RUN', key: 'dryRun', kind: 'boolean' },
   { envName: 'INPUT_SKIP-UNCHANGED', key: 'skipUnchanged', kind: 'boolean' },
   { envName: 'INPUT_RENDER-HTML-BLOCKS', key: 'renderHtmlBlocks', kind: 'boolean' },
@@ -174,6 +180,7 @@ const ENV_BINDINGS: ReadonlyArray<EnvBinding> = [
   { envName: 'CONFLUENCE_PARENT_PAGE_ID', key: 'parentPageId', kind: 'string' },
   { envName: 'CONFLUENCE_VERSION_MESSAGE', key: 'versionMessage', kind: 'string' },
   { envName: 'CONFLUENCE_REPOSITORY_URL', key: 'repositoryUrl', kind: 'string' },
+  { envName: 'CONFLUENCE_PAGE_TITLE_STRATEGY', key: 'pageTitleStrategy', kind: 'string' },
   { envName: 'CONFLUENCE_DRY_RUN', key: 'dryRun', kind: 'boolean' },
   { envName: 'CONFLUENCE_SKIP_UNCHANGED', key: 'skipUnchanged', kind: 'boolean' },
   { envName: 'CONFLUENCE_RENDER_HTML_BLOCKS', key: 'renderHtmlBlocks', kind: 'boolean' },
@@ -189,6 +196,10 @@ export function optionsFromEnv(env: Record<string, string | undefined> = process
     }
 
     if (kind === 'string') {
+      if (key === 'pageTitleStrategy') {
+        options[key as string] = raw;
+        continue;
+      }
       if (!isStringOptionKey(key as string)) {
         continue;
       }
@@ -235,6 +246,9 @@ export function buildOptions(result: ReturnType<typeof parseFlags>): Partial<Con
   setIfString(options, 'parentPageId', values['parent-page-id']);
   setIfString(options, 'versionMessage', values['version-message']);
   setIfString(options, 'repositoryUrl', values['repository-url']);
+  if (values['page-title-strategy'] !== undefined) {
+    options.pageTitleStrategy = values['page-title-strategy'] as string;
+  }
 
   if (values['skip-unchanged'] !== undefined) {
     options.skipUnchanged = values['skip-unchanged'] === 'true';

@@ -42,24 +42,25 @@ repo-toolkit-confluence \
 
 ### Flags
 
-| Flag                          | Description                                                                                                                                                                                                                         | Default                              |
-| ----------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------ |
-| `--config <path>`             | JSON / `.mjs` / `.cjs` config file. CLI flags override config for the same option; env fills gaps; see [precedence](#configuration-precedence).                                                                                     | —                                    |
-| `--cwd <path>`                | Working directory; `--folder` and secret-file paths resolve against this.                                                                                                                                                           | `process.cwd()`                      |
-| `--folder <path>`             | Folder containing the documentation to publish (required, unless `--interactive` collects it).                                                                                                                                      | —                                    |
-| `--username <value>`          | Confluence username or email (required).                                                                                                                                                                                            | —                                    |
-| `--api-token <value>`         | Confluence API token (required). Alias: `--password`. Prefer a secret file; see [credentials](#credentials).                                                                                                                        | —                                    |
-| `--api-token-file <path>`     | File whose contents become the API token (one trailing newline + surrounding whitespace stripped). Alias: `--password-file`. Resolved relative to `--cwd`.                                                                          | —                                    |
-| `--confluence-base-url <url>` | Confluence URL with `/wiki` (required). Alias: `--base-url`.                                                                                                                                                                        | —                                    |
-| `--space-key <key>`           | Confluence space key (required; resolved to a `spaceId` via the API).                                                                                                                                                               | —                                    |
-| `--parent-page-id <id>`       | Numeric page id under which docs are published (required).                                                                                                                                                                          | —                                    |
-| `--version-message <text>`    | Version-message suffix appended to every page/attachment PUT.                                                                                                                                                                       | `Synced via repo-toolkit-confluence` |
-| `--skip-unchanged`            | Skip pages whose body is unchanged.                                                                                                                                                                                                 | `true` (skip)                        |
-| `--no-skip-unchanged`         | Re-upload every page even when unchanged.                                                                                                                                                                                           | —                                    |
-| `--dry-run`                   | Walk the doc tree and run the same local preflight (read + convert every markdown file, validate every local image source) then print the plan. No API mutation calls; bypasses required-field checks so no credentials are needed. | `false`                              |
-| `--render-html-blocks`        | Render ` ```html ` fenced blocks as inline HTML via the Confluence `html` macro instead of a code box. **Unsafe for untrusted Markdown.**                                                                                           | `false`                              |
-| `-i, --interactive`           | Prompt on a real TTY for missing non-secret required fields. The API token is never prompted.                                                                                                                                       | `false`                              |
-| `-h, --help`                  | Show help and return.                                                                                                                                                                                                               | —                                    |
+| Flag                          | Description                                                                                                                                                                                                                                                                                                                  | Default                              |
+| ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------ |
+| `--config <path>`             | JSON / `.mjs` / `.cjs` config file. CLI flags override config for the same option; env fills gaps; see [precedence](#configuration-precedence).                                                                                                                                                                              | —                                    |
+| `--cwd <path>`                | Working directory; `--folder` and secret-file paths resolve against this.                                                                                                                                                                                                                                                    | `process.cwd()`                      |
+| `--folder <path>`             | Folder containing the documentation to publish (required, unless `--interactive` collects it).                                                                                                                                                                                                                               | —                                    |
+| `--username <value>`          | Confluence username or email (required).                                                                                                                                                                                                                                                                                     | —                                    |
+| `--api-token <value>`         | Confluence API token (required). Alias: `--password`. Prefer a secret file; see [credentials](#credentials).                                                                                                                                                                                                                 | —                                    |
+| `--api-token-file <path>`     | File whose contents become the API token (one trailing newline + surrounding whitespace stripped). Alias: `--password-file`. Resolved relative to `--cwd`.                                                                                                                                                                   | —                                    |
+| `--confluence-base-url <url>` | Confluence URL with `/wiki` (required). Alias: `--base-url`.                                                                                                                                                                                                                                                                 | —                                    |
+| `--space-key <key>`           | Confluence space key (required; resolved to a `spaceId` via the API).                                                                                                                                                                                                                                                        | —                                    |
+| `--parent-page-id <id>`       | Numeric page id under which docs are published (required).                                                                                                                                                                                                                                                                   | —                                    |
+| `--version-message <text>`    | Version-message suffix appended to every page/attachment PUT.                                                                                                                                                                                                                                                                | `Synced via repo-toolkit-confluence` |
+| `--page-title-strategy <val>` | Leaf page title strategy — `filename-stem` (default, filename without final `.md`), `filename` (with extension), `sentence-case-parent` (stem + immediate parent), `sentence-case-parents` (stem + all parents), `sentence-case-path` (stem + all parents + filename with extension). Folder pages keep raw directory names. | `filename-stem`                      |
+| `--skip-unchanged`            | Skip pages whose body is unchanged.                                                                                                                                                                                                                                                                                          | `true` (skip)                        |
+| `--no-skip-unchanged`         | Re-upload every page even when unchanged.                                                                                                                                                                                                                                                                                    | —                                    |
+| `--dry-run`                   | Walk the doc tree and run the same local preflight (read + convert every markdown file, validate every local image source) then print the plan. No API mutation calls; bypasses required-field checks so no credentials are needed.                                                                                          | `false`                              |
+| `--render-html-blocks`        | Render ` ```html ` fenced blocks as inline HTML via the Confluence `html` macro instead of a code box. **Unsafe for untrusted Markdown.**                                                                                                                                                                                    | `false`                              |
+| `-i, --interactive`           | Prompt on a real TTY for missing non-secret required fields. The API token is never prompted.                                                                                                                                                                                                                                | `false`                              |
+| `-h, --help`                  | Show help and return.                                                                                                                                                                                                                                                                                                        | —                                    |
 
 ## Configuration precedence
 
@@ -87,19 +88,20 @@ both read for every option. Boolean env values accept `true|1|yes|on` /
 with `Invalid boolean value for <ENV_NAME>: <raw>. Use one of
 true|false|1|0|yes|no|on|off.` naming the offending variable and value.
 
-| Option                  | `CONFLUENCE_*`                  | `INPUT_*` (Actions form)                      |
-| ----------------------- | ------------------------------- | --------------------------------------------- |
-| folder                  | `CONFLUENCE_FOLDER`             | `INPUT_FOLDER`                                |
-| username                | `CONFLUENCE_USERNAME`           | `INPUT_USERNAME`                              |
-| apiToken                | `CONFLUENCE_API_TOKEN`          | `INPUT_API-TOKEN`, `INPUT_PASSWORD`           |
-| apiTokenFile            | `CONFLUENCE_API_TOKEN_FILE`     | `INPUT_API-TOKEN-FILE`, `INPUT_PASSWORD-FILE` |
-| baseUrl                 | `CONFLUENCE_BASE_URL`           | `INPUT_CONFLUENCE-BASE-URL`                   |
-| spaceKey                | `CONFLUENCE_SPACE_KEY`          | `INPUT_SPACE-KEY`                             |
-| parentPageId            | `CONFLUENCE_PARENT_PAGE_ID`     | `INPUT_PARENT-PAGE-ID`                        |
-| versionMessage          | `CONFLUENCE_VERSION_MESSAGE`    | `INPUT_VERSION-MESSAGE`                       |
-| skipUnchanged (bool)    | `CONFLUENCE_SKIP_UNCHANGED`     | `INPUT_SKIP-UNCHANGED`                        |
-| dryRun (bool)           | `CONFLUENCE_DRY_RUN`            | `INPUT_DRY-RUN`                               |
-| renderHtmlBlocks (bool) | `CONFLUENCE_RENDER_HTML_BLOCKS` | `INPUT_RENDER-HTML-BLOCKS`                    |
+| Option                  | `CONFLUENCE_*`                   | `INPUT_*` (Actions form)                      |
+| ----------------------- | -------------------------------- | --------------------------------------------- |
+| folder                  | `CONFLUENCE_FOLDER`              | `INPUT_FOLDER`                                |
+| username                | `CONFLUENCE_USERNAME`            | `INPUT_USERNAME`                              |
+| apiToken                | `CONFLUENCE_API_TOKEN`           | `INPUT_API-TOKEN`, `INPUT_PASSWORD`           |
+| apiTokenFile            | `CONFLUENCE_API_TOKEN_FILE`      | `INPUT_API-TOKEN-FILE`, `INPUT_PASSWORD-FILE` |
+| baseUrl                 | `CONFLUENCE_BASE_URL`            | `INPUT_CONFLUENCE-BASE-URL`                   |
+| spaceKey                | `CONFLUENCE_SPACE_KEY`           | `INPUT_SPACE-KEY`                             |
+| parentPageId            | `CONFLUENCE_PARENT_PAGE_ID`      | `INPUT_PARENT-PAGE-ID`                        |
+| versionMessage          | `CONFLUENCE_VERSION_MESSAGE`     | `INPUT_VERSION-MESSAGE`                       |
+| pageTitleStrategy       | `CONFLUENCE_PAGE_TITLE_STRATEGY` | `INPUT_PAGE-TITLE-STRATEGY`                   |
+| skipUnchanged (bool)    | `CONFLUENCE_SKIP_UNCHANGED`      | `INPUT_SKIP-UNCHANGED`                        |
+| dryRun (bool)           | `CONFLUENCE_DRY_RUN`             | `INPUT_DRY-RUN`                               |
+| renderHtmlBlocks (bool) | `CONFLUENCE_RENDER_HTML_BLOCKS`  | `INPUT_RENDER-HTML-BLOCKS`                    |
 
 `CONFLUENCE_*` takes precedence over the lower-specificity `INPUT_*` form, so
 non-Action users can supply env credentials with documented semantics while
@@ -289,6 +291,28 @@ titles under the same parent: <title>`.
   is not persisted, so cross-sync concurrency is governed by the 409 path
   above.
 
+## Leaf page title strategies
+
+Leaf Confluence page titles are derived from the Markdown file's relative path segments. Directory segments become synthetic parent-page titles and retain their raw segment text for every strategy — only the Markdown leaf file uses `pageTitleStrategy` (JS/config: `pageTitleStrategy`, CLI: `--page-title-strategy`, env: `CONFLUENCE_PAGE_TITLE_STRATEGY` / GitHub Action `INPUT_PAGE-TITLE-STRATEGY`; default: `filename-stem`).
+
+| Strategy value          | Behavior                                                                                      | Example for `community-nodes/cdogs-document-generator/credentials.md`   |
+| ----------------------- | --------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
+| `filename-stem`         | Original filename without the final `.md` extension                                           | `credentials`                                                           |
+| `filename`              | Original filename including extension                                                         | `credentials.md`                                                        |
+| `sentence-case-parent`  | Sentence-case filename stem plus immediate parent folder                                      | `Credentials (cdogs-document-generator)`                                |
+| `sentence-case-parents` | Sentence-case filename stem plus all parent folders                                           | `Credentials (community-nodes/cdogs-document-generator)`                |
+| `sentence-case-path`    | Sentence-case filename stem plus all parent folders and original filename including extension | `Credentials (community-nodes/cdogs-document-generator/credentials.md)` |
+
+Sentence case is deterministic and dependency-free: remove only the final case-insensitive `.md`; replace each run of `-` and `_` with one space; trim; lowercase ASCII letters; uppercase the first ASCII letter. Preserve digits and other punctuation. Examples: `failed-deployment.md` → `Failed deployment`, `n8n_setup.md` → `N8n setup`, `README.md` → `Readme`. Preserve the original filename and extension casing in `filename` and inside `sentence-case-path`; for example, `Guide.MD` remains `Guide.MD` where the original filename is included.
+
+Parent folders are the `DocEntry.segments` before the filename. Exclude the configured documentation root itself and preserve each folder segment exactly as stored; join multiple folders with `/` on every platform. For `sentence-case-parent` and `sentence-case-parents`, omit the parentheses when a file is directly under the documentation root (`overview.md` → `Overview`). For `sentence-case-path`, the parenthesized path for a root file is the filename itself (`overview.md` → `Overview (overview.md)`). Folder-generated parent pages keep their existing raw segment titles for every strategy.
+
+### Migration and uniqueness notes
+
+> **Changing the strategy changes title-based identity — migration is manual.** Confluence lookup is title-under-parent with no persisted source-path-to-page-id mapping, and sync is strictly additive and non-pruning: it creates pages that do not yet exist and updates bodies it can map, but never deletes or renames pages. Switching `pageTitleStrategy` therefore seeks a new title and may **create a new page while leaving the old page untouched**. Operators must manually rename, delete, or archive the previously generated pages (or migrate them) before switching strategies in production. In particular, `--dry-run` is the recommended way to verify generated titles — it logs `would sync <path> as "<title>"` for every entry — before any remote mutation.
+>
+> Path-based strategies (`sentence-case-parent` / `sentence-case-parents` / `sentence-case-path`) reduce predictable local collisions (for example, repeated basenames such as `credentials.md`, `architecture.md`, or `README.md` in separate subtrees) but **do not guarantee uniqueness against unrelated or manually created pages** already present under the same Confluence parent. Existing unrelated pages can still cause Confluence API conflicts. Local preflight detects only conflicts within the supplied doc tree. Do not truncate or hash generated titles; if Confluence imposes a remote title-length limit, retain the existing API error behavior and document that path-based strategies can produce longer titles.
+
 ## JavaScript API
 
 ```ts
@@ -302,6 +326,7 @@ const plan = resolveConfluenceSyncPlan({
   baseUrl: 'https://mydomain.atlassian.net/wiki',
   spaceKey: 'ENG',
   parentPageId: '123456789',
+  pageTitleStrategy: 'sentence-case-parents', // optional; default: 'filename-stem'
 });
 
 await syncConfluenceToDocs({ ...plan, renderHtmlBlocks: false });
@@ -393,6 +418,7 @@ remains credentials-free (no gateway needed).
   and mermaid placeholders into `mmdc`-rendered SVG attachments.
 - `readDocTree`, `titleFromSegment`, `isMarkdownName`, `DocEntry`,
   `DocTree` — the local documentation-tree reader used by the sync.
+- `pageTitleFromSegments(segments, strategy)`, `resolvePageTitleStrategy(value)`, `PAGE_TITLE_STRATEGIES`, `DEFAULT_PAGE_TITLE_STRATEGY`, `PageTitleStrategy` — leaf page title strategy contract (default: `filename-stem`). `resolvePageTitleStrategy` validates runtime values and `pageTitleFromSegments` implements all five Naming Contract outputs. `titleFromSegment` is retained for external consumers and directory-title compatibility.
 
 ## GitHub Action usage
 
@@ -423,6 +449,7 @@ inputs:
   space-key: { required: true }
   parent-page-id: { required: true }
   version-message: { required: false }
+  page-title-strategy: { required: false, default: 'filename-stem' }
   dry-run: { required: false, default: 'false' }
   skip-unchanged: { required: false, default: 'true' }
   render-html-blocks: { required: false, default: 'false' }

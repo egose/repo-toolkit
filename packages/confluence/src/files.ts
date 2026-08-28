@@ -64,3 +64,71 @@ export function titleFromSegment(segment: string): string {
   }
   return segment;
 }
+
+export const PAGE_TITLE_STRATEGIES = [
+  'filename-stem',
+  'filename',
+  'sentence-case-parent',
+  'sentence-case-parents',
+  'sentence-case-path',
+] as const;
+
+export type PageTitleStrategy = (typeof PAGE_TITLE_STRATEGIES)[number];
+
+export const DEFAULT_PAGE_TITLE_STRATEGY: PageTitleStrategy = 'filename-stem';
+
+export function resolvePageTitleStrategy(value: unknown): PageTitleStrategy {
+  if (value === undefined || value === null) {
+    return DEFAULT_PAGE_TITLE_STRATEGY;
+  }
+  if (typeof value === 'string' && (PAGE_TITLE_STRATEGIES as readonly string[]).includes(value)) {
+    return value as PageTitleStrategy;
+  }
+  throw new Error(
+    `Invalid pageTitleStrategy: expected one of ${PAGE_TITLE_STRATEGIES.join(', ')}, got ${JSON.stringify(value)}`,
+  );
+}
+
+function sentenceCaseStem(filename: string): string {
+  let stem = filename;
+  if (/\.md$/i.test(stem)) {
+    stem = stem.slice(0, stem.length - MARKDOWN_EXT.length);
+  }
+  let out = stem
+    .replace(/[-_]+/g, ' ')
+    .trim()
+    .replace(/[A-Z]/g, (c) => c.toLowerCase());
+  const firstLetter = /[a-z]/.exec(out);
+  if (firstLetter) {
+    const i = firstLetter.index;
+    out = out.slice(0, i) + out.charAt(i).toUpperCase() + out.slice(i + 1);
+  }
+  return out;
+}
+
+export function pageTitleFromSegments(segments: readonly string[], strategy: PageTitleStrategy): string {
+  const filename = segments.length > 0 ? segments[segments.length - 1] : '';
+  const parents = segments.slice(0, segments.length - 1);
+  switch (strategy) {
+    case 'filename-stem':
+      return titleFromSegment(filename);
+    case 'filename':
+      return filename;
+    case 'sentence-case-parent': {
+      const title = sentenceCaseStem(filename);
+      if (parents.length === 0) {
+        return title;
+      }
+      return `${title} (${parents[parents.length - 1]})`;
+    }
+    case 'sentence-case-parents': {
+      const title = sentenceCaseStem(filename);
+      if (parents.length === 0) {
+        return title;
+      }
+      return `${title} (${parents.join('/')})`;
+    }
+    case 'sentence-case-path':
+      return `${sentenceCaseStem(filename)} (${[...parents, filename].join('/')})`;
+  }
+}

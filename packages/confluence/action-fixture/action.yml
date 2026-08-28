@@ -31,6 +31,10 @@ inputs:
     description: Numeric parent page id. The fixture supplies a mock id.
     required: false
     default: '123456789'
+  page-title-strategy:
+    description: Leaf page title strategy — filename-stem (default), filename, sentence-case-parent, sentence-case-parents, sentence-case-path. Folder pages keep raw directory names.
+    required: false
+    default: filename-stem
   dry-run:
     description: Walk the doc tree and log the plan without API calls. The fixture forces this to 'true'.
     required: false

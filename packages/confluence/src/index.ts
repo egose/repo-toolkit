@@ -18,9 +18,23 @@ export type {
   UpdatePageInput,
 } from './confluence-client';
 
-import { readDocTree, titleFromSegment, isMarkdownName, type DocEntry } from './files';
+import {
+  readDocTree,
+  titleFromSegment,
+  isMarkdownName,
+  pageTitleFromSegments,
+  resolvePageTitleStrategy,
+  type DocEntry,
+  type PageTitleStrategy,
+} from './files';
 export { readDocTree, titleFromSegment, isMarkdownName };
-export type { DocEntry, DocTree } from './files';
+export {
+  resolvePageTitleStrategy,
+  pageTitleFromSegments,
+  PAGE_TITLE_STRATEGIES,
+  DEFAULT_PAGE_TITLE_STRATEGY,
+} from './files';
+export type { DocEntry, DocTree, PageTitleStrategy } from './files';
 
 import {
   markdownToStorage,
@@ -77,6 +91,12 @@ export interface ConfluenceSyncOptions {
    * render/upload work is performed.
    */
   skipUnchanged?: boolean;
+  /**
+   * Leaf page title strategy (default: `filename-stem`). Applied only to
+   * Markdown leaf pages; folder-generated parent pages keep their raw
+   * directory-segment titles. See {@link PAGE_TITLE_STRATEGIES}.
+   */
+  pageTitleStrategy?: PageTitleStrategy;
   /** Render ```html fenced blocks as inline HTML via the Confluence `html` macro instead of a code box (default: false). */
   renderHtmlBlocks?: boolean;
   /** Repository URL appended to synced pages as an italic source notice. */
@@ -112,12 +132,21 @@ export interface ConfluenceSyncPlan {
   dryRun: boolean;
   renderHtmlBlocks: boolean;
   repositoryUrl: string;
+  /** Validated leaf page title strategy applied during planning. */
+  pageTitleStrategy: PageTitleStrategy;
 }
 
 /** A single markdown entry's locally-validated sync plan. */
 export interface LocalSyncEntryPlan {
   /** The original doc-tree entry this plan covers. */
   entry: DocEntry;
+  /**
+   * The resolved Confluence page title for this leaf entry, computed once via
+   * {@link pageTitleFromSegments} with the plan's {@link ConfluenceSyncPlan.pageTitleStrategy}.
+   * Consumed verbatim by local hierarchy validation, dry-run output, remote
+   * lookup, create, and update paths.
+   */
+  title: string;
   /** Rendered storage HTML from `markdownToStorage` (placeholder macros intact). */
   html: string;
   /** Mermaid blocks parsed from the markdown source. */
@@ -194,6 +223,7 @@ export function validateLocalSync(entries: ReadonlyArray<DocEntry>, plan: Conflu
         : [];
       plans.push({
         entry,
+        title: pageTitleFromSegments(entry.segments, plan.pageTitleStrategy),
         html: body,
         mermaidBlocks,
         markdownDir,
@@ -268,6 +298,7 @@ export interface SyncResult {
 }
 
 export function resolveConfluenceSyncPlan(options: ConfluenceSyncOptions = {}): ConfluenceSyncPlan {
+  const pageTitleStrategy = resolvePageTitleStrategy(options.pageTitleStrategy);
   const cwd = resolve(options.cwd ?? process.cwd());
   const folder = resolveInputPath(cwd, options.folder ?? '');
   if (!options.folder) {
@@ -326,6 +357,7 @@ export function resolveConfluenceSyncPlan(options: ConfluenceSyncOptions = {}): 
     dryRun: options.dryRun ?? false,
     renderHtmlBlocks: options.renderHtmlBlocks === true,
     repositoryUrl,
+    pageTitleStrategy,
   };
 }
 
@@ -339,9 +371,9 @@ export async function syncConfluenceToDocs(options: ConfluenceSyncOptions = {}):
     return;
   }
 
-  validateLocalHierarchy(tree.entries);
-
   const localPlan = validateLocalSync(tree.entries, plan);
+
+  validateLocalHierarchy(localPlan.entries, plan.pageTitleStrategy);
 
   if (plan.dryRun) {
     log('[dry-run] Walking documentation tree only.');
@@ -349,7 +381,7 @@ export async function syncConfluenceToDocs(options: ConfluenceSyncOptions = {}):
       const attCount = entryPlan.attachments.length;
       const mermaidCount = entryPlan.mermaidBlocks.length;
       log(
-        `[dry-run] would sync ${entryPlan.entry.segments.join('/')}` +
+        `[dry-run] would sync ${entryPlan.entry.segments.join('/')} as "${entryPlan.title}"` +
           (attCount > 0 ? ` (${attCount} attachment${attCount === 1 ? '' : 's'} validated)` : '') +
           (mermaidCount > 0 ? ` (${mermaidCount} mermaid block${mermaidCount === 1 ? '' : 's'})` : ''),
       );
@@ -405,7 +437,7 @@ async function syncEntry(
     const segment = segments[idx] ?? '';
 
     if (isLast && isMarkdownName(segment)) {
-      const title = titleFromSegment(segment);
+      const title = entryPlan.title;
       const leafNeedsUploads = hasLocalImages || hasMermaidBlocks;
 
       const existing = await cache.find(title, currentParentId);
@@ -474,7 +506,7 @@ async function syncEntry(
     }
 
     if (isMarkdownName(segment)) {
-      const title = titleFromSegment(segment);
+      const title = pageTitleFromSegments(segments.slice(0, idx + 1), plan.pageTitleStrategy);
       const page = await cache.findOrCreate(title, currentParentId);
       currentParentId = page.id;
       continue;
@@ -660,16 +692,21 @@ async function predictBody(
   return predicted;
 }
 
-function validateLocalHierarchy(entries: ReadonlyArray<DocEntry>): void {
+function validateLocalHierarchy(entries: ReadonlyArray<LocalSyncEntryPlan>, strategy: PageTitleStrategy): void {
   const seen = new Map<string, 'file' | 'dir'>();
 
-  for (const entry of entries) {
+  for (const entryPlan of entries) {
+    const { entry } = entryPlan;
     let parentKey = '';
 
     for (let index = 0; index < entry.segments.length; index += 1) {
       const segment = entry.segments[index] ?? '';
       const isLast = index === entry.segments.length - 1;
-      const title = isMarkdownName(segment) ? titleFromSegment(segment) : segment;
+      const title = isMarkdownName(segment)
+        ? isLast
+          ? entryPlan.title
+          : pageTitleFromSegments(entry.segments.slice(0, index + 1), strategy)
+        : segment;
       const kind: 'file' | 'dir' = isLast && isMarkdownName(segment) ? 'file' : 'dir';
       const key = `${parentKey}::${title}`;
       const existing = seen.get(key);
