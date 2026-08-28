@@ -238,7 +238,8 @@ export function validateLocalSync(entries: ReadonlyArray<DocEntry>, plan: Conflu
       const { html, mermaidBlocks } = markdownToStorage(markdown, {
         renderHtmlBlocks: plan.renderHtmlBlocks,
       });
-      const body = appendRepositoryNotice(html, plan.repositoryUrl);
+      const fileRepositoryUrl = repositoryFileUrl(plan, entry.segments);
+      const body = appendRepositoryNotice(html, fileRepositoryUrl);
       const markdownDir = dirname(entry.absolute);
       const hasLocalImages = hasLocalImagePlaceholder(body);
       const hasMermaidBlocks = mermaidBlocks.length > 0;
@@ -1163,6 +1164,26 @@ function repositoryNoticeUrl(repositoryUrl: string, cwd: string, folder: string)
     return trimmedUrl + '/tree/HEAD/' + encodedFolder;
   }
   return trimmedUrl + '/' + encodedFolder;
+}
+
+function repositoryFileUrl(plan: ConfluenceSyncPlan, segments: ReadonlyArray<string>): string {
+  if (plan.repositoryUrl.length === 0) {
+    return '';
+  }
+  const encodedSegments = segments.map(encodeURIComponent).join('/');
+  if (plan.repositoryUrl.includes('/tree/HEAD/') || plan.repositoryUrl.includes('/blob/HEAD/')) {
+    const baseBlob = plan.repositoryUrl.replace('/tree/HEAD/', '/blob/HEAD/');
+    return baseBlob.replace(/\/+$/, '') + '/' + encodedSegments;
+  }
+  const folderPath = repositoryFolderPath(plan.cwd, plan.folder);
+  const trimmedBase = plan.repositoryUrl.replace(/\/+$/, '').replace(/\.git$/, '');
+  const isGithub = /^https?:\/\/github\.com\//i.test(trimmedBase);
+  if (isGithub) {
+    const fullPath = folderPath ? folderPath + '/' + segments.join('/') : segments.join('/');
+    const encodedFull = fullPath.split('/').map(encodeURIComponent).join('/');
+    return trimmedBase + '/blob/HEAD/' + encodedFull;
+  }
+  return plan.repositoryUrl.replace(/\/+$/, '') + '/' + encodedSegments;
 }
 
 function repositoryFolderPath(cwd: string, folder: string): string {

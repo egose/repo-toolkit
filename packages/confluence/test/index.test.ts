@@ -407,7 +407,7 @@ describe('syncConfluenceToDocs', () => {
       | undefined;
     expect(createCall?.body?.value).toBe(
       '<h1>Intro</h1>\n' +
-        '<p><em>This document is synced from repository <a href="https://github.com/acme/docs/tree/HEAD/docs">https://github.com/acme/docs/tree/HEAD/docs</a>.</em></p>',
+        '<p><em>This document is synced from repository <a href="https://github.com/acme/docs/blob/HEAD/docs/intro.md">https://github.com/acme/docs/blob/HEAD/docs/intro.md</a>.</em></p>',
     );
   });
 
