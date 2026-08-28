@@ -1,3 +1,9 @@
+## [0.20.0](https://github.com/egose/repo-toolkit/compare/v0.19.0...v0.20.0) (2026-08-28)
+
+### Features
+
+* add configurable confluence page title strategies ([62d1dcc](https://github.com/egose/repo-toolkit/commit/62d1dcc96815cc553e32f129baccb1e8998cc188))
+
 ## [0.19.0](https://github.com/egose/repo-toolkit/compare/v0.18.0...v0.19.0) (2026-08-27)
 
 ### Features
