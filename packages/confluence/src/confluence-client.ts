@@ -10,6 +10,7 @@ const DEFAULT_USER_AGENT = 'repo-toolkit-confluence/1.0 (+node)';
 const MAX_LIMIT = 250;
 const MAX_ERROR_BODY_LENGTH = 8_192;
 const MAX_PAGES_PER_QUERY = 100;
+export const CONFLUENCE_MANAGED_LABEL = 'repo-toolkit-confluence';
 export const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
 export const DEFAULT_MAX_RETRIES = 3;
 export const DEFAULT_MAX_UPLOAD_BYTES = 50 * 1024 * 1024;
@@ -64,6 +65,25 @@ export interface ConfluenceGateway extends AttachmentGateway {
   getPage(pageId: string): Promise<Page>;
   createPage(input: CreatePageInput): Promise<Page>;
   updatePage(input: UpdatePageInput): Promise<Page>;
+  getPageDescendants(pageId: string): Promise<PageDescendant[]>;
+  getPageLabels(pageId: string): Promise<PageLabel[]>;
+  addManagedLabel(pageId: string): Promise<void>;
+  deletePage(pageId: string): Promise<void>;
+}
+
+export interface PageDescendant {
+  id: string;
+  type: string;
+  title?: string;
+  parentId?: string;
+  depth?: number;
+  status?: string;
+}
+
+export interface PageLabel {
+  name: string;
+  prefix: string;
+  id?: string;
 }
 
 export interface PageBody {
@@ -271,6 +291,52 @@ export class ConfluenceClient implements ConfluenceGateway {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     });
+  }
+
+  async getPageDescendants(pageId: string): Promise<PageDescendant[]> {
+    const query = new URLSearchParams({ limit: String(MAX_LIMIT) });
+    return this.listAll(this.v2Url(`/pages/${encodeURIComponent(pageId)}/descendants?${query.toString()}`));
+  }
+
+  async getPageLabels(pageId: string): Promise<PageLabel[]> {
+    const query = new URLSearchParams({ limit: String(MAX_LIMIT) });
+    return this.listAll(this.v2Url(`/pages/${encodeURIComponent(pageId)}/labels?${query.toString()}`));
+  }
+
+  async addManagedLabel(pageId: string): Promise<void> {
+    await this.requestJson<unknown>(this.v1Url(`/content/${encodeURIComponent(pageId)}/label`), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify([{ prefix: 'global', name: CONFLUENCE_MANAGED_LABEL }]),
+    });
+  }
+
+  async deletePage(pageId: string): Promise<void> {
+    await this.requestJson<unknown>(this.v2Url(`/pages/${encodeURIComponent(pageId)}`), { method: 'DELETE' });
+  }
+
+  private async listAll<T>(startUrl: string): Promise<T[]> {
+    const results: T[] = [];
+    const visited = new Set<string>();
+    let pageCount = 0;
+    let nextUrl: string | undefined = startUrl;
+
+    while (nextUrl) {
+      pageCount += 1;
+      if (pageCount > MAX_PAGES_PER_QUERY) {
+        throw new ConfluenceApiError(`Pagination limit (${MAX_PAGES_PER_QUERY}) exceeded`, 0, nextUrl, '');
+      }
+      if (visited.has(nextUrl)) {
+        throw new ConfluenceApiError('Confluence pagination loop detected', 0, nextUrl, '');
+      }
+      visited.add(nextUrl);
+
+      const data = await this.requestJson<PaginatedResult<T>>(nextUrl, { method: 'GET' });
+      results.push(...data.results);
+      nextUrl = resolveNextUrl(this.baseUrl, this.baseUrlOrigin, data._links?.next);
+    }
+
+    return results;
   }
 
   async getAttachments(pageId: string): Promise<Attachment[]> {

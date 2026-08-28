@@ -602,24 +602,228 @@ describe('ConfluenceClient network controls (timeout, retry, pagination)', () =>
     expect(calls).toHaveLength(2);
   });
 
-  it('rejects a getAttachments next-link cycle before the page cap is hit', async () => {
-    const seen = new Set<string>();
-    let callCount = 0;
-    const fetchFn = vi.fn(async (endpoint: string) => {
-      callCount += 1;
-      seen.add(endpoint);
-      return makeResponse(200, {
-        results: [{ id: 'A1', title: 'x', version: { number: 1 }, _links: { webui: '/z' } }],
-        _links: { next: callCount < 2 ? 'https://x/wiki/api/v2/pages/P1/attachments?cursor=2' : endpoint },
-      }) as Response;
+  describe('ConfluenceClient descendants, labels, and trash (CFPRUNE-01)', () => {
+    function clientWith(fetchFn: unknown): ConfluenceClient {
+      return new ConfluenceClient({
+        baseUrl: 'https://x/wiki',
+        username: 'u',
+        apiToken: 't',
+        fetch: fetchFn as unknown as typeof fetch,
+        maxRetries: 0,
+      });
+    }
+
+    it('getPageDescendants hits v2 descendants endpoint with encoded id', async () => {
+      const { fetchFn, calls } = buildFetchSequence([
+        { status: 200, body: { results: [{ id: 'D1', type: 'page', parentId: 'P1', depth: 1 }] } },
+      ]);
+      const client = clientWith(fetchFn);
+      const descendants = await client.getPageDescendants('P 1');
+      expect(calls[0].init.method).toBe('GET');
+      expect(calls[0].endpoint).toBe('https://x/wiki/api/v2/pages/P%201/descendants?limit=250');
+      expect(descendants).toHaveLength(1);
+      expect(descendants[0].id).toBe('D1');
     });
-    const client = new ConfluenceClient({
-      baseUrl: 'https://x/wiki',
-      username: 'u',
-      apiToken: 't',
-      fetch: fetchFn as unknown as typeof fetch,
+
+    it('getPageDescendants accumulates every item exactly once across two pages', async () => {
+      const { fetchFn, calls } = buildFetchSequence([
+        {
+          status: 200,
+          body: {
+            results: [
+              { id: 'D1', type: 'page', parentId: 'P1', depth: 1 },
+              { id: 'D2', type: 'page', parentId: 'D1', depth: 2 },
+            ],
+            _links: { next: '/wiki/api/v2/pages/P1/descendants?cursor=c2' },
+          },
+        },
+        {
+          status: 200,
+          body: { results: [{ id: 'D3', type: 'whiteboard', parentId: 'D2', depth: 3 }] },
+        },
+      ]);
+      const client = clientWith(fetchFn);
+      const descendants = await client.getPageDescendants('P1');
+      expect(descendants.map((d) => d.id)).toEqual(['D1', 'D2', 'D3']);
+      expect(calls).toHaveLength(2);
+      expect(calls[1].endpoint).toContain('cursor=c2');
     });
-    await expect(client.getAttachments('P1')).rejects.toMatchObject({ name: 'ConfluenceApiError' });
-    expect(callCount).toBeLessThan(5);
+
+    it('getPageDescendants rejects cross-origin next links', async () => {
+      const { fetchFn, calls } = buildFetchSequence([
+        { status: 200, body: { results: [], _links: { next: 'https://evil.example/api/v2/pages/P1/descendants' } } },
+      ]);
+      const client = clientWith(fetchFn);
+      await expect(client.getPageDescendants('P1')).rejects.toThrowError(/cross-origin/);
+      expect(calls).toHaveLength(1);
+    });
+
+    it('getPageDescendants rejects looping pagination', async () => {
+      const fetchFn = vi.fn(async () =>
+        makeResponse(200, {
+          results: [{ id: 'D1', type: 'page' }],
+          _links: { next: 'https://x/wiki/api/v2/pages/P1/descendants?cursor=loop' },
+        }),
+      );
+      const client = clientWith(fetchFn);
+      await expect(client.getPageDescendants('P1')).rejects.toMatchObject({ name: 'ConfluenceApiError' });
+    });
+
+    it('getPageDescendants rejects malformed next links', async () => {
+      const { fetchFn } = buildFetchSequence([{ status: 200, body: { results: [], _links: { next: 'https://' } } }]);
+      const client = clientWith(fetchFn);
+      await expect(client.getPageDescendants('P1')).rejects.toThrowError(/malformed next link/);
+    });
+
+    it('getPageDescendants fails when the pagination page cap is exceeded', async () => {
+      let callCount = 0;
+      const fetchFn = vi.fn(async () => {
+        callCount += 1;
+        return makeResponse(200, {
+          results: [{ id: 'D1', type: 'page' }],
+          _links: { next: `https://x/wiki/api/v2/pages/P1/descendants?cursor=c${callCount}` },
+        }) as Promise<Response>;
+      });
+      const client = clientWith(fetchFn);
+      await expect(client.getPageDescendants('P1')).rejects.toThrowError(/Pagination limit/);
+      expect(callCount).toBeLessThanOrEqual(101);
+    });
+
+    it('getPageLabels hits v2 labels endpoint and accumulates across pages', async () => {
+      const { fetchFn, calls } = buildFetchSequence([
+        {
+          status: 200,
+          body: {
+            results: [
+              { id: 'L1', name: 'alpha', prefix: 'global' },
+              { id: 'L2', name: 'beta', prefix: 'my' },
+            ],
+            _links: { next: '/wiki/api/v2/pages/P1/labels?cursor=c2' },
+          },
+        },
+        { status: 200, body: { results: [{ id: 'L3', name: 'repo-toolkit-confluence', prefix: 'global' }] } },
+      ]);
+      const client = clientWith(fetchFn);
+      const labels = await client.getPageLabels('P1');
+      expect(calls[0].init.method).toBe('GET');
+      expect(calls[0].endpoint).toBe('https://x/wiki/api/v2/pages/P1/labels?limit=250');
+      expect(labels.map((l) => l.name)).toEqual(['alpha', 'beta', 'repo-toolkit-confluence']);
+      expect(labels[1].prefix).toBe('my');
+      expect(calls).toHaveLength(2);
+    });
+
+    it('getPageLabels rejects looping pagination', async () => {
+      const fetchFn = vi.fn(async () =>
+        makeResponse(200, {
+          results: [{ id: 'L1', name: 'a', prefix: 'global' }],
+          _links: { next: 'https://x/wiki/api/v2/pages/P1/labels?cursor=loop' },
+        }),
+      );
+      const client = clientWith(fetchFn);
+      await expect(client.getPageLabels('P1')).rejects.toMatchObject({ name: 'ConfluenceApiError' });
+    });
+
+    it('label GETs retain bounded retry on 429', async () => {
+      let callCount = 0;
+      const fetchFn = vi.fn(async (): Promise<Response> => {
+        callCount += 1;
+        if (callCount === 1) {
+          return makeResponse(429, { message: 'slow' }, { 'Retry-After': '0' }) as Response;
+        }
+        return makeResponse(200, { results: [] }) as Response;
+      });
+      const client = new ConfluenceClient({
+        baseUrl: 'https://x/wiki',
+        username: 'u',
+        apiToken: 't',
+        fetch: fetchFn as unknown as typeof fetch,
+        maxRetries: 2,
+      });
+      const labels = await client.getPageLabels('P1');
+      expect(labels).toEqual([]);
+      expect(fetchFn).toHaveBeenCalledTimes(2);
+    });
+
+    it('addManagedLabel POSTs the exact additive v1 payload once', async () => {
+      const { fetchFn, calls } = buildFetchSequence([{ status: 200, body: { results: [] } }]);
+      const client = clientWith(fetchFn);
+      await client.addManagedLabel('P 1');
+      expect(calls).toHaveLength(1);
+      expect(calls[0].init.method).toBe('POST');
+      expect(calls[0].endpoint).toBe('https://x/wiki/rest/api/content/P%201/label');
+      expect(calls[0].init.headers['Content-Type']).toBe('application/json');
+      expect(JSON.parse(calls[0].init.body as string)).toEqual([{ prefix: 'global', name: 'repo-toolkit-confluence' }]);
+    });
+
+    it('addManagedLabel does not retry writes', async () => {
+      const fetchFn = vi.fn(async () => makeResponse(500, { message: 'boom' }, { 'Retry-After': '0' }) as Response);
+      const client = new ConfluenceClient({
+        baseUrl: 'https://x/wiki',
+        username: 'u',
+        apiToken: 't',
+        fetch: fetchFn as unknown as typeof fetch,
+        maxRetries: 3,
+      });
+      await client.addManagedLabel('P1').catch((e) => e);
+      expect(fetchFn).toHaveBeenCalledTimes(1);
+    });
+
+    it('addManagedLabel surfaces non-2xx errors', async () => {
+      const { fetchFn } = buildFetchSequence([{ status: 403, body: { message: 'nope' } }]);
+      const client = clientWith(fetchFn);
+      await expect(client.addManagedLabel('P1')).rejects.toMatchObject({ name: 'ConfluenceApiError', status: 403 });
+    });
+
+    it('deletePage issues v2 DELETE without purge and accepts 204 empty body', async () => {
+      const { fetchFn, calls } = buildFetchSequence([{ status: 204, body: '' }]);
+      const client = clientWith(fetchFn);
+      await client.deletePage('P 1');
+      expect(calls).toHaveLength(1);
+      expect(calls[0].init.method).toBe('DELETE');
+      expect(calls[0].endpoint).toBe('https://x/wiki/api/v2/pages/P%201');
+      expect(calls[0].endpoint).not.toContain('purge');
+    });
+
+    it('deletePage makes exactly one attempt (no write retries)', async () => {
+      const fetchFn = vi.fn(async () => makeResponse(500, { message: 'boom' }, { 'Retry-After': '0' }) as Response);
+      const client = new ConfluenceClient({
+        baseUrl: 'https://x/wiki',
+        username: 'u',
+        apiToken: 't',
+        fetch: fetchFn as unknown as typeof fetch,
+        maxRetries: 3,
+      });
+      await client.deletePage('P1').catch((e) => e);
+      expect(fetchFn).toHaveBeenCalledTimes(1);
+    });
+
+    it('deletePage surfaces non-2xx errors', async () => {
+      const { fetchFn } = buildFetchSequence([{ status: 404, body: { message: 'gone' } }]);
+      const client = clientWith(fetchFn);
+      await expect(client.deletePage('P1')).rejects.toMatchObject({ name: 'ConfluenceApiError', status: 404 });
+    });
+  });
+
+  describe('ConfluenceClient pagination guards (getAttachments regression)', () => {
+    it('rejects a getAttachments next-link cycle before the page cap is hit', async () => {
+      const seen = new Set<string>();
+      let callCount = 0;
+      const fetchFn = vi.fn(async (endpoint: string) => {
+        callCount += 1;
+        seen.add(endpoint);
+        return makeResponse(200, {
+          results: [{ id: 'A1', title: 'x', version: { number: 1 }, _links: { webui: '/z' } }],
+          _links: { next: callCount < 2 ? 'https://x/wiki/api/v2/pages/P1/attachments?cursor=2' : endpoint },
+        }) as Response;
+      });
+      const client = new ConfluenceClient({
+        baseUrl: 'https://x/wiki',
+        username: 'u',
+        apiToken: 't',
+        fetch: fetchFn as unknown as typeof fetch,
+      });
+      await expect(client.getAttachments('P1')).rejects.toMatchObject({ name: 'ConfluenceApiError' });
+      expect(callCount).toBeLessThan(5);
+    });
   });
 });

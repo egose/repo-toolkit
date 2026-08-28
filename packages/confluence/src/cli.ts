@@ -33,15 +33,19 @@ export const SPECS: FlagSpec[] = [
   { name: 'skip-unchanged', boolean: true, negatable: true },
   { name: 'dry-run', boolean: true },
   { name: 'render-html-blocks', boolean: true },
+  { name: 'clean', boolean: true },
+  { name: 'update-parent-page', boolean: true, negatable: true },
   INTERACTIVE_FLAG,
 ];
 
 const ENV_TRUTHY = new Set(['true', '1', 'yes', 'on']);
 const ENV_FALSY = new Set(['false', '0', 'no', 'off', '']);
 
-const BOOLEAN_ENV_KEYS = new Set(['skipUnchanged', 'dryRun', 'renderHtmlBlocks']);
+const BOOLEAN_ENV_KEYS = new Set(['skipUnchanged', 'dryRun', 'renderHtmlBlocks', 'clean', 'updateParentPage']);
 
-function isBooleanOption(key: keyof ConfluenceCliOptions): key is 'skipUnchanged' | 'dryRun' | 'renderHtmlBlocks' {
+function isBooleanOption(
+  key: keyof ConfluenceCliOptions,
+): key is 'skipUnchanged' | 'dryRun' | 'renderHtmlBlocks' | 'clean' | 'updateParentPage' {
   return BOOLEAN_ENV_KEYS.has(key as string);
 }
 
@@ -84,6 +88,8 @@ Environment variables (CLI form; GitHub Action INPUT_* form is also read):
   CONFLUENCE_SKIP_UNCHANGED            true|false (default: true)
   CONFLUENCE_DRY_RUN                   true|false (default: false)
   CONFLUENCE_RENDER_HTML_BLOCKS        true|false (default: false)
+  CONFLUENCE_CLEAN                     true|false (default: false)
+  CONFLUENCE_UPDATE_PARENT_PAGE        true|false (default: true)
   INPUT_<UPPER-FLAG>                   GitHub Actions input form (lower precedence)
 
 Note: prefer CONFLUENCE_API_TOKEN_FILE or CONFLUENCE_API_TOKEN over
@@ -108,6 +114,11 @@ Options:
   --dry-run                     Walk the doc tree and print the plan without API calls
   --render-html-blocks          Render \`\`\`html fenced blocks as inline HTML via the
                                 Confluence html macro (default: false; emits as code box)
+  --clean                       Move all page descendants to trash before recreation (default: false).
+                                WARNING: destructive — all page descendants, including manual/unlabeled
+                                pages, are moved to trash; parentPageId is retained.
+  --update-parent-page          Update parent page summary region (default: true)
+  --no-update-parent-page       Do not update parent page summary
   -i, --interactive             Prompt interactively for missing non-secret required values
   -h, --help                    Show this help message
 `);
@@ -171,6 +182,8 @@ const ENV_BINDINGS: ReadonlyArray<EnvBinding> = [
   { envName: 'INPUT_DRY-RUN', key: 'dryRun', kind: 'boolean' },
   { envName: 'INPUT_SKIP-UNCHANGED', key: 'skipUnchanged', kind: 'boolean' },
   { envName: 'INPUT_RENDER-HTML-BLOCKS', key: 'renderHtmlBlocks', kind: 'boolean' },
+  { envName: 'INPUT_CLEAN', key: 'clean', kind: 'boolean' },
+  { envName: 'INPUT_UPDATE-PARENT-PAGE', key: 'updateParentPage', kind: 'boolean' },
   { envName: 'CONFLUENCE_FOLDER', key: 'folder', kind: 'string' },
   { envName: 'CONFLUENCE_USERNAME', key: 'username', kind: 'string' },
   { envName: 'CONFLUENCE_API_TOKEN', key: 'apiToken', kind: 'string' },
@@ -184,6 +197,8 @@ const ENV_BINDINGS: ReadonlyArray<EnvBinding> = [
   { envName: 'CONFLUENCE_DRY_RUN', key: 'dryRun', kind: 'boolean' },
   { envName: 'CONFLUENCE_SKIP_UNCHANGED', key: 'skipUnchanged', kind: 'boolean' },
   { envName: 'CONFLUENCE_RENDER_HTML_BLOCKS', key: 'renderHtmlBlocks', kind: 'boolean' },
+  { envName: 'CONFLUENCE_CLEAN', key: 'clean', kind: 'boolean' },
+  { envName: 'CONFLUENCE_UPDATE_PARENT_PAGE', key: 'updateParentPage', kind: 'boolean' },
 ];
 
 export function optionsFromEnv(env: Record<string, string | undefined> = process.env): Partial<ConfluenceCliOptions> {
@@ -258,6 +273,12 @@ export function buildOptions(result: ReturnType<typeof parseFlags>): Partial<Con
   }
   if (values['render-html-blocks'] !== undefined) {
     options.renderHtmlBlocks = true;
+  }
+  if (values['clean'] !== undefined) {
+    options.clean = values['clean'] === 'true';
+  }
+  if (values['update-parent-page'] !== undefined) {
+    options.updateParentPage = values['update-parent-page'] === 'true';
   }
 
   return options as Partial<ConfluenceCliOptions>;

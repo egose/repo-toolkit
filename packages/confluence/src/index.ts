@@ -3,9 +3,10 @@ import { dirname, isAbsolute, relative, resolve } from 'node:path';
 
 import type { FlagSpec } from '@repo-toolkit/publish-package';
 
-import { ConfluenceClient, ConfluenceApiError } from './confluence-client';
-import type { ConfluenceGateway, Page } from './confluence-client';
+import { ConfluenceClient, ConfluenceApiError, CONFLUENCE_MANAGED_LABEL } from './confluence-client';
+import type { ConfluenceGateway, Page, PageDescendant, PageLabel } from './confluence-client';
 export { ConfluenceClient, ConfluenceApiError };
+export { CONFLUENCE_MANAGED_LABEL } from './confluence-client';
 export type {
   ConfluenceGateway,
   AttachmentGateway,
@@ -16,6 +17,8 @@ export type {
   PageVersion,
   CreatePageInput,
   UpdatePageInput,
+  PageDescendant,
+  PageLabel,
 } from './confluence-client';
 
 import {
@@ -62,6 +65,13 @@ import { rewriteMermaidBlocks, preflightMermaidBlocks } from './mermaid';
 export { rewriteMermaidBlocks, preflightMermaidBlocks };
 export type { MermaidRewriteResult, MermaidRewriteOptions, MermaidPreflightResult } from './mermaid';
 
+import {
+  renderParentSummary,
+  mergeParentSummaryBody,
+  type ManagedPageRecord,
+  type ParentSummaryStats,
+} from './parent-summary';
+
 export const INTERACTIVE_FLAG: FlagSpec = { name: 'interactive', aliases: ['i'], boolean: true };
 
 export interface ConfluenceSyncOptions {
@@ -102,6 +112,19 @@ export interface ConfluenceSyncOptions {
   /** Repository URL appended to synced pages as an italic source notice. */
   repositoryUrl?: string;
   /**
+   * Destructive reset (default: false). When true, a real sync first moves
+   * every page descendant of `parentPageId` — including manual/unlabeled
+   * pages — to the Confluence trash, then recreates the local hierarchy.
+   * `parentPageId` itself is never deleted.
+   */
+  clean?: boolean;
+  /**
+   * Update the target parent summary (default: true). When true, a successful
+   * real sync fetches and merges a deterministic tool-managed region into the
+   * parent page body, preserving all external content.
+   */
+  updateParentPage?: boolean;
+  /**
    * Dry-run: walk the tree and validate every markdown file and local image
    * source (same preflight as a real sync) then print the plan, but make no
    * API mutation calls. Credentials are not required under `--dry-run`.
@@ -132,6 +155,10 @@ export interface ConfluenceSyncPlan {
   dryRun: boolean;
   renderHtmlBlocks: boolean;
   repositoryUrl: string;
+  /** Destructive reset flag; resolved from {@link ConfluenceSyncOptions.clean} with default false. */
+  clean: boolean;
+  /** Parent-summary flag; resolved from {@link ConfluenceSyncOptions.updateParentPage} with default true. */
+  updateParentPage: boolean;
   /** Validated leaf page title strategy applied during planning. */
   pageTitleStrategy: PageTitleStrategy;
 }
@@ -295,6 +322,241 @@ export class SyncMutationError extends Error {
  * when a full run completes without error. */
 export interface SyncResult {
   changes: ReadonlyArray<SyncChange>;
+  /** Page ids that received the global ownership marker during this run. */
+  labelsAdded: ReadonlyArray<string>;
+  /** Page ids trashed by the explicit `clean: true` pre-sync reset. */
+  cleanDeletions: ReadonlyArray<string>;
+  /** Page ids trashed by the default label-gated prune after a successful sync. */
+  pruneDeletions: ReadonlyArray<string>;
+  /** Stale labeled pages retained because an unlabeled, non-page, or otherwise
+   * retained descendant made deletion unsafe. */
+  blocked: ReadonlyArray<string>;
+  /** Parent-summary outcome: `updated` when the parent body changed, `unchanged` when already equal, `skipped` when opt-out. */
+  parentStatus: 'updated' | 'unchanged' | 'skipped';
+}
+
+/** A single failed clean/prune deletion. */
+export interface ReconciliationFailure {
+  pageId: string;
+  error: Error;
+}
+
+/**
+ * Structured partial-mutation report for the clean and prune phases. Thrown
+ * when trashing a page fails mid-phase. Carries every completed deletion, the
+ * failed page, and the planned deletions that were never attempted.
+ */
+export class ReconciliationError extends Error {
+  readonly phase: 'clean' | 'prune';
+  readonly completed: ReadonlyArray<string>;
+  readonly failure: ReconciliationFailure;
+  readonly unprocessed: ReadonlyArray<string>;
+  constructor(input: {
+    phase: 'clean' | 'prune';
+    completed: ReadonlyArray<string>;
+    failure: ReconciliationFailure;
+    unprocessed: ReadonlyArray<string>;
+  }) {
+    super(input.failure.error.message);
+    this.name = 'ReconciliationError';
+    this.phase = input.phase;
+    this.completed = input.completed;
+    this.failure = input.failure;
+    this.unprocessed = input.unprocessed;
+  }
+}
+
+export class ParentSummaryError extends Error {
+  readonly phase: 'parent-summary';
+  readonly changes: ReadonlyArray<SyncChange>;
+  readonly labelsAdded: ReadonlyArray<string>;
+  readonly cleanDeletions: ReadonlyArray<string>;
+  readonly pruneDeletions: ReadonlyArray<string>;
+  readonly blocked: ReadonlyArray<string>;
+  readonly failure: ReconciliationFailure;
+  constructor(input: {
+    changes: ReadonlyArray<SyncChange>;
+    labelsAdded: ReadonlyArray<string>;
+    cleanDeletions: ReadonlyArray<string>;
+    pruneDeletions: ReadonlyArray<string>;
+    blocked: ReadonlyArray<string>;
+    failure: ReconciliationFailure;
+  }) {
+    super(input.failure.error.message);
+    this.name = 'ParentSummaryError';
+    this.phase = 'parent-summary';
+    this.changes = input.changes;
+    this.labelsAdded = input.labelsAdded;
+    this.cleanDeletions = input.cleanDeletions;
+    this.pruneDeletions = input.pruneDeletions;
+    this.blocked = input.blocked;
+    this.failure = input.failure;
+  }
+}
+
+/** One inventoried descendant of the target page, annotated with ownership. */
+export interface RemoteInventoryEntry {
+  id: string;
+  type: string;
+  parentId?: string;
+  depth?: number;
+  title?: string;
+  /** Whether the page carries the exact global ownership marker. */
+  labeled: boolean;
+}
+
+/** Outcome of the pure deletion planners. */
+export interface DeletionPlan {
+  /** Page ids to trash, ordered deepest-first (children before parents). */
+  deletions: ReadonlyArray<string>;
+  /** Stale labeled pages retained because deleting them would also remove a
+   * retained (unlabeled, non-page, or expected) descendant. */
+  blocked: ReadonlyArray<string>;
+}
+
+/**
+ * Pure label-gated stale-page planner. Protects the target page, expected
+ * (mapped) ids, unlabeled pages, non-page content, and any stale page with a
+ * retained descendant. Throws when the inventory is too incomplete to verify
+ * ancestry safely.
+ */
+export function planStalePruning(input: {
+  parentPageId: string;
+  expectedIds: ReadonlySet<string>;
+  inventory: ReadonlyArray<RemoteInventoryEntry>;
+}): DeletionPlan {
+  const nodes = buildInventoryNodes(input.parentPageId, input.inventory);
+  const retained = new Set<string>();
+  const visited = new Set<string>();
+
+  const isStale = (entry: RemoteInventoryEntry): boolean =>
+    entry.type === 'page' && entry.labeled && !input.expectedIds.has(entry.id) && entry.id !== input.parentPageId;
+
+  const visit = (node: InventoryNode): void => {
+    if (visited.has(node.entry.id)) {
+      return;
+    }
+    visited.add(node.entry.id);
+    let safe = isStale(node.entry);
+    for (const child of node.children) {
+      visit(child);
+      if (retained.has(child.entry.id)) {
+        safe = false;
+      }
+    }
+    if (!safe) {
+      retained.add(node.entry.id);
+    }
+  };
+  for (const node of nodes.values()) {
+    visit(node);
+  }
+
+  const deletions = deepestFirst([...nodes.values()].filter((n) => !retained.has(n.entry.id)));
+  const blocked = [...nodes.values()]
+    .filter((n) => retained.has(n.entry.id) && isStale(n.entry))
+    .map((n) => n.entry.id)
+    .sort();
+  return { deletions, blocked };
+}
+
+/**
+ * Pure explicit-clean planner. Trash every page descendant regardless of
+ * label. Fails closed before any deletion when the subtree contains non-page
+ * content whose retention cannot be proven, or when the inventory is
+ * incomplete.
+ */
+export function planCleanDeletions(input: {
+  parentPageId: string;
+  inventory: ReadonlyArray<RemoteInventoryEntry>;
+}): DeletionPlan {
+  const nodes = buildInventoryNodes(input.parentPageId, input.inventory);
+  for (const node of nodes.values()) {
+    if (node.entry.type !== 'page') {
+      throw new Error(
+        `clean refused: descendant ${node.entry.id} has unsupported type "${node.entry.type}"; ` +
+          'deleting its ancestors could remove content that cannot be restored by this tool',
+      );
+    }
+  }
+  return { deletions: deepestFirst([...nodes.values()]), blocked: [] };
+}
+
+interface InventoryNode {
+  entry: RemoteInventoryEntry;
+  depth: number;
+  children: InventoryNode[];
+}
+
+function buildInventoryNodes(
+  parentPageId: string,
+  inventory: ReadonlyArray<RemoteInventoryEntry>,
+): Map<string, InventoryNode> {
+  const nodes = new Map<string, InventoryNode>();
+  for (const entry of inventory) {
+    if (entry.id === parentPageId) {
+      continue;
+    }
+    if (nodes.has(entry.id)) {
+      throw new Error(`Incomplete descendant inventory: duplicate id ${entry.id}`);
+    }
+    nodes.set(entry.id, { entry, depth: -1, children: [] });
+  }
+
+  const depthOf = (node: InventoryNode): number => {
+    if (node.depth >= 0) {
+      return node.depth;
+    }
+    if (typeof node.entry.depth === 'number') {
+      node.depth = node.entry.depth;
+      return node.depth;
+    }
+    let depth = 0;
+    let current = node;
+    const seen = new Set<string>([node.entry.id]);
+    while (true) {
+      const pid = current.entry.parentId;
+      if (pid === parentPageId) {
+        depth += 1;
+        node.depth = depth;
+        return depth;
+      }
+      if (!pid) {
+        throw new Error(`Incomplete descendant inventory: missing parent for ${node.entry.id}`);
+      }
+      if (seen.has(pid)) {
+        throw new Error(`Incomplete descendant inventory: parent cycle at ${pid}`);
+      }
+      seen.add(pid);
+      const parent = nodes.get(pid);
+      if (!parent) {
+        throw new Error(
+          `Incomplete descendant inventory: ancestor ${pid} of ${node.entry.id} is missing from the listing`,
+        );
+      }
+      depth += 1;
+      current = parent;
+    }
+  };
+
+  for (const node of nodes.values()) {
+    depthOf(node);
+    const pid = node.entry.parentId;
+    if (pid !== undefined && pid !== parentPageId) {
+      nodes.get(pid)?.children.push(node);
+    }
+  }
+  return nodes;
+}
+
+function deepestFirst(nodes: ReadonlyArray<InventoryNode>): string[] {
+  return [...nodes]
+    .sort((a, b) => (b.depth - a.depth !== 0 ? b.depth - a.depth : a.entry.id.localeCompare(b.entry.id)))
+    .map((n) => n.entry.id);
+}
+
+function hasManagedMarker(labels: ReadonlyArray<PageLabel>): boolean {
+  return labels.some((label) => label.name === CONFLUENCE_MANAGED_LABEL && label.prefix === 'global');
 }
 
 export function resolveConfluenceSyncPlan(options: ConfluenceSyncOptions = {}): ConfluenceSyncPlan {
@@ -357,6 +619,8 @@ export function resolveConfluenceSyncPlan(options: ConfluenceSyncOptions = {}): 
     dryRun: options.dryRun ?? false,
     renderHtmlBlocks: options.renderHtmlBlocks === true,
     repositoryUrl,
+    clean: options.clean ?? false,
+    updateParentPage: options.updateParentPage ?? true,
     pageTitleStrategy,
   };
 }
@@ -368,7 +632,6 @@ export async function syncConfluenceToDocs(options: ConfluenceSyncOptions = {}):
   const tree = await readDocTree(plan.folder);
   if (tree.entries.length === 0) {
     log(`No markdown files found under ${plan.folder}`);
-    return;
   }
 
   const localPlan = validateLocalSync(tree.entries, plan);
@@ -386,6 +649,32 @@ export async function syncConfluenceToDocs(options: ConfluenceSyncOptions = {}):
           (mermaidCount > 0 ? ` (${mermaidCount} mermaid block${mermaidCount === 1 ? '' : 's'})` : ''),
       );
     }
+    if (plan.clean) {
+      log(
+        '[dry-run] clean requested: a real sync would move every page descendant of the target page to trash before recreating the local hierarchy.',
+      );
+    }
+    log(
+      '[dry-run] a real sync would label every mapped page with the ownership marker and prune stale labeled descendants.',
+    );
+    if (plan.updateParentPage) {
+      const stats = computeDryRunStats(localPlan);
+      log(
+        `[dry-run] parent summary: Markdown pages: ${stats.markdownPages}, Directory pages: ${stats.directoryPages}, Total managed pages: ${stats.totalPages}, Maximum depth: ${stats.maxDepth}, Attachment references: ${stats.attachmentReferences}, Mermaid blocks: ${stats.mermaidBlocks}`,
+      );
+      if (localPlan.entries.length === 0) {
+        log('[dry-run] parent tree: No managed child pages');
+      } else {
+        for (const entryPlan of localPlan.entries) {
+          const dirParts = entryPlan.entry.segments.slice(0, -1);
+          for (let i = 0; i < dirParts.length; i += 1) {
+            const dirPath = dirParts.slice(0, i + 1).join('/');
+            log(`[dry-run] parent tree: ${dirPath} (directory) => "${dirParts[i] ?? ''}"`);
+          }
+          log(`[dry-run] parent tree: ${entryPlan.entry.segments.join('/')} (page) => "${entryPlan.title}"`);
+        }
+      }
+    }
     return;
   }
 
@@ -397,14 +686,33 @@ export async function syncConfluenceToDocs(options: ConfluenceSyncOptions = {}):
       apiToken: plan.apiToken,
     });
 
+  const labelsAdded: string[] = [];
+  const cleanDeletions: string[] = [];
+  const pruneDeletions: string[] = [];
+  const blocked: string[] = [];
+
+  if (plan.clean) {
+    const descendants = await client.getPageDescendants(plan.parentPageId);
+    const inventory = descendants.filter((d) => d.id !== plan.parentPageId).map((d) => toInventoryEntry(d, false));
+    const cleanPlan = planCleanDeletions({ parentPageId: plan.parentPageId, inventory });
+    await executeDeletions(cleanPlan.deletions, 'clean', client, log, cleanDeletions);
+  }
+
   const spaceId = await client.getSpaceIdByKey(plan.spaceKey);
   const cache = new PageTitleCache(spaceId, client);
+
+  const syncState: SyncTraversalState = {
+    mappedIds: new Set<string>(),
+    ensuredLabels: new Set<string>(),
+    labelsAdded,
+    mappedRecords: new Map<string, ManagedPageRecord>(),
+  };
 
   const changes: SyncChange[] = [];
   for (let i = 0; i < localPlan.entries.length; i += 1) {
     const entryPlan = localPlan.entries[i];
     try {
-      await syncEntry(entryPlan, plan, client, cache, log, changes);
+      await syncEntry(entryPlan, plan, client, cache, log, changes, syncState);
     } catch (error) {
       throw new SyncMutationError({
         changes,
@@ -413,7 +721,198 @@ export async function syncConfluenceToDocs(options: ConfluenceSyncOptions = {}):
       });
     }
   }
-  return { changes };
+
+  if (!plan.clean) {
+    const descendants = await client.getPageDescendants(plan.parentPageId);
+    const inventory: RemoteInventoryEntry[] = [];
+    for (const d of descendants) {
+      if (d.id === plan.parentPageId) {
+        continue;
+      }
+      if (d.type !== 'page') {
+        inventory.push(toInventoryEntry(d, false));
+        continue;
+      }
+      if (syncState.mappedIds.has(d.id)) {
+        inventory.push(toInventoryEntry(d, true));
+        continue;
+      }
+      const labels = await client.getPageLabels(d.id);
+      inventory.push(toInventoryEntry(d, hasManagedMarker(labels)));
+    }
+    const prunePlan = planStalePruning({
+      parentPageId: plan.parentPageId,
+      expectedIds: syncState.mappedIds,
+      inventory,
+    });
+    await executeDeletions(prunePlan.deletions, 'prune', client, log, pruneDeletions);
+    for (const pageId of prunePlan.blocked) {
+      blocked.push(pageId);
+      log(`blocked: stale page ${pageId} retained because it has unlabeled, non-page, or expected descendants`);
+    }
+  }
+
+  let parentStatus: 'updated' | 'unchanged' | 'skipped' = 'skipped';
+  if (plan.updateParentPage) {
+    try {
+      const parentPage = await client.getPage(plan.parentPageId);
+      const stats = computeParentStats(localPlan, syncState);
+      const pages = [...syncState.mappedRecords.values()].sort((a, b) => a.relativePath.localeCompare(b.relativePath));
+      const region = renderParentSummary({ repositoryUrl: plan.repositoryUrl, stats, pages });
+      const currentBody = parentPage.body?.storage?.value ?? '';
+      const merged = mergeParentSummaryBody(currentBody, region);
+      if (merged === currentBody) {
+        log(`parent-unchanged: page ${plan.parentPageId}`);
+        parentStatus = 'unchanged';
+      } else {
+        await client.updatePage({
+          id: plan.parentPageId,
+          title: parentPage.title,
+          body: { representation: 'storage', value: merged },
+          version: { number: (parentPage.version?.number ?? 0) + 1, message: plan.versionMessage },
+        });
+        log(`parent-updated: page ${plan.parentPageId}`);
+        parentStatus = 'updated';
+      }
+    } catch (error) {
+      throw new ParentSummaryError({
+        changes,
+        labelsAdded: [...labelsAdded],
+        cleanDeletions: [...cleanDeletions],
+        pruneDeletions: [...pruneDeletions],
+        blocked: [...blocked],
+        failure: { pageId: plan.parentPageId, error: error instanceof Error ? error : new Error(String(error)) },
+      });
+    }
+  }
+
+  return { changes, labelsAdded, cleanDeletions, pruneDeletions, blocked, parentStatus };
+}
+
+function computeParentStats(localPlan: LocalSyncPlan, state: SyncTraversalState): ParentSummaryStats {
+  const dirSet = new Set<string>();
+  let maxDepth = 0;
+  let attachmentReferences = 0;
+  let mermaidBlocks = 0;
+  for (const entryPlan of localPlan.entries) {
+    const segs = entryPlan.entry.segments;
+    if (segs.length > maxDepth) {
+      maxDepth = segs.length;
+    }
+    for (let i = 0; i < segs.length - 1; i += 1) {
+      dirSet.add(segs.slice(0, i + 1).join('/'));
+    }
+    attachmentReferences += entryPlan.attachments.length;
+    mermaidBlocks += entryPlan.mermaidBlocks.length;
+  }
+  const markdownPages = localPlan.entries.length;
+  const directoryPages = dirSet.size;
+  const totalPages = state.mappedRecords.size;
+  const effectiveMaxDepth = localPlan.entries.length === 0 ? 0 : maxDepth;
+  return {
+    markdownPages,
+    directoryPages,
+    totalPages: totalPages > 0 ? totalPages : directoryPages + markdownPages,
+    maxDepth: effectiveMaxDepth,
+    attachmentReferences,
+    mermaidBlocks,
+  };
+}
+
+function computeDryRunStats(localPlan: LocalSyncPlan): ParentSummaryStats {
+  const dirSet = new Set<string>();
+  let maxDepth = 0;
+  let attachmentReferences = 0;
+  let mermaidBlocks = 0;
+  for (const entryPlan of localPlan.entries) {
+    const segs = entryPlan.entry.segments;
+    if (segs.length > maxDepth) {
+      maxDepth = segs.length;
+    }
+    for (let i = 0; i < segs.length - 1; i += 1) {
+      dirSet.add(segs.slice(0, i + 1).join('/'));
+    }
+    attachmentReferences += entryPlan.attachments.length;
+    mermaidBlocks += entryPlan.mermaidBlocks.length;
+  }
+  const markdownPages = localPlan.entries.length;
+  const directoryPages = dirSet.size;
+  return {
+    markdownPages,
+    directoryPages,
+    totalPages: directoryPages + markdownPages,
+    maxDepth: markdownPages === 0 ? 0 : maxDepth,
+    attachmentReferences,
+    mermaidBlocks,
+  };
+}
+
+function toInventoryEntry(d: PageDescendant, labeled: boolean): RemoteInventoryEntry {
+  const entry: RemoteInventoryEntry = { id: d.id, type: d.type, labeled };
+  if (d.parentId !== undefined) {
+    entry.parentId = d.parentId;
+  }
+  if (d.depth !== undefined) {
+    entry.depth = d.depth;
+  }
+  if (d.title !== undefined) {
+    entry.title = d.title;
+  }
+  return entry;
+}
+
+interface SyncTraversalState {
+  /** Every folder and leaf page id mapped during this run; the reconciliation key. */
+  mappedIds: Set<string>;
+  /** Page ids whose ownership label was verified/added during this run. */
+  ensuredLabels: Set<string>;
+  labelsAdded: string[];
+  mappedRecords: Map<string, ManagedPageRecord>;
+}
+
+async function ensureManagedLabel(
+  pageId: string,
+  client: ConfluenceGateway,
+  state: SyncTraversalState,
+  log: (message: string) => void,
+): Promise<void> {
+  if (state.ensuredLabels.has(pageId)) {
+    return;
+  }
+  const labels = await client.getPageLabels(pageId);
+  if (!hasManagedMarker(labels)) {
+    await client.addManagedLabel(pageId);
+    state.labelsAdded.push(pageId);
+    log(`labeled: page ${pageId}`);
+  }
+  state.ensuredLabels.add(pageId);
+}
+
+async function executeDeletions(
+  ids: ReadonlyArray<string>,
+  phase: 'clean' | 'prune',
+  client: ConfluenceGateway,
+  log: (message: string) => void,
+  evidence: string[],
+): Promise<void> {
+  for (let i = 0; i < ids.length; i += 1) {
+    const pageId = ids[i];
+    if (pageId === undefined) {
+      continue;
+    }
+    try {
+      await client.deletePage(pageId);
+      evidence.push(pageId);
+      log(`${phase === 'clean' ? 'clean' : 'pruned'}: trashed page ${pageId}`);
+    } catch (error) {
+      throw new ReconciliationError({
+        phase,
+        completed: [...evidence],
+        failure: { pageId, error: error instanceof Error ? error : new Error(String(error)) },
+        unprocessed: ids.slice(i + 1),
+      });
+    }
+  }
 }
 
 async function syncEntry(
@@ -423,6 +922,7 @@ async function syncEntry(
   cache: PageTitleCache,
   log: (message: string) => void,
   changes: SyncChange[],
+  state: SyncTraversalState,
 ): Promise<void> {
   const { entry, html: precomputedHtml, mermaidBlocks, markdownDir, hasLocalImages, hasMermaidBlocks } = entryPlan;
   const segments = entry.segments;
@@ -431,6 +931,32 @@ async function syncEntry(
   }
 
   let currentParentId = plan.parentPageId;
+
+  const recordDirectory = (relativePath: string, title: string, pageId: string, depth: number): void => {
+    if (!state.mappedRecords.has(relativePath)) {
+      state.mappedRecords.set(relativePath, {
+        relativePath,
+        kind: 'directory',
+        title,
+        pageId,
+        depth,
+        attachmentCount: 0,
+        mermaidCount: 0,
+      });
+    }
+  };
+
+  const recordLeaf = (relativePath: string, title: string, pageId: string, depth: number): void => {
+    state.mappedRecords.set(relativePath, {
+      relativePath,
+      kind: 'leaf',
+      title,
+      pageId,
+      depth,
+      attachmentCount: entryPlan.attachments.length,
+      mermaidCount: entryPlan.mermaidBlocks.length,
+    });
+  };
 
   for (let idx = 0; idx < segments.length; idx += 1) {
     const isLast = idx === segments.length - 1;
@@ -448,6 +974,9 @@ async function syncEntry(
           parentId: currentParentId,
           body: { representation: 'storage', value: precomputedHtml },
         });
+        state.mappedIds.add(pageId);
+        await ensureManagedLabel(pageId, client, state, log);
+        recordLeaf(segments.join('/'), title, pageId, segments.length);
         log(`created: ${segments.join('/')} (page ${pageId})`);
         changes.push({ entry, pageId, kind: 'created' });
         return;
@@ -455,6 +984,9 @@ async function syncEntry(
 
       const existingPage = existing ?? (await cache.findOrCreate(title, currentParentId));
       const pageId = existingPage.id;
+      state.mappedIds.add(pageId);
+      await ensureManagedLabel(pageId, client, state, log);
+      recordLeaf(segments.join('/'), title, pageId, segments.length);
 
       const current = await client.getPage(pageId);
       const currentBody = current.body?.storage?.value ?? '';
@@ -508,11 +1040,17 @@ async function syncEntry(
     if (isMarkdownName(segment)) {
       const title = pageTitleFromSegments(segments.slice(0, idx + 1), plan.pageTitleStrategy);
       const page = await cache.findOrCreate(title, currentParentId);
+      state.mappedIds.add(page.id);
+      await ensureManagedLabel(page.id, client, state, log);
+      recordDirectory(segments.slice(0, idx + 1).join('/'), title, page.id, idx + 1);
       currentParentId = page.id;
       continue;
     }
 
     const page = await cache.findOrCreate(segment, currentParentId);
+    state.mappedIds.add(page.id);
+    await ensureManagedLabel(page.id, client, state, log);
+    recordDirectory(segments.slice(0, idx + 1).join('/'), segment, page.id, idx + 1);
     currentParentId = page.id;
   }
 }
