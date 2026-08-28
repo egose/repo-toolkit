@@ -1,4 +1,3 @@
-import { CONFLUENCE_MANAGED_LABEL } from './confluence-client';
 import { escapeHtml, escapeXmlAttribute } from './markdown';
 
 export const PARENT_SUMMARY_START_MARKER = '<!-- repo-toolkit-confluence:parent-summary:start -->';
@@ -97,11 +96,7 @@ export function renderParentSummary(input: ParentSummaryInput): string {
   if (input.repositoryUrl) {
     const url = escapeXmlAttribute(input.repositoryUrl);
     const text = escapeHtml(input.repositoryUrl);
-    lines.push(
-      `<p><em>This documentation subtree is synced from <a href="${url}">${text}</a> and maintained by <code>repo-toolkit-confluence</code>.</em></p>`,
-    );
-  } else {
-    lines.push('<p><em>This documentation subtree is maintained by <code>repo-toolkit-confluence</code>.</em></p>');
+    lines.push(`<p><em>This documentation subtree is synced from <a href="${url}">${text}</a>.</em></p>`);
   }
   lines.push('<h3>Statistics</h3>');
   lines.push('<ul>');
@@ -118,10 +113,6 @@ export function renderParentSummary(input: ParentSummaryInput): string {
   } else {
     lines.push(renderTree(input.pages));
   }
-  lines.push('<h3>Ownership</h3>');
-  lines.push(
-    `<p>All generated pages carry the <code>${CONFLUENCE_MANAGED_LABEL}</code> label. On default sync, stale labeled pages not in the local tree are pruned; unlabeled pages are preserved. Use <code>clean: true</code> to move all safely deletable page descendants to trash before recreation.</p>`,
-  );
   lines.push(PARENT_SUMMARY_END_MARKER);
   return lines.join('\n');
 }
@@ -165,7 +156,7 @@ function renderTree(pages: ReadonlyArray<ManagedPageRecord>): string {
         const kindLabel = rec.kind === 'directory' ? 'directory' : 'page';
         const pathCode = `<code>${escapeHtml(rec.relativePath)}</code>`;
         const childrenHtml = renderNode(child);
-        html += `<li>${link} — ${pathCode} <em>(${kindLabel})</em>${childrenHtml}</li>`;
+        html += `<li>${link} ${pathCode} <em>(${kindLabel})</em>${childrenHtml}</li>`;
       } else {
         const childrenHtml = renderNode(child);
         html += `<li>${escapeHtml(child.key)}${childrenHtml}</li>`;
