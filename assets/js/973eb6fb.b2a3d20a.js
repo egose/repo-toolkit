@@ -89,8 +89,24 @@ const toc = [{
   "id": "optimistic-concurrency",
   "level": 2
 }, {
-  "value": "Additive (non-pruning) sync",
-  "id": "additive-non-pruning-sync",
+  "value": "Managed ownership and reconciliation",
+  "id": "managed-ownership-and-reconciliation",
+  "level": 2
+}, {
+  "value": "Ownership label",
+  "id": "ownership-label",
+  "level": 3
+}, {
+  "value": "Default managed pruning (<code>clean: false</code>, the default)",
+  "id": "default-managed-pruning-clean-false-the-default",
+  "level": 3
+}, {
+  "value": "Explicit clean (<code>clean: true</code>)",
+  "id": "explicit-clean-clean-true",
+  "level": 3
+}, {
+  "value": "Parent page summary (<code>updateParentPage: true</code>, the default)",
+  "id": "parent-page-summary-updateparentpage-true-the-default",
   "level": 2
 }, {
   "value": "Leaf page title strategies",
@@ -100,6 +116,14 @@ const toc = [{
   "value": "Migration and uniqueness notes",
   "id": "migration-and-uniqueness-notes",
   "level": 3
+}, {
+  "value": "Dry run",
+  "id": "dry-run",
+  "level": 2
+}, {
+  "value": "Permissions and concurrency",
+  "id": "permissions-and-concurrency",
+  "level": 2
 }, {
   "value": "JavaScript API",
   "id": "javascript-api",
@@ -422,7 +446,7 @@ function _createMdxContent(props) {
               children: "--dry-run"
             })
           }), (0,jsx_runtime.jsx)(_components.td, {
-            children: "Walk the doc tree and run the same local preflight (read + convert every markdown file, validate every local image source) then print the plan. No API mutation calls; bypasses required-field checks so no credentials are needed."
+            children: "Walk the doc tree and run the same local preflight (read + convert every markdown file, validate every local image source) then print the plan. No API mutation calls; bypasses required-field checks so no credentials are needed. Dry-run can show clean/prune and parent-summary intent but cannot list/count remote deletion candidates, fetch parent content, or provide mapped remote links because it makes zero API calls."
           }), (0,jsx_runtime.jsx)(_components.td, {
             children: (0,jsx_runtime.jsx)(_components.code, {
               children: "false"
@@ -445,6 +469,42 @@ function _createMdxContent(props) {
             children: (0,jsx_runtime.jsx)(_components.code, {
               children: "false"
             })
+          })]
+        }), (0,jsx_runtime.jsxs)(_components.tr, {
+          children: [(0,jsx_runtime.jsx)(_components.td, {
+            children: (0,jsx_runtime.jsx)(_components.code, {
+              children: "--clean"
+            })
+          }), (0,jsx_runtime.jsxs)(_components.td, {
+            children: ["Move all page descendants to trash before recreation. ", (0,jsx_runtime.jsx)(_components.strong, {
+              children: "WARNING: destructive — all page descendants, including manual/unlabeled pages, are moved to trash; parentPageId is retained and never deleted."
+            }), " Pages are moved to trash (recoverable), never purged."]
+          }), (0,jsx_runtime.jsx)(_components.td, {
+            children: (0,jsx_runtime.jsx)(_components.code, {
+              children: "false"
+            })
+          })]
+        }), (0,jsx_runtime.jsxs)(_components.tr, {
+          children: [(0,jsx_runtime.jsx)(_components.td, {
+            children: (0,jsx_runtime.jsx)(_components.code, {
+              children: "--update-parent-page"
+            })
+          }), (0,jsx_runtime.jsx)(_components.td, {
+            children: "Update parent page summary region."
+          }), (0,jsx_runtime.jsx)(_components.td, {
+            children: (0,jsx_runtime.jsx)(_components.code, {
+              children: "true"
+            })
+          })]
+        }), (0,jsx_runtime.jsxs)(_components.tr, {
+          children: [(0,jsx_runtime.jsx)(_components.td, {
+            children: (0,jsx_runtime.jsx)(_components.code, {
+              children: "--no-update-parent-page"
+            })
+          }), (0,jsx_runtime.jsx)(_components.td, {
+            children: "Do not update parent page summary."
+          }), (0,jsx_runtime.jsx)(_components.td, {
+            children: "—"
           })]
         }), (0,jsx_runtime.jsxs)(_components.tr, {
           children: [(0,jsx_runtime.jsx)(_components.td, {
@@ -638,6 +698,18 @@ function _createMdxContent(props) {
           })]
         }), (0,jsx_runtime.jsxs)(_components.tr, {
           children: [(0,jsx_runtime.jsx)(_components.td, {
+            children: "repositoryUrl"
+          }), (0,jsx_runtime.jsx)(_components.td, {
+            children: (0,jsx_runtime.jsx)(_components.code, {
+              children: "CONFLUENCE_REPOSITORY_URL"
+            })
+          }), (0,jsx_runtime.jsx)(_components.td, {
+            children: (0,jsx_runtime.jsx)(_components.code, {
+              children: "INPUT_REPOSITORY-URL"
+            })
+          })]
+        }), (0,jsx_runtime.jsxs)(_components.tr, {
+          children: [(0,jsx_runtime.jsx)(_components.td, {
             children: "pageTitleStrategy"
           }), (0,jsx_runtime.jsx)(_components.td, {
             children: (0,jsx_runtime.jsx)(_components.code, {
@@ -682,6 +754,30 @@ function _createMdxContent(props) {
           }), (0,jsx_runtime.jsx)(_components.td, {
             children: (0,jsx_runtime.jsx)(_components.code, {
               children: "INPUT_RENDER-HTML-BLOCKS"
+            })
+          })]
+        }), (0,jsx_runtime.jsxs)(_components.tr, {
+          children: [(0,jsx_runtime.jsx)(_components.td, {
+            children: "clean (bool)"
+          }), (0,jsx_runtime.jsx)(_components.td, {
+            children: (0,jsx_runtime.jsx)(_components.code, {
+              children: "CONFLUENCE_CLEAN"
+            })
+          }), (0,jsx_runtime.jsx)(_components.td, {
+            children: (0,jsx_runtime.jsx)(_components.code, {
+              children: "INPUT_CLEAN"
+            })
+          })]
+        }), (0,jsx_runtime.jsxs)(_components.tr, {
+          children: [(0,jsx_runtime.jsx)(_components.td, {
+            children: "updateParentPage (bool)"
+          }), (0,jsx_runtime.jsx)(_components.td, {
+            children: (0,jsx_runtime.jsx)(_components.code, {
+              children: "CONFLUENCE_UPDATE_PARENT_PAGE"
+            })
+          }), (0,jsx_runtime.jsx)(_components.td, {
+            children: (0,jsx_runtime.jsx)(_components.code, {
+              children: "INPUT_UPDATE-PARENT-PAGE"
             })
           })]
         })]
@@ -1113,31 +1209,249 @@ function _createMdxContent(props) {
     }), "\n", (0,jsx_runtime.jsx)(_components.p, {
       children: "Because writes are versioned, two sync processes editing the same page cannot\nsilently clobber each other: the loser gets a 409 and exits nonzero. There is\nno built-in retry-on-conflict policy; rerun the sync to reconcile."
     }), "\n", (0,jsx_runtime.jsx)(_components.h2, {
-      id: "additive-non-pruning-sync",
-      children: "Additive (non-pruning) sync"
-    }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
-      children: ["Sync is strictly additive with respect to Confluence: it only creates pages\nthat do not yet exist and updates the body of pages it can map. It ", (0,jsx_runtime.jsx)(_components.strong, {
-        children: "never\ndeletes"
-      }), " Confluence pages or attachments that are absent locally. Removing a\nfile from your docs folder will not remove the corresponding Confluence page;\nyou must delete it in Confluence yourself."]
-    }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
-      children: ["This is intentional for docs-as-code: most teams want edits made directly in\nConfluence (sibling pages, free-form notes) to survive a sync. The trade-off\nis that the local tree is not the source of truth for ", (0,jsx_runtime.jsx)(_components.strong, {
-        children: "removal"
-      }), "."]
+      id: "managed-ownership-and-reconciliation",
+      children: "Managed ownership and reconciliation"
     }), "\n", (0,jsx_runtime.jsx)(_components.p, {
-      children: "A few other reconciliation rules:"
+      children: "The sync makes the local documentation tree authoritative for pages it creates\nor adopts, without deleting unrelated Confluence content."
+    }), "\n", (0,jsx_runtime.jsx)(_components.h3, {
+      id: "ownership-label",
+      children: "Ownership label"
     }), "\n", (0,jsx_runtime.jsxs)(_components.ul, {
       children: ["\n", (0,jsx_runtime.jsxs)(_components.li, {
-        children: ["The local tree is hashed by ", (0,jsx_runtime.jsx)(_components.strong, {
-          children: "page title under parent"
-        }), ": collisions between a\nfile-page and a folder-page with the same title under the same parent are\nrejected up front with ", (0,jsx_runtime.jsx)(_components.code, {
-          children: "Local documentation tree contains conflicting page titles under the same parent: <title>"
+        children: ["Every generated folder page and Markdown leaf page created, updated, or\notherwise mapped by a successful sync carries the fixed global Confluence\nlabel ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "repo-toolkit-confluence"
+        }), " (", (0,jsx_runtime.jsx)(_components.code, {
+          children: "CONFLUENCE_MANAGED_LABEL"
+        }), ", prefix ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "global"
+        }), ").\nThe value is not configurable. Comparison checks both name and prefix — a\npersonal label with the same name is not an ownership marker."]
+      }), "\n", (0,jsx_runtime.jsx)(_components.li, {
+        children: "Existing labels are preserved; sync never replaces or removes labels."
+      }), "\n", (0,jsx_runtime.jsxs)(_components.li, {
+        children: ["The label is added only when absent, so repeated unchanged syncs issue no\nredundant ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "POST /wiki/rest/api/content/{id}/label"
         }), "."]
       }), "\n", (0,jsx_runtime.jsxs)(_components.li, {
-        children: ["If two Confluence pages match a title under the same parent, sync throws\n", (0,jsx_runtime.jsx)(_components.code, {
-          children: "Multiple Confluence pages matched title <title> under parent <parentId>"
-        }), "\nrather than guessing."]
+        children: ["The target ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "parentPageId"
+        }), " is an external anchor and is never labeled."]
       }), "\n", (0,jsx_runtime.jsx)(_components.li, {
-        children: "Pages are cached per space+title+parent within a single sync run; the cache\nis not persisted, so cross-sync concurrency is governed by the 409 path\nabove."
+        children: "A page is not considered safely managed until the marker POST succeeds. A\ncreate/update followed by a label failure surfaces structured partial-mutation\nevidence and prevents the prune phase from running."
+      }), "\n", (0,jsx_runtime.jsx)(_components.li, {
+        children: "Existing pages found by title-under-parent become tool-managed once the sync\nmaps them and successfully adds the marker — this is adoption. Because the\npage now carries the marker, removing its local source later makes it\neligible for pruning. Documentation calls this out prominently."
+      }), "\n", (0,jsx_runtime.jsx)(_components.li, {
+        children: "Removing the marker from a managed page opts it out of pruning until a\nfuture sync maps/adopts it again and re-applies the label."
+      }), "\n"]
+    }), "\n", (0,jsx_runtime.jsxs)(_components.h3, {
+      id: "default-managed-pruning-clean-false-the-default",
+      children: ["Default managed pruning (", (0,jsx_runtime.jsx)(_components.code, {
+        children: "clean: false"
+      }), ", the default)"]
+    }), "\n", (0,jsx_runtime.jsxs)(_components.ul, {
+      children: ["\n", (0,jsx_runtime.jsx)(_components.li, {
+        children: "Local preflight (read/convert every Markdown file, validate every local image\nsource) runs before any remote call. Pruning only runs after every local page\nhas synced and its ownership label has been verified or added successfully."
+      }), "\n", (0,jsx_runtime.jsx)(_components.li, {
+        children: "The orchestrator tracks the page ids actually mapped during this run,\nincluding synthetic folder pages and Markdown leaves, by id — not by\nre-querying titles after mutation."
+      }), "\n", (0,jsx_runtime.jsxs)(_components.li, {
+        children: ["All descendants under ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "parentPageId"
+        }), " are enumerated via paginated\n", (0,jsx_runtime.jsx)(_components.code, {
+          children: "GET /wiki/api/v2/pages/{id}/descendants"
+        }), " (same-origin cursor, bounded page\ncap), but ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "parentPageId"
+        }), " itself is never a deletion candidate. Decisions are\nscoped to that subtree; a space-wide label query is not used."]
+      }), "\n", (0,jsx_runtime.jsxs)(_components.li, {
+        children: ["A remote page is stale only when it has the exact global\n", (0,jsx_runtime.jsx)(_components.code, {
+          children: "repo-toolkit-confluence"
+        }), " marker and its id is absent from the current\nmapped-id set."]
+      }), "\n", (0,jsx_runtime.jsxs)(_components.li, {
+        children: ["Stale pages are deleted deepest-first (children before parents) by id via\n", (0,jsx_runtime.jsx)(_components.code, {
+          children: "DELETE /wiki/api/v2/pages/{id}"
+        }), ". Each delete moves the page to trash\n(recoverable); ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "purge=true"
+        }), " is never requested. Attachments are not deleted\nindependently — trashing a page scopes its attachments."]
+      }), "\n", (0,jsx_runtime.jsx)(_components.li, {
+        children: "Unlabeled/manual pages are never deleted by default pruning."
+      }), "\n", (0,jsx_runtime.jsxs)(_components.li, {
+        children: ["If deleting a stale labeled ancestor could also remove an unlabeled,\nnon-page, inaccessible, or otherwise retained descendant, that ancestor is\nblocked and reported as ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "blocked"
+        }), " rather than risking collateral deletion.\nSafe stale siblings are still deleted."]
+      }), "\n", (0,jsx_runtime.jsx)(_components.li, {
+        children: "A local tree with zero Markdown entries is valid for reconciliation: it\ndeletes every safely deletable managed descendant and retains every\nmanual/unlabeled descendant."
+      }), "\n", (0,jsx_runtime.jsxs)(_components.li, {
+        children: ["If sync fails before pruning, no stale-page deletions occur. If pruning\nfails partway, the run stops and returns structured evidence\n(", (0,jsx_runtime.jsx)(_components.code, {
+          children: "ReconciliationError"
+        }), " with ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "phase: 'prune'"
+        }), ", ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "completed"
+        }), ", ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "failure"
+        }), "\n(", (0,jsx_runtime.jsx)(_components.code, {
+          children: "pageId"
+        }), " + error), and ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "unprocessed"
+        }), ")."]
+      }), "\n"]
+    }), "\n", (0,jsx_runtime.jsxs)(_components.h3, {
+      id: "explicit-clean-clean-true",
+      children: ["Explicit clean (", (0,jsx_runtime.jsx)(_components.code, {
+        children: "clean: true"
+      }), ")"]
+    }), "\n", (0,jsx_runtime.jsxs)(_components.ul, {
+      children: ["\n", (0,jsx_runtime.jsxs)(_components.li, {
+        children: [(0,jsx_runtime.jsx)(_components.code, {
+          children: "clean"
+        }), " defaults to ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "false"
+        }), " through every input path (API/config\n", (0,jsx_runtime.jsx)(_components.code, {
+          children: "clean: false"
+        }), ", CLI ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "--clean"
+        }), " absent, ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "CONFLUENCE_CLEAN=false"
+        }), ",\n", (0,jsx_runtime.jsx)(_components.code, {
+          children: "INPUT_CLEAN=false"
+        }), "). No destructive reset occurs when the option is omitted."]
+      }), "\n", (0,jsx_runtime.jsxs)(_components.li, {
+        children: ["After successful local preflight and before creating/updating pages, the\nsubtree is enumerated and every page descendant is moved to trash,\nregardless of ownership label, deepest-first. ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "parentPageId"
+        }), " is never\ndeleted. Label lookup is not required — ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "clean"
+        }), " is deliberately stronger\nthan managed pruning."]
+      }), "\n", (0,jsx_runtime.jsxs)(_components.li, {
+        children: [(0,jsx_runtime.jsx)(_components.strong, {
+          children: "WARNING:"
+        }), " All page descendants, including manual/unlabeled pages, are\nmoved to trash before recreation. Pages are moved to trash (recoverable\nthrough Confluence trash), never purged."]
+      }), "\n", (0,jsx_runtime.jsxs)(_components.li, {
+        children: ["If the subtree contains a non-page type (whiteboard, database, embed,\nfolder) or an incomplete inventory whose retention cannot be proven, ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "clean"
+        }), "\nfails closed before the first deletion with an unsupported-tree /\ncollateral-deletion error; it does not silently widen from pages to other\ncontent."]
+      }), "\n", (0,jsx_runtime.jsx)(_components.li, {
+        children: "After clean succeeds, the normal sync and labeling run; no redundant\npost-sync prune against the newly created mapped set occurs."
+      }), "\n", (0,jsx_runtime.jsxs)(_components.li, {
+        children: ["A local tree with zero Markdown entries plus ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "clean: true"
+        }), " still performs\nthe clean and leaves the target page with no safely deletable page\ndescendants."]
+      }), "\n", (0,jsx_runtime.jsxs)(_components.li, {
+        children: ["On a partial clean failure, the run aborts before page creation and exposes\n", (0,jsx_runtime.jsx)(_components.code, {
+          children: "ReconciliationError"
+        }), " with ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "phase: 'clean'"
+        }), ", ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "completed"
+        }), ", ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "failure"
+        }), ", and\n", (0,jsx_runtime.jsx)(_components.code, {
+          children: "unprocessed"
+        }), "."]
+      }), "\n"]
+    }), "\n", (0,jsx_runtime.jsxs)(_components.h2, {
+      id: "parent-page-summary-updateparentpage-true-the-default",
+      children: ["Parent page summary (", (0,jsx_runtime.jsx)(_components.code, {
+        children: "updateParentPage: true"
+      }), ", the default)"]
+    }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
+      children: ["When ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "updateParentPage"
+      }), " is ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "true"
+      }), " (the default via API/config\n", (0,jsx_runtime.jsx)(_components.code, {
+        children: "updateParentPage: true"
+      }), ", CLI ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "--update-parent-page"
+      }), " / absent flag,\n", (0,jsx_runtime.jsx)(_components.code, {
+        children: "CONFLUENCE_UPDATE_PARENT_PAGE=true"
+      }), ", ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "INPUT_UPDATE-PARENT-PAGE=true"
+      }), "), the\ntarget parent page is updated after child-page sync, ownership labeling, and\nclean/prune reconciliation have completed successfully. If any earlier phase\nfails, the parent summary is left unchanged."]
+    }), "\n", (0,jsx_runtime.jsxs)(_components.ul, {
+      children: ["\n", (0,jsx_runtime.jsxs)(_components.li, {
+        children: ["The parent page is fetched, its title and every byte of body content outside\none tool-managed region are preserved, and the update is applied with\n", (0,jsx_runtime.jsx)(_components.code, {
+          children: "version.number = current + 1"
+        }), " under the existing optimistic-concurrency\ncontract. The region is bounded by\n", (0,jsx_runtime.jsx)(_components.code, {
+          children: "<!-- repo-toolkit-confluence:parent-summary:start -->"
+        }), " and\n", (0,jsx_runtime.jsx)(_components.code, {
+          children: "<!-- repo-toolkit-confluence:parent-summary:end -->"
+        }), " which survive a\nstorage-format round trip. The region is uniquely identifiable; malformed or\nduplicate markers fail closed without rewriting the parent; the whole parent\nbody is never replaced as a shortcut."]
+      }), "\n", (0,jsx_runtime.jsxs)(_components.li, {
+        children: ["On the first run the managed region is appended without removing existing\ncontent; on later runs that region is replaced in place. Setting\n", (0,jsx_runtime.jsx)(_components.code, {
+          children: "updateParentPage: false"
+        }), " (or ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "--no-update-parent-page"
+        }), ",\n", (0,jsx_runtime.jsx)(_components.code, {
+          children: "CONFLUENCE_UPDATE_PARENT_PAGE=false"
+        }), ", ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "INPUT_UPDATE-PARENT-PAGE=false"
+        }), ")\nleaves both existing managed and manual parent content untouched — it does\nnot remove a previously generated region."]
+      }), "\n", (0,jsx_runtime.jsx)(_components.li, {
+        children: "The PUT is skipped when the reconstructed body is byte-equal to the current\nbody. No wall-clock timestamp, current page version, per-run\ncreated/updated/deleted counts, or other volatile values are included, so\nidentical deployments do not force an update."
+      }), "\n", (0,jsx_runtime.jsxs)(_components.li, {
+        children: ["The region contains:", "\n", (0,jsx_runtime.jsxs)(_components.ul, {
+          children: ["\n", (0,jsx_runtime.jsxs)(_components.li, {
+            children: [(0,jsx_runtime.jsx)(_components.code, {
+              children: "Synced documentation"
+            }), " heading with provenance equivalent to the footer on\ngenerated child pages. When ", (0,jsx_runtime.jsx)(_components.code, {
+              children: "repositoryUrl"
+            }), " resolves, it links to that URL;\nwhen absent, only that the subtree is maintained by\n", (0,jsx_runtime.jsx)(_components.code, {
+              children: "repo-toolkit-confluence"
+            }), " is stated — absolute runner paths are never\nexposed."]
+          }), "\n", (0,jsx_runtime.jsx)(_components.li, {
+            children: "Deterministic structural statistics derived from the validated local plan\nand final mapping: Markdown page count, generated directory-page count,\ntotal managed child-page count, maximum documentation depth, local\nattachment-reference count, and Mermaid-block count. Zero values render\nexplicitly for an empty tree."
+          }), "\n", (0,jsx_runtime.jsxs)(_components.li, {
+            children: ["A nested deterministic directory-style tree for every generated directory\nand Markdown page, in local relative-path order, displaying the resolved\nConfluence title, distinguishing directory pages from Markdown leaves, and\nlinking each item to its mapped Confluence page via an id-backed\nstorage-format ", (0,jsx_runtime.jsx)(_components.code, {
+              children: "ri:page"
+            }), " link. Links are built from returned page metadata\n/ id, not title-only search."]
+          }), "\n", (0,jsx_runtime.jsxs)(_components.li, {
+            children: ["Stable guidance that generated descendants carry the\n", (0,jsx_runtime.jsx)(_components.code, {
+              children: "repo-toolkit-confluence"
+            }), " label, missing labeled pages are pruned after\nsuccessful sync, unlabeled pages are preserved by default, and explicit\nclean moves all safely deletable page descendants to trash."]
+          }), "\n", (0,jsx_runtime.jsx)(_components.li, {
+            children: "The summary is compact and storage-format safe; it does not copy\nchild-page bodies, headings, excerpts, attachment names, repository\nsecrets, credentials, local absolute paths, or unbounded remote metadata."
+          }), "\n"]
+        }), "\n"]
+      }), "\n", (0,jsx_runtime.jsxs)(_components.li, {
+        children: ["With an empty local tree, provenance/guidance, zero statistics, and an\nexplicit ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "No managed child pages"
+        }), " tree state are rendered."]
+      }), "\n", (0,jsx_runtime.jsxs)(_components.li, {
+        children: [(0,jsx_runtime.jsx)(_components.code, {
+          children: "updateParentPage: false"
+        }), " causes zero parent ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "GET"
+        }), "/", (0,jsx_runtime.jsx)(_components.code, {
+          children: "PUT"
+        }), " calls and does not\nremove a previously generated region. The target parent itself remains\nunlabeled and is never deleted even when ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "updateParentPage"
+        }), " is on."]
+      }), "\n", (0,jsx_runtime.jsxs)(_components.li, {
+        children: ["A parent ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "GET"
+        }), "/", (0,jsx_runtime.jsx)(_components.code, {
+          children: "PUT"
+        }), " failure after child reconciliation returns structured\nphase-specific evidence (", (0,jsx_runtime.jsx)(_components.code, {
+          children: "ParentSummaryError"
+        }), " with ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "phase: 'parent-summary'"
+        }), ",\n", (0,jsx_runtime.jsx)(_components.code, {
+          children: "changes"
+        }), ", ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "labelsAdded"
+        }), ", ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "cleanDeletions"
+        }), ", ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "pruneDeletions"
+        }), ", ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "blocked"
+        }), ", and\n", (0,jsx_runtime.jsx)(_components.code, {
+          children: "failure"
+        }), " containing the parent ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "pageId"
+        }), " and error) showing that child work\nsucceeded but the parent summary did not. The run still surfaces Confluence\n409 conflicts without write retries."]
+      }), "\n", (0,jsx_runtime.jsxs)(_components.li, {
+        children: ["Dry-run with ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "updateParentPage: true"
+        }), " retains zero API calls; it may print\nlocally known parent-summary statistics and title tree, but it cannot claim\nthe parent would be unchanged or emit remote id-backed links because it has\nnot fetched the parent or mapped remote ids."]
       }), "\n"]
     }), "\n", (0,jsx_runtime.jsx)(_components.h2, {
       id: "leaf-page-title-strategies",
@@ -1288,16 +1602,22 @@ function _createMdxContent(props) {
     }), "\n", (0,jsx_runtime.jsxs)(_components.blockquote, {
       children: ["\n", (0,jsx_runtime.jsxs)(_components.p, {
         children: [(0,jsx_runtime.jsx)(_components.strong, {
-          children: "Changing the strategy changes title-based identity — migration is manual."
-        }), " Confluence lookup is title-under-parent with no persisted source-path-to-page-id mapping, and sync is strictly additive and non-pruning: it creates pages that do not yet exist and updates bodies it can map, but never deletes or renames pages. Switching ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "Changing the strategy changes title-based identity."
+        }), " Confluence lookup is title-under-parent with no persisted source-path-to-page-id mapping. Switching ", (0,jsx_runtime.jsx)(_components.code, {
           children: "pageTitleStrategy"
         }), " therefore seeks a new title and may ", (0,jsx_runtime.jsx)(_components.strong, {
           children: "create a new page while leaving the old page untouched"
-        }), ". Operators must manually rename, delete, or archive the previously generated pages (or migrate them) before switching strategies in production. In particular, ", (0,jsx_runtime.jsx)(_components.code, {
+        }), " — it does not rename or move existing pages. Previously labeled pages created under the old strategy carry the ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "repo-toolkit-confluence"
+        }), " ownership label and are ", (0,jsx_runtime.jsx)(_components.strong, {
+          children: "pruned (moved to trash) after a successful sync"
+        }), " under the new strategy because they become stale labeled descendants. Pages created before the labeling feature or otherwise unlabeled remain unlabeled and are ", (0,jsx_runtime.jsx)(_components.strong, {
+          children: "never pruned automatically"
+        }), " — they require manual cleanup in Confluence. Use ", (0,jsx_runtime.jsx)(_components.code, {
           children: "--dry-run"
-        }), " is the recommended way to verify generated titles — it logs ", (0,jsx_runtime.jsx)(_components.code, {
+        }), " to preview generated titles (", (0,jsx_runtime.jsx)(_components.code, {
           children: "would sync <path> as \"<title>\""
-        }), " for every entry — before any remote mutation."]
+        }), ") before switching strategies in production."]
       }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
         children: ["Path-based strategies (", (0,jsx_runtime.jsx)(_components.code, {
           children: "sentence-case-parent"
@@ -1316,12 +1636,114 @@ function _createMdxContent(props) {
         }), " already present under the same Confluence parent. Existing unrelated pages can still cause Confluence API conflicts. Local preflight detects only conflicts within the supplied doc tree. Do not truncate or hash generated titles; if Confluence imposes a remote title-length limit, retain the existing API error behavior and document that path-based strategies can produce longer titles."]
       }), "\n"]
     }), "\n", (0,jsx_runtime.jsx)(_components.h2, {
+      id: "dry-run",
+      children: "Dry run"
+    }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
+      children: [(0,jsx_runtime.jsx)(_components.code, {
+        children: "--dry-run"
+      }), " walks the doc tree and runs the same local preflight (read + convert every Markdown file, validate every local image source) then prints the plan without any API mutation calls. Credentials are not required under ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "--dry-run"
+      }), ". The same local hierarchy validation applies, and dry-run logs:"]
+    }), "\n", (0,jsx_runtime.jsxs)(_components.ul, {
+      children: ["\n", (0,jsx_runtime.jsxs)(_components.li, {
+        children: [(0,jsx_runtime.jsx)(_components.code, {
+          children: "would sync <path> as \"<title>\""
+        }), " for every Markdown entry (with optional attachment/Mermaid counts)"]
+      }), "\n", (0,jsx_runtime.jsxs)(_components.li, {
+        children: [(0,jsx_runtime.jsx)(_components.code, {
+          children: "[dry-run] clean requested: a real sync would move every page descendant of the target page to trash before recreating the local hierarchy."
+        }), " when ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "clean: true"
+        })]
+      }), "\n", (0,jsx_runtime.jsxs)(_components.li, {
+        children: [(0,jsx_runtime.jsx)(_components.code, {
+          children: "a real sync would label every mapped page with the ownership marker and prune stale labeled descendants."
+        }), " always, but without a concrete remote deletion count"]
+      }), "\n", (0,jsx_runtime.jsxs)(_components.li, {
+        children: ["Parent-summary intent when ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "updateParentPage: true"
+        }), " — deterministic statistics (", (0,jsx_runtime.jsx)(_components.code, {
+          children: "Markdown pages"
+        }), ", ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "Directory pages"
+        }), ", ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "Total managed pages"
+        }), ", ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "Maximum depth"
+        }), ", ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "Attachment references"
+        }), ", ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "Mermaid blocks"
+        }), ") and title tree, but no mapped remote links or claim that the parent would be unchanged."]
+      }), "\n"]
+    }), "\n", (0,jsx_runtime.jsx)(_components.p, {
+      children: "Because dry-run makes zero API calls, it cannot enumerate or count remote deletion candidates, fetch parent content, or provide id-backed links. Transition to a real sync to reconcile and update the parent summary."
+    }), "\n", (0,jsx_runtime.jsx)(_components.h2, {
+      id: "permissions-and-concurrency",
+      children: "Permissions and concurrency"
+    }), "\n", (0,jsx_runtime.jsx)(_components.p, {
+      children: "Required Confluence permissions and API scopes for a real sync:"
+    }), "\n", (0,jsx_runtime.jsxs)(_components.ul, {
+      children: ["\n", (0,jsx_runtime.jsxs)(_components.li, {
+        children: ["Read descendants of the configured ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "parentPageId"
+        }), " (", (0,jsx_runtime.jsx)(_components.code, {
+          children: "GET /wiki/api/v2/pages/{id}/descendants"
+        }), ", paginated, same-origin cursor)."]
+      }), "\n", (0,jsx_runtime.jsxs)(_components.li, {
+        children: ["Read labels on descendants (", (0,jsx_runtime.jsx)(_components.code, {
+          children: "GET /wiki/api/v2/pages/{id}/labels"
+        }), ") and add the ownership marker (", (0,jsx_runtime.jsx)(_components.code, {
+          children: "POST /wiki/rest/api/content/{id}/label"
+        }), " with ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "[{ \"prefix\": \"global\", \"name\": \"repo-toolkit-confluence\" }]"
+        }), ")."]
+      }), "\n", (0,jsx_runtime.jsxs)(_components.li, {
+        children: ["Create and update pages and attachments under the target (", (0,jsx_runtime.jsx)(_components.code, {
+          children: "POST"
+        }), "/", (0,jsx_runtime.jsx)(_components.code, {
+          children: "PUT"
+        }), " pages, ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "GET"
+        }), "/", (0,jsx_runtime.jsx)(_components.code, {
+          children: "PUT"
+        }), " page bodies, attachment upload via v1 multipart ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "POST /wiki/rest/api/content/{pageId}/child/attachment"
+        }), " with ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "X-Atlassian-Token: no-check"
+        }), ")."]
+      }), "\n", (0,jsx_runtime.jsxs)(_components.li, {
+        children: ["Read and update the target parent page body (", (0,jsx_runtime.jsx)(_components.code, {
+          children: "GET /wiki/api/v2/pages/{id}"
+        }), ", ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "PUT"
+        }), " with ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "version.number = current + 1"
+        }), ")."]
+      }), "\n", (0,jsx_runtime.jsxs)(_components.li, {
+        children: ["Delete (move to trash) pages when pruning or cleaning (", (0,jsx_runtime.jsx)(_components.code, {
+          children: "DELETE /wiki/api/v2/pages/{id}"
+        }), " without ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "purge=true"
+        }), "). Pages are moved to trash and remain recoverable; they are never purged."]
+      }), "\n"]
+    }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
+      children: ["Concurrent sync/clean jobs against the same ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "parentPageId"
+      }), " are unsupported and dangerous. Callers must serialize deployments for the same target; the tool does not add distributed locking. Two syncs racing on the same page are detected via optimistic concurrency (server returns HTTP 409 on version conflict) and the loser exits nonzero — rerun to reconcile. Downstream ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "egose/actions/confluence"
+      }), " wiring for ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "clean"
+      }), " and ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "update-parent-page"
+      }), " is a named release follow-up if that repository requires separately declared inputs."]
+    }), "\n", (0,jsx_runtime.jsx)(_components.h2, {
       id: "javascript-api",
       children: "JavaScript API"
     }), "\n", (0,jsx_runtime.jsx)(_components.pre, {
       children: (0,jsx_runtime.jsx)(_components.code, {
         className: "language-ts",
-        children: "import { syncConfluenceToDocs, resolveConfluenceSyncPlan, ConfluenceClient } from '@repo-toolkit/confluence';\n\n// resolveConfluenceSyncPlan validates options without starting a sync:\nconst plan = resolveConfluenceSyncPlan({\n  folder: 'docs',\n  username: 'user@example.com',\n  apiToken: process.env.CONFLUENCE_API_TOKEN!,\n  baseUrl: 'https://mydomain.atlassian.net/wiki',\n  spaceKey: 'ENG',\n  parentPageId: '123456789',\n  pageTitleStrategy: 'sentence-case-parents', // optional; default: 'filename-stem'\n});\n\nawait syncConfluenceToDocs({ ...plan, renderHtmlBlocks: false });\n"
+        children: "import { syncConfluenceToDocs, resolveConfluenceSyncPlan, ConfluenceClient } from '@repo-toolkit/confluence';\n\n// resolveConfluenceSyncPlan validates options without starting a sync:\nconst plan = resolveConfluenceSyncPlan({\n  folder: 'docs',\n  username: 'user@example.com',\n  apiToken: process.env.CONFLUENCE_API_TOKEN!,\n  baseUrl: 'https://mydomain.atlassian.net/wiki',\n  spaceKey: 'ENG',\n  parentPageId: '123456789',\n  pageTitleStrategy: 'sentence-case-parents', // optional; default: 'filename-stem'\n  clean: false, // optional; default: false\n  updateParentPage: true, // optional; default: true\n});\n\nawait syncConfluenceToDocs({ ...plan, renderHtmlBlocks: false });\n"
       })
     }), "\n", (0,jsx_runtime.jsx)(_components.h3, {
       id: "custom-gateway-typed-testing--non-confluence-backends",
@@ -1362,7 +1784,19 @@ function _createMdxContent(props) {
           children: "resolveConfluenceSyncPlan(options)"
         }), " — resolve and validate the sync plan\n(", (0,jsx_runtime.jsx)(_components.code, {
           children: "ConfluenceSyncPlan"
-        }), ") without starting a sync. Useful for previewing\ndefaults."]
+        }), ") without starting a sync. Fills ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "clean"
+        }), " (default\n", (0,jsx_runtime.jsx)(_components.code, {
+          children: "false"
+        }), "), ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "updateParentPage"
+        }), " (default ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "true"
+        }), "), and ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "pageTitleStrategy"
+        }), "\n(default ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "filename-stem"
+        }), "). Useful for previewing defaults."]
       }), "\n", (0,jsx_runtime.jsxs)(_components.li, {
         children: [(0,jsx_runtime.jsx)(_components.code, {
           children: "ConfluenceClient"
@@ -1385,6 +1819,44 @@ function _createMdxContent(props) {
         }), " casts. Supplying ", (0,jsx_runtime.jsx)(_components.code, {
           children: "client"
         }), " skips\nthe bundled-client credential/baseUrl required-field checks."]
+      }), "\n", (0,jsx_runtime.jsxs)(_components.li, {
+        children: [(0,jsx_runtime.jsx)(_components.code, {
+          children: "CONFLUENCE_MANAGED_LABEL"
+        }), " (", (0,jsx_runtime.jsx)(_components.code, {
+          children: "repo-toolkit-confluence"
+        }), "), ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "planStalePruning"
+        }), ",\n", (0,jsx_runtime.jsx)(_components.code, {
+          children: "planCleanDeletions"
+        }), ", ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "ReconciliationError"
+        }), " (phase ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "clean"
+        }), "/", (0,jsx_runtime.jsx)(_components.code, {
+          children: "prune"
+        }), "),\n", (0,jsx_runtime.jsx)(_components.code, {
+          children: "ParentSummaryError"
+        }), " (phase ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "parent-summary"
+        }), "), ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "SyncResult"
+        }), " (", (0,jsx_runtime.jsx)(_components.code, {
+          children: "changes"
+        }), ",\n", (0,jsx_runtime.jsx)(_components.code, {
+          children: "labelsAdded"
+        }), ", ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "cleanDeletions"
+        }), ", ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "pruneDeletions"
+        }), ", ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "blocked"
+        }), ",\n", (0,jsx_runtime.jsx)(_components.code, {
+          children: "parentStatus"
+        }), "), ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "SyncMutationError"
+        }), ", ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "LocalSyncValidationAggregateError"
+        }), " —\nmanaged ownership, reconciliation evidence, and parent-summary contracts."]
       }), "\n", (0,jsx_runtime.jsxs)(_components.li, {
         children: [(0,jsx_runtime.jsx)(_components.code, {
           children: "markdownToStorage(markdown, options)"
@@ -1489,8 +1961,22 @@ function _createMdxContent(props) {
     }), "\n", (0,jsx_runtime.jsx)(_components.pre, {
       children: (0,jsx_runtime.jsx)(_components.code, {
         className: "language-yaml",
-        children: "runs:\n  using: 'node20'\n  main: 'action-dist/index.js'\ninputs:\n  folder: { required: true }\n  username: { required: true }\n  password: { required: true }\n  password-file: { required: false }\n  confluence-base-url: { required: true }\n  space-key: { required: true }\n  parent-page-id: { required: true }\n  version-message: { required: false }\n  page-title-strategy: { required: false, default: 'filename-stem' }\n  dry-run: { required: false, default: 'false' }\n  skip-unchanged: { required: false, default: 'true' }\n  render-html-blocks: { required: false, default: 'false' }\n"
+        children: "runs:\n  using: 'node20'\n  main: 'action-dist/index.js'\ninputs:\n  folder: { required: true }\n  username: { required: true }\n  password: { required: true }\n  password-file: { required: false }\n  confluence-base-url: { required: true }\n  space-key: { required: true }\n  parent-page-id: { required: true }\n  version-message: { required: false }\n  page-title-strategy: { required: false, default: 'filename-stem' }\n  dry-run: { required: false, default: 'false' }\n  skip-unchanged: { required: false, default: 'true' }\n  render-html-blocks: { required: false, default: 'false' }\n  clean: { required: false, default: 'false' }\n  update-parent-page: { required: false, default: 'true' }\n"
       })
+    }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
+      children: [(0,jsx_runtime.jsx)(_components.code, {
+        children: "clean"
+      }), " is destructive — when ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "true"
+      }), ", every page descendant of ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "parentPageId"
+      }), ",\nincluding manual/unlabeled pages, is moved to trash (recoverable), never\npurged, before recreation. ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "update-parent-page"
+      }), " controls the parent summary\nregion (default on); set ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "false"
+      }), " to skip parent updates and leave existing\nmanaged and manual parent content untouched. If ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "egose/actions/confluence"
+      }), "\nrequires separately declared inputs, wire both there as a release follow-up."]
     }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
       children: ["A runnable smoke fixture lives under\n", (0,jsx_runtime.jsx)(_components.a, {
         href: "https://github.com/egose/repo-toolkit/blob/main/packages/confluence/action-fixture",
@@ -1499,9 +1985,13 @@ function _createMdxContent(props) {
         })
       }), "\nand demonstrates starting a sync with mocked ", (0,jsx_runtime.jsx)(_components.code, {
         children: "INPUT_*"
-      }), " inputs and no network,\nso an Action runner can confirm the bundle wires the CLI to ", (0,jsx_runtime.jsx)(_components.code, {
+      }), " inputs and no network,\nincluding ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "INPUT_CLEAN"
+      }), " and ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "INPUT_UPDATE-PARENT-PAGE"
+      }), ", so an Action runner\ncan confirm the bundle wires the CLI to ", (0,jsx_runtime.jsx)(_components.code, {
         children: "INPUT_*"
-      }), " inputs\nend-to-end."]
+      }), " inputs end-to-end."]
     })]
   });
 }
