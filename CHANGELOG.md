@@ -1,3 +1,9 @@
+## [0.23.0](https://github.com/egose/repo-toolkit/compare/v0.22.0...v0.23.0) (2026-08-28)
+
+### Features
+
+* **confluence:** link repository notices to the current file when available ([ceebb11](https://github.com/egose/repo-toolkit/commit/ceebb113171e8fbe64e2ec72d968f5474510841f))
+
 ## [0.22.0](https://github.com/egose/repo-toolkit/compare/v0.21.0...v0.22.0) (2026-08-28)
 
 ### Features
