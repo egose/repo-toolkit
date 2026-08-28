@@ -61,6 +61,10 @@ const toc = [{
   "id": "config-file",
   "level": 2
 }, {
+  "value": "Publish layout",
+  "id": "publish-layout",
+  "level": 3
+}, {
   "value": "JavaScript API",
   "id": "javascript-api",
   "level": 2
@@ -80,6 +84,7 @@ function _createMdxContent(props) {
     li: "li",
     p: "p",
     pre: "pre",
+    strong: "strong",
     table: "table",
     tbody: "tbody",
     td: "td",
@@ -350,6 +355,18 @@ function _createMdxContent(props) {
         }), (0,jsx_runtime.jsxs)(_components.tr, {
           children: [(0,jsx_runtime.jsx)(_components.td, {
             children: (0,jsx_runtime.jsx)(_components.code, {
+              children: "--preserve-publish-dir"
+            })
+          }), (0,jsx_runtime.jsx)(_components.td, {
+            children: "Keep publishDir inside the npm package (default: flattened to package root)"
+          }), (0,jsx_runtime.jsx)(_components.td, {
+            children: (0,jsx_runtime.jsx)(_components.code, {
+              children: "false"
+            })
+          })]
+        }), (0,jsx_runtime.jsxs)(_components.tr, {
+          children: [(0,jsx_runtime.jsx)(_components.td, {
+            children: (0,jsx_runtime.jsx)(_components.code, {
               children: "--version-placeholder <text>"
             })
           }), (0,jsx_runtime.jsx)(_components.td, {
@@ -468,6 +485,81 @@ function _createMdxContent(props) {
         className: "language-sh",
         children: "repo-toolkit-publish-packages --config publish-packages.config.mjs\n"
       })
+    }), "\n", (0,jsx_runtime.jsx)(_components.h3, {
+      id: "publish-layout",
+      children: "Publish layout"
+    }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
+      children: [(0,jsx_runtime.jsx)(_components.code, {
+        children: "publishDir"
+      }), " remains the build-output directory (default ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "dist"
+      }), "). The layout choice only affects how that directory appears inside the published npm tarball. ", (0,jsx_runtime.jsx)(_components.strong, {
+        children: "Flattened publishing remains the default."
+      })]
+    }), "\n", (0,jsx_runtime.jsxs)(_components.ul, {
+      children: ["\n", (0,jsx_runtime.jsxs)(_components.li, {
+        children: [(0,jsx_runtime.jsxs)(_components.strong, {
+          children: ["Default (flattened, ", (0,jsx_runtime.jsx)(_components.code, {
+            children: "preservePublishDir: false"
+          }), ")"]
+        }), ": the contents of ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "publishDir"
+        }), " become the npm package root. A build file ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "dist/index.js"
+        }), " is published as ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "package/index.js"
+        }), " and manifest fields are rewritten (", (0,jsx_runtime.jsx)(_components.code, {
+          children: "\"main\": \"dist/index.js\""
+        }), " → ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "\"main\": \"./index.js\""
+        }), ", likewise ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "module"
+        }), "/", (0,jsx_runtime.jsx)(_components.code, {
+          children: "types"
+        }), "/", (0,jsx_runtime.jsx)(_components.code, {
+          children: "bin"
+        }), "/", (0,jsx_runtime.jsx)(_components.code, {
+          children: "exports"
+        }), "/", (0,jsx_runtime.jsx)(_components.code, {
+          children: "imports"
+        }), ")."]
+      }), "\n", (0,jsx_runtime.jsxs)(_components.li, {
+        children: [(0,jsx_runtime.jsxs)(_components.strong, {
+          children: ["Opt-in preserved (", (0,jsx_runtime.jsx)(_components.code, {
+            children: "--preserve-publish-dir"
+          }), " / ", (0,jsx_runtime.jsx)(_components.code, {
+            children: "preservePublishDir: true"
+          }), ")"]
+        }), ": the configured directory is retained inside the package. ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "dist/index.js"
+        }), " is published as ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "package/dist/index.js"
+        }), " and manifest paths keep their prefix (", (0,jsx_runtime.jsx)(_components.code, {
+          children: "\"main\": \"./dist/index.js\""
+        }), ").", "\n", (0,jsx_runtime.jsxs)(_components.ul, {
+          children: ["\n", (0,jsx_runtime.jsxs)(_components.li, {
+            children: ["A custom ", (0,jsx_runtime.jsx)(_components.code, {
+              children: "publishDir"
+            }), " such as ", (0,jsx_runtime.jsx)(_components.code, {
+              children: "artifacts/npm"
+            }), " is retained as ", (0,jsx_runtime.jsx)(_components.code, {
+              children: "package/artifacts/npm/**"
+            }), ", not reduced to its basename."]
+          }), "\n"]
+        }), "\n"]
+      }), "\n"]
+    }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
+      children: ["Preserved mode uses an isolated temporary staging root rather than publishing from the source package root, so only the build output, generated ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "package.json"
+      }), ", and configured ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "packageFiles"
+      }), "/", (0,jsx_runtime.jsx)(_components.code, {
+        children: "rootFiles"
+      }), " are included — repository ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "src/"
+      }), ", tests, and other source files are not published wholesale. The same resolved ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "preservePublishDir"
+      }), " value is forwarded to every selected package in the monorepo."]
     }), "\n", (0,jsx_runtime.jsx)(_components.h2, {
       id: "javascript-api",
       children: "JavaScript API"
