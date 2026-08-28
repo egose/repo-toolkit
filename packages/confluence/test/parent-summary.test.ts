@@ -33,10 +33,11 @@ describe('parent-summary pure renderer', () => {
     expect(html).toContain('<h2>Synced documentation</h2>');
     expect(html).toContain('https://github.com/acme/repo');
     expect(html).toContain('<a href="https://github.com/acme/repo"');
-    expect(html).toContain('repo-toolkit-confluence');
+    expect(html).toContain('This documentation subtree is synced from');
+    expect(html).not.toContain('maintained by');
   });
 
-  it('renders generic provenance when repositoryUrl absent', () => {
+  it('renders no provenance paragraph when repositoryUrl absent', () => {
     const html = renderParentSummary({
       repositoryUrl: '',
       stats: {
@@ -50,7 +51,8 @@ describe('parent-summary pure renderer', () => {
       pages: [],
     });
     expect(html).not.toContain('<a href=');
-    expect(html).toContain('maintained by <code>repo-toolkit-confluence</code>');
+    expect(html).not.toContain('maintained by');
+    expect(html).not.toContain('This documentation subtree is synced from');
   });
 
   it('renders statistics exactly', () => {
@@ -132,7 +134,7 @@ describe('parent-summary pure renderer', () => {
     expect(html).toContain('(page)');
   });
 
-  it('includes ownership guidance with label and prune/clean', () => {
+  it('does not include ownership guidance', () => {
     const html = renderParentSummary({
       repositoryUrl: '',
       stats: {
@@ -145,10 +147,10 @@ describe('parent-summary pure renderer', () => {
       },
       pages: [],
     });
-    expect(html).toContain('repo-toolkit-confluence');
-    expect(html).toContain('pruned');
-    expect(html).toContain('clean: true');
-    expect(html).toContain('unlabeled');
+    expect(html).not.toContain('<h3>Ownership</h3>');
+    expect(html).not.toContain('pruned');
+    expect(html).not.toContain('clean: true');
+    expect(html).not.toContain('unlabeled');
   });
 
   it('does not include timestamps, versions, absolute paths, credentials', () => {

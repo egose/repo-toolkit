@@ -2313,24 +2313,29 @@ describe('CFPARENT-01: parent documentation dashboard', () => {
     let body = (await client.getPage('123')).body?.storage?.value ?? '';
     expect(body).toContain('https://github.com/acme/repo');
     expect(body).toContain('<a href=');
+    expect(body).toContain('This documentation subtree is synced from');
+    expect(body).not.toContain('maintained by');
 
     const parentPage2 = pageFixture('123', 'Parent', 1, '', '999');
     const client2 = buildFakeClient({ spaceId: 'SPACE', existingPages: [parentPage2] }).client;
     await syncConfluenceToDocs({ ...baseOptions(client2), repositoryUrl: undefined });
     body = (await client2.getPage('123')).body?.storage?.value ?? '';
-    expect(body).toContain('maintained by <code>repo-toolkit-confluence</code>');
+    expect(body).not.toContain('maintained by');
     expect(body).not.toContain('<a href=');
+    expect(body).not.toContain('This documentation subtree is synced from');
   });
 
-  it('summary includes stable guidance and no secrets', async () => {
+  it('summary contains no ownership section and no secrets', async () => {
     await writeFile(join(tmp, 'a.md'), '# A');
     const parentPage = pageFixture('123', 'Parent', 1, '', '999');
     const { client } = buildFakeClient({ spaceId: 'SPACE', existingPages: [parentPage] });
     await syncConfluenceToDocs(baseOptions(client));
     const body = (await client.getPage('123')).body?.storage?.value ?? '';
-    expect(body).toContain('repo-toolkit-confluence');
-    expect(body).toContain('pruned');
-    expect(body).toContain('clean: true');
+    expect(body).not.toContain('<h3>Ownership</h3>');
+    expect(body).not.toContain('pruned');
+    expect(body).not.toContain('clean: true');
+    expect(body).not.toContain('unlabeled');
+    expect(body).not.toContain(' — ');
     expect(body).not.toContain('apiToken');
     expect(body).not.toContain('/tmp');
   });
