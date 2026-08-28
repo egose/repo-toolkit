@@ -23,6 +23,7 @@ const PRESERVED_ENV_KEYS = [
   'CONFLUENCE_PARENT_PAGE_ID',
   'CONFLUENCE_VERSION_MESSAGE',
   'CONFLUENCE_REPOSITORY_URL',
+  'CONFLUENCE_PAGE_TITLE_STRATEGY',
   'CONFLUENCE_DRY_RUN',
   'CONFLUENCE_SKIP_UNCHANGED',
   'CONFLUENCE_RENDER_HTML_BLOCKS',
@@ -37,6 +38,7 @@ const PRESERVED_ENV_KEYS = [
   'INPUT_PARENT-PAGE-ID',
   'INPUT_VERSION-MESSAGE',
   'INPUT_REPOSITORY-URL',
+  'INPUT_PAGE-TITLE-STRATEGY',
   'INPUT_DRY-RUN',
   'INPUT_SKIP-UNCHANGED',
   'INPUT_RENDER-HTML-BLOCKS',
@@ -430,6 +432,160 @@ describe('confluence cli dry-run with env credentials and config', () => {
     expect(stderr).not.toContain('env-secret-do-not-log');
     expect(code).toBe(0);
     expect(stdout).toContain('[dry-run]');
+  });
+});
+
+describe('confluence cli page-title-strategy', () => {
+  let envSnapshot: Record<string, string | undefined>;
+
+  beforeEach(() => {
+    envSnapshot = snapshotEnv();
+    clearConfluenceEnv();
+  });
+
+  afterEach(() => {
+    restoreEnv(envSnapshot);
+  });
+
+  it('parses --page-title-strategy from CLI and exposes it via buildOptions', () => {
+    const result = flagResult(['--page-title-strategy', 'sentence-case-parent']);
+    const opts = buildOptions(result);
+    expect(opts.pageTitleStrategy).toBe('sentence-case-parent');
+  });
+
+  it('parses CONFLUENCE_PAGE_TITLE_STRATEGY and INPUT_PAGE-TITLE-STRATEGY from env with CONFLUENCE precedence', () => {
+    process.env['INPUT_PAGE-TITLE-STRATEGY'] = 'filename';
+    process.env.CONFLUENCE_PAGE_TITLE_STRATEGY = 'sentence-case-path';
+    const fromEnv = optionsFromEnv();
+    expect(fromEnv.pageTitleStrategy).toBe('sentence-case-path');
+
+    delete process.env.CONFLUENCE_PAGE_TITLE_STRATEGY;
+    expect(optionsFromEnv().pageTitleStrategy).toBe('filename');
+  });
+
+  it('resolves precedence CLI > config > CONFLUENCE_* > INPUT_* > default', async () => {
+    process.env['INPUT_PAGE-TITLE-STRATEGY'] = 'filename';
+    process.env.CONFLUENCE_PAGE_TITLE_STRATEGY = 'sentence-case-parent';
+
+    const configPath = await writeConfig({
+      pageTitleStrategy: 'sentence-case-parents',
+    } as unknown as Partial<ConfluenceSyncOptions>);
+    const result = flagResult(['--page-title-strategy', 'sentence-case-path', '--config', configPath]);
+    const merged = await resolveConfluenceOptions({ result });
+    expect(merged.pageTitleStrategy).toBe('sentence-case-path');
+
+    const result2 = flagResult(['--config', configPath]);
+    const merged2 = await resolveConfluenceOptions({ result: result2 });
+    expect(merged2.pageTitleStrategy).toBe('sentence-case-parents');
+
+    const result3 = flagResult([]);
+    const merged3 = await resolveConfluenceOptions({ result: result3 });
+    expect(merged3.pageTitleStrategy).toBe('sentence-case-parent');
+
+    delete process.env.CONFLUENCE_PAGE_TITLE_STRATEGY;
+    const merged4 = await resolveConfluenceOptions({ result: result3 });
+    expect(merged4.pageTitleStrategy).toBe('filename');
+
+    delete process.env['INPUT_PAGE-TITLE-STRATEGY'];
+    const merged5 = await resolveConfluenceOptions({ result: result3 });
+    expect(merged5.pageTitleStrategy).toBeUndefined();
+  });
+
+  it('defaults to filename-stem when no source supplies a strategy (via sync plan validation)', async () => {
+    const { resolveConfluenceSyncPlan } = await import('../src/index');
+    const plan = resolveConfluenceSyncPlan({
+      folder: 'docs',
+      username: 'u',
+      apiToken: 't',
+      baseUrl: 'https://x/wiki',
+      spaceKey: 'ENG',
+      parentPageId: '123',
+    } as ConfluenceSyncOptions);
+    expect(plan.pageTitleStrategy).toBe('filename-stem');
+
+    const merged = await resolveConfluenceOptions({ result: flagResult([]) });
+    const plan2 = resolveConfluenceSyncPlan({
+      folder: 'docs',
+      username: 'u',
+      apiToken: 't',
+      baseUrl: 'https://x/wiki',
+      spaceKey: 'ENG',
+      parentPageId: '123',
+      ...merged,
+    } as ConfluenceSyncOptions);
+    expect(plan2.pageTitleStrategy).toBe('filename-stem');
+  });
+
+  it('rejects malformed CLI, config, and env values with pageTitleStrategy accepted-values message', async () => {
+    const { resolveConfluenceSyncPlan, PAGE_TITLE_STRATEGIES } = await import('../src/index');
+    const allValues = PAGE_TITLE_STRATEGIES.join(', ');
+
+    const cliResult = flagResult(['--page-title-strategy', 'bogus']);
+    const cliMerged = await resolveConfluenceOptions({ result: cliResult });
+    expect(() =>
+      resolveConfluenceSyncPlan({
+        folder: 'docs',
+        username: 'u',
+        apiToken: 't',
+        baseUrl: 'https://x/wiki',
+        spaceKey: 'ENG',
+        parentPageId: '123',
+        ...cliMerged,
+      } as ConfluenceSyncOptions),
+    ).toThrowError(new RegExp(`Invalid pageTitleStrategy.*${allValues.replace(/-/g, '\\-')}`));
+
+    const configPath = await writeConfig({ pageTitleStrategy: '' } as unknown as Partial<ConfluenceSyncOptions>);
+    const cfgResult = flagResult(['--config', configPath]);
+    const cfgMerged = await resolveConfluenceOptions({ result: cfgResult });
+    expect(() =>
+      resolveConfluenceSyncPlan({
+        folder: 'docs',
+        username: 'u',
+        apiToken: 't',
+        baseUrl: 'https://x/wiki',
+        spaceKey: 'ENG',
+        parentPageId: '123',
+        ...cfgMerged,
+      } as ConfluenceSyncOptions),
+    ).toThrowError(/Invalid pageTitleStrategy/);
+
+    process.env.CONFLUENCE_PAGE_TITLE_STRATEGY = 'totally-bogus';
+    const envMerged = optionsFromEnv();
+    expect(() =>
+      resolveConfluenceSyncPlan({
+        folder: 'docs',
+        username: 'u',
+        apiToken: 't',
+        baseUrl: 'https://x/wiki',
+        spaceKey: 'ENG',
+        parentPageId: '123',
+        ...(envMerged as ConfluenceSyncOptions),
+      } as ConfluenceSyncOptions),
+    ).toThrowError(/Invalid pageTitleStrategy/);
+  });
+
+  it('help output lists --page-title-strategy and five values with default', async () => {
+    const { stdout, code } = await runCli(['--help'], {});
+    expect(code).toBe(0);
+    expect(stdout).toContain('--page-title-strategy');
+    expect(stdout).toContain('filename-stem');
+    expect(stdout).toContain('sentence-case-parent');
+    expect(stdout).toContain('CONFLUENCE_PAGE_TITLE_STRATEGY');
+  });
+
+  it('CLI dry-run with non-default strategy emits generated titles', async () => {
+    const tempTree = await makeDocTree();
+    try {
+      const { code, stdout } = await runCli(
+        ['--dry-run', '--folder', join(tempTree, 'docs'), '--page-title-strategy', 'sentence-case-parent'],
+        {},
+      );
+      expect(code).toBe(0);
+      expect(stdout).toContain('Page (sub)');
+      expect(stdout).toContain('Index');
+    } finally {
+      await rm(tempTree, { recursive: true, force: true });
+    }
   });
 });
 

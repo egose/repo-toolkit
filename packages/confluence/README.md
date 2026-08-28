@@ -76,6 +76,7 @@ Flags:
   italic source notice. The `--folder` path is added to the notice link when it
   is relative to `--cwd`. When omitted, GitHub Actions runs infer this from
   `GITHUB_SERVER_URL` and `GITHUB_REPOSITORY`.
+- `--page-title-strategy <value>` — leaf page title strategy (default: `filename-stem`). One of `filename-stem`, `filename`, `sentence-case-parent`, `sentence-case-parents`, `sentence-case-path`. Applied only to Markdown leaf pages; folder-generated parent pages keep their raw directory-segment titles. See [leaf page title strategies](#leaf-page-title-strategies).
 - `--skip-unchanged` / `--no-skip-unchanged` — skip pages whose body is unchanged (default: `skip`)
 - `--dry-run` — walk the doc tree and validate every markdown file and local
   image source (same preflight as a real sync) then log the plan. No API
@@ -93,25 +94,48 @@ both read for every option. Boolean env values accept `true|1|yes|on` /
 `false|0|no|off` (empty string is falsy); any other value exits nonzero with
 `Invalid boolean value for <ENV_NAME>: <raw>`.
 
-| Option                  | `CONFLUENCE_*`                  | `INPUT_*` (Actions form)                      |
-| ----------------------- | ------------------------------- | --------------------------------------------- |
-| folder                  | `CONFLUENCE_FOLDER`             | `INPUT_FOLDER`                                |
-| username                | `CONFLUENCE_USERNAME`           | `INPUT_USERNAME`                              |
-| apiToken                | `CONFLUENCE_API_TOKEN`          | `INPUT_API-TOKEN`, `INPUT_PASSWORD`           |
-| apiTokenFile            | `CONFLUENCE_API_TOKEN_FILE`     | `INPUT_API-TOKEN-FILE`, `INPUT_PASSWORD-FILE` |
-| baseUrl                 | `CONFLUENCE_BASE_URL`           | `INPUT_CONFLUENCE-BASE-URL`                   |
-| spaceKey                | `CONFLUENCE_SPACE_KEY`          | `INPUT_SPACE-KEY`                             |
-| parentPageId            | `CONFLUENCE_PARENT_PAGE_ID`     | `INPUT_PARENT-PAGE-ID`                        |
-| versionMessage          | `CONFLUENCE_VERSION_MESSAGE`    | `INPUT_VERSION-MESSAGE`                       |
-| repositoryUrl           | `CONFLUENCE_REPOSITORY_URL`     | `INPUT_REPOSITORY-URL`                        |
-| skipUnchanged (bool)    | `CONFLUENCE_SKIP_UNCHANGED`     | `INPUT_SKIP-UNCHANGED`                        |
-| dryRun (bool)           | `CONFLUENCE_DRY_RUN`            | `INPUT_DRY-RUN`                               |
-| renderHtmlBlocks (bool) | `CONFLUENCE_RENDER_HTML_BLOCKS` | `INPUT_RENDER-HTML-BLOCKS`                    |
+| Option                  | `CONFLUENCE_*`                   | `INPUT_*` (Actions form)                      |
+| ----------------------- | -------------------------------- | --------------------------------------------- |
+| folder                  | `CONFLUENCE_FOLDER`              | `INPUT_FOLDER`                                |
+| username                | `CONFLUENCE_USERNAME`            | `INPUT_USERNAME`                              |
+| apiToken                | `CONFLUENCE_API_TOKEN`           | `INPUT_API-TOKEN`, `INPUT_PASSWORD`           |
+| apiTokenFile            | `CONFLUENCE_API_TOKEN_FILE`      | `INPUT_API-TOKEN-FILE`, `INPUT_PASSWORD-FILE` |
+| baseUrl                 | `CONFLUENCE_BASE_URL`            | `INPUT_CONFLUENCE-BASE-URL`                   |
+| spaceKey                | `CONFLUENCE_SPACE_KEY`           | `INPUT_SPACE-KEY`                             |
+| parentPageId            | `CONFLUENCE_PARENT_PAGE_ID`      | `INPUT_PARENT-PAGE-ID`                        |
+| versionMessage          | `CONFLUENCE_VERSION_MESSAGE`     | `INPUT_VERSION-MESSAGE`                       |
+| repositoryUrl           | `CONFLUENCE_REPOSITORY_URL`      | `INPUT_REPOSITORY-URL`                        |
+| pageTitleStrategy       | `CONFLUENCE_PAGE_TITLE_STRATEGY` | `INPUT_PAGE-TITLE-STRATEGY`                   |
+| skipUnchanged (bool)    | `CONFLUENCE_SKIP_UNCHANGED`      | `INPUT_SKIP-UNCHANGED`                        |
+| dryRun (bool)           | `CONFLUENCE_DRY_RUN`             | `INPUT_DRY-RUN`                               |
+| renderHtmlBlocks (bool) | `CONFLUENCE_RENDER_HTML_BLOCKS`  | `INPUT_RENDER-HTML-BLOCKS`                    |
 
 Errors, `--help`, and all log lines never print the supplied token value. The
 secret-file loader wraps fs errors via `Error.cause` (`Failed to read
 apiTokenFile at <path>`, `apiTokenFile at <path> is empty`) without revealing
 the file contents.
+
+## Leaf page title strategies
+
+Leaf Confluence page titles are derived from the Markdown file's relative path segments. Directory segments become synthetic parent-page titles and retain their raw segment text for every strategy — only the Markdown leaf file uses `pageTitleStrategy`.
+
+| Strategy                  | Behavior                                                                                      | Example for `community-nodes/cdogs-document-generator/credentials.md`   |
+| ------------------------- | --------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
+| `filename-stem` (default) | Original filename without the final `.md` extension                                           | `credentials`                                                           |
+| `filename`                | Original filename including extension                                                         | `credentials.md`                                                        |
+| `sentence-case-parent`    | Sentence-case filename stem plus immediate parent folder                                      | `Credentials (cdogs-document-generator)`                                |
+| `sentence-case-parents`   | Sentence-case filename stem plus all parent folders                                           | `Credentials (community-nodes/cdogs-document-generator)`                |
+| `sentence-case-path`      | Sentence-case filename stem plus all parent folders and original filename including extension | `Credentials (community-nodes/cdogs-document-generator/credentials.md)` |
+
+Sentence case is deterministic and dependency-free: remove only the final case-insensitive `.md`; replace each run of `-` and `_` with one space; trim; lowercase ASCII letters; uppercase the first ASCII letter. Digits and other punctuation are preserved. Examples: `failed-deployment.md` → `Failed deployment`, `n8n_setup.md` → `N8n setup`, `README.md` → `Readme`. Parent folders are the segments before the filename, joined with `/` exactly as stored. Preserve the original filename and extension casing in `filename` and inside `sentence-case-path` (for example, `Guide.MD` remains `Guide.MD` where the original filename is included).
+
+Root-file behavior: for `sentence-case-parent` and `sentence-case-parents` the parentheses are omitted when a file is directly under the documentation root (`overview.md` → `Overview`). For `sentence-case-path`, the root parenthesized path is the filename itself (`overview.md` → `Overview (overview.md)`).
+
+### Migration and uniqueness notes
+
+> **Changing the strategy changes title-based identity.** Sync is additive and non-pruning and looks up Confluence pages by title under parent. Switching the strategy therefore seeks a new title and may **create a new page while leaving the old page untouched** — it does not rename, move, or delete existing pages. Operators must manually rename, delete, or archive old generated pages (or migrate them) before switching strategies in production.
+
+Path-based strategies reduce predictable local collisions (for example, repeated basenames such as `credentials.md` or `README.md` in separate subtrees) but cannot guarantee uniqueness against unrelated or manually created pages already present in the target Confluence space. Existing spaces may still cause Confluence API conflicts if a generated title collides with an unrelated page under the same parent. Do not truncate or hash titles locally; if Confluence imposes a remote title-length limit, the existing API error behavior applies.
 
 ## JavaScript API
 
@@ -126,6 +150,7 @@ await syncConfluenceToDocs({
   spaceKey: 'ENG',
   parentPageId: '123456789',
   versionMessage: 'chore(docs): sync',
+  pageTitleStrategy: 'sentence-case-parents', // optional; default: 'filename-stem'
 });
 ```
 
@@ -185,6 +210,7 @@ inputs:
   space-key: { required: true }
   parent-page-id: { required: true }
   version-message: { required: false }
+  page-title-strategy: { required: false, default: 'filename-stem' }
   dry-run: { required: false, default: 'false' }
   skip-unchanged: { required: false, default: 'true' }
   render-html-blocks: { required: false, default: 'false' }

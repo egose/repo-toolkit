@@ -8,6 +8,7 @@ const TEST_DIR = fileURLToPath(new URL('.', import.meta.url));
 const DIST_INDEX_DTS = resolve(TEST_DIR, '..', 'dist', 'index.d.ts');
 
 import {
+  PAGE_TITLE_STRATEGIES,
   resolveConfluenceSyncPlan,
   syncConfluenceToDocs,
   validateLocalSync,
@@ -560,6 +561,234 @@ describe('syncConfluenceToDocs', () => {
   });
 });
 
+describe('CFNAME-02: page title strategies in sync', () => {
+  let tmp: string;
+
+  beforeEach(async () => {
+    tmp = await mkdtemp(join(tmpdir(), 'rt-sync-title-'));
+  });
+  afterEach(async () => {
+    await rm(tmp, { recursive: true, force: true });
+  });
+
+  const baseOptions = (client: ConfluenceGateway) => ({
+    folder: tmp,
+    username: 'u',
+    apiToken: 't',
+    baseUrl: 'https://x/wiki',
+    spaceKey: 'ENG',
+    parentPageId: '123',
+    client,
+    log: () => {},
+  });
+
+  const nestedLeaf = 'community-nodes/cdogs-document-generator/credentials.md';
+
+  async function writeNestedLeaf(): Promise<void> {
+    await mkdir(join(tmp, 'community-nodes', 'cdogs-document-generator'), { recursive: true });
+    await writeFile(join(tmp, 'community-nodes', 'cdogs-document-generator', 'credentials.md'), '# Creds');
+  }
+
+  const STRATEGY_CASES: ReadonlyArray<{ strategy: string; leafTitle: string }> = [
+    { strategy: 'filename-stem', leafTitle: 'credentials' },
+    { strategy: 'filename', leafTitle: 'credentials.md' },
+    { strategy: 'sentence-case-parent', leafTitle: 'Credentials (cdogs-document-generator)' },
+    {
+      strategy: 'sentence-case-parents',
+      leafTitle: 'Credentials (community-nodes/cdogs-document-generator)',
+    },
+    {
+      strategy: 'sentence-case-path',
+      leafTitle: 'Credentials (community-nodes/cdogs-document-generator/credentials.md)',
+    },
+  ];
+
+  it('defaults the plan strategy to filename-stem and validates provided values', () => {
+    const plan = resolveConfluenceSyncPlan({
+      folder: 'docs',
+      username: 'u',
+      apiToken: 't',
+      baseUrl: 'https://x/wiki',
+      spaceKey: 'ENG',
+      parentPageId: '1234',
+      cwd: '/tmp/repo',
+    });
+    expect(plan.pageTitleStrategy).toBe('filename-stem');
+
+    const overridden = resolveConfluenceSyncPlan({
+      folder: 'docs',
+      username: 'u',
+      apiToken: 't',
+      baseUrl: 'https://x/wiki',
+      spaceKey: 'ENG',
+      parentPageId: '1234',
+      cwd: '/tmp/repo',
+      pageTitleStrategy: 'sentence-case-path',
+    });
+    expect(overridden.pageTitleStrategy).toBe('sentence-case-path');
+
+    const validBase = {
+      folder: 'docs',
+      username: 'u',
+      apiToken: 't',
+      baseUrl: 'https://x/wiki',
+      spaceKey: 'ENG',
+      parentPageId: '1234',
+    };
+    const allValues = PAGE_TITLE_STRATEGIES.join(', ');
+    expect(() => resolveConfluenceSyncPlan({ ...validBase, pageTitleStrategy: 'bogus' as never })).toThrowError(
+      new RegExp(`Invalid pageTitleStrategy.*${allValues.replace(/-/g, '\\-')}`),
+    );
+    expect(() => resolveConfluenceSyncPlan({ ...validBase, pageTitleStrategy: '' as never })).toThrowError(
+      /Invalid pageTitleStrategy/,
+    );
+    expect(() => resolveConfluenceSyncPlan({ ...validBase, pageTitleStrategy: 42 as unknown as never })).toThrowError(
+      /Invalid pageTitleStrategy/,
+    );
+  });
+
+  for (const { strategy, leafTitle } of STRATEGY_CASES) {
+    it(`uses strategy ${strategy} for lookup and create titles while folders keep raw names`, async () => {
+      await writeNestedLeaf();
+      const { client, calls } = buildFakeClient({ spaceId: 'SPACE' });
+      await syncConfluenceToDocs({
+        ...baseOptions(client),
+        pageTitleStrategy: strategy as never,
+      });
+      const lookupTitles = calls.filter((c) => c.method === 'getPagesByTitle').map((c) => c.args[1] as string);
+      expect(lookupTitles).toContain(leafTitle);
+      expect(lookupTitles).toContain('community-nodes');
+      expect(lookupTitles).toContain('cdogs-document-generator');
+      const createdTitles = calls
+        .filter((c) => c.method === 'createPage')
+        .map((c) => (c.args[0] as { title: string }).title);
+      expect(createdTitles).toContain(leafTitle);
+      expect(createdTitles).toContain('community-nodes');
+      expect(createdTitles).toContain('cdogs-document-generator');
+      if (strategy !== 'filename-stem') {
+        expect(createdTitles).not.toContain('credentials');
+        expect(lookupTitles).not.toContain('credentials');
+      }
+    });
+  }
+
+  it('passes the resolved strategy title to updatePage for an existing page', async () => {
+    await writeFile(join(tmp, 'creds.md'), '# Creds');
+    const { client, calls } = buildFakeClient({
+      spaceId: 'SPACE',
+      existingPages: [pageFixture('P1', 'creds.md', 3, 'stale-body', '123')],
+    });
+    await syncConfluenceToDocs({
+      ...baseOptions(client),
+      pageTitleStrategy: 'filename',
+    });
+    const updates = calls.filter((c) => c.method === 'updatePage');
+    expect(updates).toHaveLength(1);
+    const input = updates[0].args[0] as { id: string; title: string };
+    expect(input.id).toBe('P1');
+    expect(input.title).toBe('creds.md');
+  });
+
+  it('disambiguates repeated basenames under different parents with sentence-case-parents', async () => {
+    await mkdir(join(tmp, 'a'), { recursive: true });
+    await mkdir(join(tmp, 'b'), { recursive: true });
+    await writeFile(join(tmp, 'a', 'credentials.md'), '# A');
+    await writeFile(join(tmp, 'b', 'credentials.md'), '# B');
+    const { client, calls } = buildFakeClient({ spaceId: 'SPACE' });
+    await syncConfluenceToDocs({
+      ...baseOptions(client),
+      pageTitleStrategy: 'sentence-case-parents',
+    });
+    const lookupTitles = calls.filter((c) => c.method === 'getPagesByTitle').map((c) => c.args[1] as string);
+    expect(lookupTitles).toContain('Credentials (a)');
+    expect(lookupTitles).toContain('Credentials (b)');
+    const createdTitles = calls
+      .filter((c) => c.method === 'createPage')
+      .map((c) => (c.args[0] as { title: string }).title);
+    expect(createdTitles).toContain('Credentials (a)');
+    expect(createdTitles).toContain('Credentials (b)');
+    expect(createdTitles).not.toContain('credentials');
+  });
+
+  it('keeps existing titles and page mapping unchanged when the strategy is omitted', async () => {
+    await mkdir(join(tmp, 'a'), { recursive: true });
+    await mkdir(join(tmp, 'b'), { recursive: true });
+    await writeFile(join(tmp, 'a', 'credentials.md'), '# A');
+    await writeFile(join(tmp, 'b', 'credentials.md'), '# B');
+    const { client, calls } = buildFakeClient({ spaceId: 'SPACE' });
+    await syncConfluenceToDocs(baseOptions(client));
+    const lookupTitles = calls.filter((c) => c.method === 'getPagesByTitle').map((c) => c.args[1] as string);
+    expect(lookupTitles).toEqual(['a', 'credentials', 'b', 'credentials']);
+    const leafCreates = calls
+      .filter((c) => c.method === 'createPage')
+      .map((c) => c.args[0] as { title: string; parentId: string })
+      .filter((input) => input.title === 'credentials');
+    expect(leafCreates).toHaveLength(2);
+    const parentIds = leafCreates.map((input) => input.parentId).sort();
+    expect(parentIds[0]).not.toBe(parentIds[1]);
+  });
+
+  it('rejects an invalid strategy before any gateway call or remote mutation', async () => {
+    await writeNestedLeaf();
+    const { client, calls } = buildFakeClient({ spaceId: 'SPACE' });
+    await expect(
+      syncConfluenceToDocs({
+        ...baseOptions(client),
+        pageTitleStrategy: 'totally-bogus' as never,
+      }),
+    ).rejects.toThrowError(/Invalid pageTitleStrategy/);
+    expect(calls).toHaveLength(0);
+  });
+
+  it('rejects an invalid strategy even in dry-run mode before reading the tree', async () => {
+    await writeNestedLeaf();
+    const { client, calls } = buildFakeClient({ spaceId: 'SPACE' });
+    await expect(
+      syncConfluenceToDocs({
+        ...baseOptions(client),
+        dryRun: true,
+        pageTitleStrategy: {} as never,
+      }),
+    ).rejects.toThrowError(/Invalid pageTitleStrategy/);
+    expect(calls).toHaveLength(0);
+  });
+
+  it('detects a generated leaf title conflicting with a sibling folder page before mutation', async () => {
+    await mkdir(join(tmp, 'guide'), { recursive: true });
+    await writeFile(join(tmp, 'guide', 'overview.md'), '# Overview');
+    await mkdir(join(tmp, 'guide', 'Overview (guide)'), { recursive: true });
+    await writeFile(join(tmp, 'guide', 'Overview (guide)', 'other.md'), '# Other');
+    const { client, calls } = buildFakeClient({ spaceId: 'SPACE' });
+    await expect(
+      syncConfluenceToDocs({
+        ...baseOptions(client),
+        pageTitleStrategy: 'sentence-case-parent',
+      }),
+    ).rejects.toThrowError(/conflicting page titles/);
+    expect(calls).toHaveLength(0);
+  });
+
+  it('includes the resolved title for every entry in dry-run output', async () => {
+    await writeNestedLeaf();
+    const logSpy = vi.fn();
+    const { client, calls } = buildFakeClient({ spaceId: 'SPACE' });
+    await syncConfluenceToDocs({
+      ...baseOptions(client),
+      dryRun: true,
+      pageTitleStrategy: 'sentence-case-parents',
+      log: logSpy,
+    });
+    expect(calls).toHaveLength(0);
+    const lines = logSpy.mock.calls.map((c) => String(c[0]));
+    expect(
+      lines.some(
+        (line) =>
+          line === `[dry-run] would sync ${nestedLeaf} as "Credentials (community-nodes/cdogs-document-generator)"`,
+      ),
+    ).toBe(true);
+  });
+});
+
 describe('CFARC-02: content-addressed attachments and no-op second sync', () => {
   let tmp: string;
 
@@ -1084,6 +1313,10 @@ describe('CFARC-04: public declarations expose only intentional package contract
     'readDocTree',
     'titleFromSegment',
     'isMarkdownName',
+    'resolvePageTitleStrategy',
+    'pageTitleFromSegments',
+    'PAGE_TITLE_STRATEGIES',
+    'DEFAULT_PAGE_TITLE_STRATEGY',
     'markdownToStorage',
     'isAllowedUrl',
     'isRemoteUrl',
@@ -1120,6 +1353,7 @@ describe('CFARC-04: public declarations expose only intentional package contract
     'UpdatePageInput',
     'DocEntry',
     'DocTree',
+    'PageTitleStrategy',
     'MermaidBlock',
     'MarkdownConvertResult',
     'MarkdownConvertOptions',
