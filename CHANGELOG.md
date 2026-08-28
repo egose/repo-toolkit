@@ -1,3 +1,13 @@
+## [0.21.0](https://github.com/egose/repo-toolkit/compare/v0.20.0...v0.21.0) (2026-08-28)
+
+### Features
+
+* add managed-page pruning and parent summary support ([49d63f4](https://github.com/egose/repo-toolkit/commit/49d63f45ac34169f4dddcebe3d2d9e8a6a8f6d6a))
+
+### Documentation
+
+* record implementation task for managed page pruning ([95d930d](https://github.com/egose/repo-toolkit/commit/95d930da9e9a7af9351eaeab0427a52b5c6d9b1d))
+
 ## [0.20.0](https://github.com/egose/repo-toolkit/compare/v0.19.0...v0.20.0) (2026-08-28)
 
 ### Features
