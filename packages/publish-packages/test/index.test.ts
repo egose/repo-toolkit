@@ -1,4 +1,4 @@
-import { mkdirSync, writeFileSync, existsSync } from 'node:fs';
+import { mkdirSync, writeFileSync, existsSync, readFileSync } from 'node:fs';
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -254,6 +254,7 @@ describe('resolvePublishPackagesPlan', () => {
     expect(plan.includeRootFiles).toEqual([]);
     expect(plan.noDefaultRootFiles).toBe(false);
     expect(plan.publishDir).toBe('dist');
+    expect(plan.preservePublishDir).toBe(false);
     expect(plan.versionPlaceholder).toBe('0.0.0-PLACEHOLDER');
     expect(plan.buildCommand).toBe('pnpm build');
     expect(plan.version).toBe('1.2.3');
@@ -297,6 +298,7 @@ describe('resolvePublishPackagesPlan', () => {
     });
 
     expect(plan.publishDir).toBe('build-artifacts');
+    expect(plan.preservePublishDir).toBe(false);
     expect(plan.versionPlaceholder).toBe('__VERSION__');
     expect(plan.buildCommand).toBe('pnpm bundle');
     expect(plan.skipBuild).toBe(true);
@@ -459,6 +461,35 @@ describe('resolvePublishPackagesPlan', () => {
     });
 
     expect(plan.runner).toBe(runner);
+  });
+
+  it('defaults preservePublishDir to false', async () => {
+    const rootDir = await makeFakeWorkspace();
+    const plan = resolvePublishPackagesPlan({ version: '1.2.3', cwd: rootDir, filters: ['publish-packages'] });
+    expect(plan.preservePublishDir).toBe(false);
+  });
+
+  it('resolves preservePublishDir true via API and config validation', async () => {
+    const rootDir = await makeFakeWorkspace();
+    const plan = resolvePublishPackagesPlan({
+      version: '1.2.3',
+      cwd: rootDir,
+      filters: ['publish-packages'],
+      preservePublishDir: true,
+    });
+    expect(plan.preservePublishDir).toBe(true);
+  });
+
+  it('rejects non-boolean preservePublishDir', async () => {
+    const rootDir = await makeFakeWorkspace();
+    expect(() =>
+      resolvePublishPackagesPlan({
+        version: '1.2.3',
+        cwd: rootDir,
+        filters: ['publish-packages'],
+        preservePublishDir: 'yes' as unknown as boolean,
+      }),
+    ).toThrowError(/preservePublishDir must be a boolean/);
   });
 });
 
@@ -627,5 +658,142 @@ describe('publishPackages (integration, fake runner)', () => {
 
     // Only one npm publish attempt was made — pkg-b is never published after pkg-a fails.
     expect(runs.filter((entry) => entry.kind === 'run')).toHaveLength(1);
+  });
+
+  it('forwards preservePublishDir false to each package (flattened manifests)', async () => {
+    const rootDir = await makeTempRoot('repo-toolkit-publish-packages-preserve-false-');
+    await writeRootPackage(rootDir, { name: 'monorepo', private: true, license: 'MIT' });
+    await createWorkspacePackage(
+      rootDir,
+      'pkg-a',
+      { name: '@example/pkg-a', version: '0.0.0-PLACEHOLDER', main: 'dist/index.js' },
+      { 'dist/index.js': 'export {}\n', 'README.md': '# pkg-a\n' },
+    );
+    await createWorkspacePackage(
+      rootDir,
+      'pkg-b',
+      { name: '@example/pkg-b', version: '0.0.0-PLACEHOLDER', main: 'dist/index.js' },
+      { 'dist/index.js': 'export {}\n', 'README.md': '# pkg-b\n' },
+    );
+    await writeFile(join(rootDir, 'LICENSE'), 'MIT\n');
+
+    const runner = createFakePublishRunner(['dist']);
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      publishPackages({ version: '1.2.3', cwd: rootDir, dryRun: true, preservePublishDir: false, runner });
+    } finally {
+      logSpy.mockRestore();
+    }
+
+    const pkgA = JSON.parse(await readFile(join(rootDir, 'packages', 'pkg-a', 'dist', 'package.json'), 'utf8'));
+    const pkgB = JSON.parse(await readFile(join(rootDir, 'packages', 'pkg-b', 'dist', 'package.json'), 'utf8'));
+    expect(pkgA.main).toBe('./index.js');
+    expect(pkgB.main).toBe('./index.js');
+    for (const entry of runner.runs.filter((r) => r.kind === 'run')) {
+      expect(entry.options.cwd.endsWith(join('dist'))).toBe(true);
+    }
+  });
+
+  it('forwards preservePublishDir true to every selected package (retained dist prefix)', async () => {
+    const rootDir = await makeTempRoot('repo-toolkit-publish-packages-preserve-true-');
+    await writeRootPackage(rootDir, { name: 'monorepo', private: true, license: 'MIT' });
+    await createWorkspacePackage(
+      rootDir,
+      'pkg-a',
+      { name: '@example/pkg-a', version: '0.0.0-PLACEHOLDER', main: 'dist/index.js' },
+      { 'dist/index.js': 'export {}\n', 'README.md': '# pkg-a\n' },
+    );
+    await createWorkspacePackage(
+      rootDir,
+      'pkg-b',
+      { name: '@example/pkg-b', version: '0.0.0-PLACEHOLDER', main: 'dist/index.js' },
+      { 'dist/index.js': 'export {}\n', 'README.md': '# pkg-b\n' },
+    );
+    await writeFile(join(rootDir, 'LICENSE'), 'MIT\n');
+
+    const captured: Array<{ cwd: string; manifest: Record<string, unknown> }> = [];
+    const seen = new Set<string>();
+    const runs: FakeRun[] = [];
+    const runner: ProcessRunner = {
+      run(executable, args, options) {
+        runs.push({ kind: 'run', executable, args: [...args], options });
+        const manifestPath = join(options.cwd, 'package.json');
+        try {
+          const raw = readFileSync(manifestPath, 'utf8');
+          captured.push({ cwd: options.cwd, manifest: JSON.parse(raw) });
+        } catch {
+          // ignore
+        }
+      },
+      runShell(command, options) {
+        runs.push({ kind: 'runShell', command, options });
+        if (!seen.has(options.cwd)) {
+          seen.add(options.cwd);
+          const distPath = join(options.cwd, 'dist');
+          mkdirSync(distPath, { recursive: true });
+          writeFileSync(join(distPath, 'index.js'), 'export {}\n');
+        }
+      },
+    };
+
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      publishPackages({ version: '1.2.3', cwd: rootDir, dryRun: true, preservePublishDir: true, runner });
+    } finally {
+      logSpy.mockRestore();
+    }
+
+    expect(captured).toHaveLength(2);
+    for (const { manifest } of captured) {
+      expect(manifest.main).toBe('dist/index.js');
+    }
+  });
+
+  it('forwards a custom nested publishDir with preservePublishDir true', async () => {
+    const rootDir = await makeTempRoot('repo-toolkit-publish-packages-preserve-nested-');
+    await writeRootPackage(rootDir, { name: 'monorepo', private: true, license: 'MIT' });
+    await createWorkspacePackage(
+      rootDir,
+      'pkg-a',
+      { name: '@example/pkg-a', version: '0.0.0-PLACEHOLDER', main: 'artifacts/npm/index.js' },
+      { 'artifacts/npm/index.js': 'export {}\n', 'README.md': '# pkg-a\n' },
+    );
+    await writeFile(join(rootDir, 'LICENSE'), 'MIT\n');
+
+    const captured: Array<Record<string, unknown>> = [];
+    const seen = new Set<string>();
+    const runs: FakeRun[] = [];
+    const runner: ProcessRunner = {
+      run(executable, args, options) {
+        runs.push({ kind: 'run', executable, args: [...args], options });
+        captured.push(JSON.parse(readFileSync(join(options.cwd, 'package.json'), 'utf8')));
+      },
+      runShell(command, options) {
+        runs.push({ kind: 'runShell', command, options });
+        if (!seen.has(options.cwd)) {
+          seen.add(options.cwd);
+          const out = join(options.cwd, 'artifacts', 'npm');
+          mkdirSync(out, { recursive: true });
+          writeFileSync(join(out, 'index.js'), 'export {}\n');
+        }
+      },
+    };
+
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      publishPackages({
+        version: '1.2.3',
+        cwd: rootDir,
+        dryRun: true,
+        publishDir: 'artifacts/npm',
+        preservePublishDir: true,
+        runner,
+      });
+    } finally {
+      logSpy.mockRestore();
+    }
+
+    expect(captured).toHaveLength(1);
+    expect(captured[0].main).toBe('artifacts/npm/index.js');
   });
 });

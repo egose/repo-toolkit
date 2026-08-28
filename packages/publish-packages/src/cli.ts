@@ -23,6 +23,7 @@ const SPECS: FlagSpec[] = [
   { name: 'include-root-file', repeatable: true },
   { name: 'no-default-root-files', boolean: true },
   { name: 'publish-dir' },
+  { name: 'preserve-publish-dir', boolean: true },
   { name: 'version-placeholder' },
   { name: 'build-command' },
   { name: 'skip-build', boolean: true },
@@ -55,6 +56,7 @@ Options:
   --include-root-file <path>     Additional file copied from workspace root (repeatable)
   --no-default-root-files        Skip copying default root files
   --publish-dir <path>           Publish directory inside each package (default: dist)
+  --preserve-publish-dir         Keep publishDir inside the npm package (default: flattened to package root)
   --version-placeholder <text>   Placeholder rewritten to target version (default: 0.0.0-PLACEHOLDER)
   --build-command <command>      Command used to build each publish dir (default: pnpm build)
   --skip-build                   Skip the build step
@@ -81,6 +83,7 @@ export function buildOptions(result: ReturnType<typeof parseFlags>): Partial<Pub
   if (values['npm-tag']) options.npmTag = values['npm-tag'];
   if (values.from) options.from = values.from;
   if (values['publish-dir']) options.publishDir = values['publish-dir'];
+  if (values['preserve-publish-dir'] !== undefined) options.preservePublishDir = true;
   if (values['version-placeholder']) options.versionPlaceholder = values['version-placeholder'];
   if (values['build-command']) options.buildCommand = values['build-command'];
   if (values['no-default-package-files'] !== undefined) options.noDefaultPackageFiles = true;

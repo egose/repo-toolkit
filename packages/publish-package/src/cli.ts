@@ -20,6 +20,7 @@ const SPECS: FlagSpec[] = [
   { name: 'version', aliases: ['tag'] },
   { name: 'npm-tag' },
   { name: 'publish-dir' },
+  { name: 'preserve-publish-dir', boolean: true },
   { name: 'version-placeholder' },
   { name: 'package-files', list: true },
   { name: 'include-package-file', repeatable: true },
@@ -54,6 +55,7 @@ Options:
   --tag <version>                Alias for --version
   --npm-tag <dist-tag>           npm dist-tag (defaults to prerelease preid)
   --publish-dir <path>           Publish directory inside package root (default: dist)
+  --preserve-publish-dir         Keep publishDir inside the npm package (default: flattened to package root)
   --version-placeholder <text>   Placeholder rewritten to target version (default: 0.0.0-PLACEHOLDER)
   --package-files <f>[,<f>]      Files copied from package root (replaces defaults)
   --include-package-file <path>  Additional file copied from package root (repeatable)
@@ -87,6 +89,7 @@ export function buildOptions(result: ReturnType<typeof parseFlags>): Partial<Pub
   if (values.version) options.version = values.version;
   if (values['npm-tag']) options.npmTag = values['npm-tag'];
   if (values['publish-dir']) options.publishDir = values['publish-dir'];
+  if (values['preserve-publish-dir'] !== undefined) options.preservePublishDir = true;
   if (values['version-placeholder']) options.versionPlaceholder = values['version-placeholder'];
   if (values['build-command']) options.buildCommand = values['build-command'];
   if (values['no-default-package-files'] !== undefined) options.noDefaultPackageFiles = true;

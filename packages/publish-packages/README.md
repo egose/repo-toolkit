@@ -37,6 +37,7 @@ Useful flags:
 - `--include-root-file <path>` Additional file copied from the monorepo root (repeatable, additive).
 - `--no-default-root-files` Skip copying default root files.
 - `--publish-dir <path>` Publish directory inside each package (default: `dist`).
+- `--preserve-publish-dir` Keep publishDir inside the npm package (default: flattened to package root).
 - `--version-placeholder <text>` Placeholder rewritten to the target version (default: `0.0.0-PLACEHOLDER`).
 - `--build-command <command>` Command used to build each publish dir (default: `pnpm build`).
 - `--skip-build` Skip the build step.
@@ -75,6 +76,16 @@ repo-toolkit-publish-packages --config publish.config.mjs
 ```
 
 CLI flags override values from the config file.
+
+### Publish layout
+
+`publishDir` remains the build-output directory (default `dist`). The layout choice only affects how that directory appears inside the published npm tarball. Flattened publishing remains the default.
+
+- **Default (flattened, `preservePublishDir: false`)**: the contents of `publishDir` become the npm package root. A build file `dist/index.js` is published as `package/index.js` and manifest fields are rewritten (`"main": "dist/index.js"` → `"main": "./index.js"`, likewise `module`/`types`/`bin`/`exports`/`imports`).
+- **Opt-in preserved (`--preserve-publish-dir` / `preservePublishDir: true`)**: the configured directory is retained inside the package. `dist/index.js` is published as `package/dist/index.js` and manifest paths keep their prefix (`"main": "./dist/index.js"`).
+  - A custom `publishDir` such as `artifacts/npm` is retained as `package/artifacts/npm/**`, not reduced to its basename.
+
+Preserved mode uses an isolated temporary staging root rather than publishing from the source package root, so only the build output, generated `package.json`, and configured `packageFiles`/`rootFiles` are included — repository `src/`, tests, and other source files are not published wholesale. The same resolved `preservePublishDir` value is forwarded to every selected package in the monorepo.
 
 ## JavaScript API
 
@@ -117,6 +128,7 @@ For generic single-package manifest rewriting and npm publish plumbing, use
 - `includeRootFiles` _(string[])_ Additional files appended to `rootFiles` (additive, does not replace defaults).
 - `noDefaultRootFiles` _(boolean)_ Skip copying default root files.
 - `publishDir` _(string)_ Publish directory inside each package (default: `dist`).
+- `preservePublishDir` _(boolean)_ Keep the configured `publishDir` inside the npm package instead of flattening it to the package root (default: `false`).
 - `versionPlaceholder` _(string)_ Placeholder rewritten to the target version (default: `0.0.0-PLACEHOLDER`).
 - `buildCommand` _(string)_ Command used to build each publish dir (default: `pnpm build`).
 - `skipBuild` _(boolean)_ Skip the build step.

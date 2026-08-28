@@ -36,6 +36,7 @@ export interface PublishRewriteOptions {
   versionPlaceholder?: string;
   metadataPlaceholder?: string;
   publishDir?: string;
+  preservePublishDir?: boolean;
 }
 
 export interface CreatePublishPackageJsonOptions {
@@ -53,6 +54,7 @@ export function createPublishPackageJson(
   const versionPlaceholder = rewrite.versionPlaceholder ?? DEFAULT_VERSION_PLACEHOLDER;
   const metadataPlaceholder = rewrite.metadataPlaceholder ?? DEFAULT_METADATA_PLACEHOLDER;
   const publishDir = rewrite.publishDir ?? DEFAULT_PUBLISH_DIR;
+  const preservePublishDir = rewrite.preservePublishDir ?? false;
   const publishPackageJson: PackageJson = {};
 
   for (const [key, value] of Object.entries(packageJson)) {
@@ -77,22 +79,22 @@ export function createPublishPackageJson(
     }
 
     if (key === 'main' || key === 'module' || key === 'types') {
-      publishPackageJson[key] = rewriteDistPath(value as string, publishDir);
+      publishPackageJson[key] = rewriteDistPath(value as string, publishDir, preservePublishDir);
       continue;
     }
 
     if (key === 'bin') {
-      publishPackageJson.bin = rewriteBin(value, publishDir);
+      publishPackageJson.bin = rewriteBin(value, publishDir, preservePublishDir);
       continue;
     }
 
     if (key === 'exports') {
-      publishPackageJson.exports = rewriteExports(value, publishDir, 'exports');
+      publishPackageJson.exports = rewriteExports(value, publishDir, 'exports', preservePublishDir);
       continue;
     }
 
     if (key === 'imports') {
-      publishPackageJson.imports = rewriteImports(value, publishDir);
+      publishPackageJson.imports = rewriteImports(value, publishDir, preservePublishDir);
       continue;
     }
 
@@ -337,23 +339,31 @@ function rewriteDependencyMap(
  * Rewrites `dist/foo` → `./foo` (and `./dist/foo` → `./foo`) using the
  * configured `publishDir` instead of a hardcoded `"dist"`.
  */
-function rewriteDistPath(value: string, publishDir: string): string {
+function rewriteDistPath(value: string, publishDir: string, preservePublishDir: boolean): string {
+  if (preservePublishDir) {
+    return value;
+  }
   const escaped = publishDir.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   return value.replace(new RegExp(`^\\.\\/${escaped}/`), './').replace(new RegExp(`^${escaped}/`), './');
 }
 
-function rewriteExports(exportsField: unknown, publishDir: string, label: string): unknown {
+function rewriteExports(
+  exportsField: unknown,
+  publishDir: string,
+  label: string,
+  preservePublishDir: boolean,
+): unknown {
   if (typeof exportsField === 'string') {
-    return rewriteDistPath(exportsField, publishDir);
+    return rewriteDistPath(exportsField, publishDir, preservePublishDir);
   }
 
   if (Array.isArray(exportsField)) {
     return exportsField.map((entry, i) => {
       if (typeof entry === 'string') {
-        return rewriteDistPath(entry, publishDir);
+        return rewriteDistPath(entry, publishDir, preservePublishDir);
       }
       if (isPlainObject(entry) || Array.isArray(entry)) {
-        return rewriteExports(entry, publishDir, `${label}[${i}]`);
+        return rewriteExports(entry, publishDir, `${label}[${i}]`, preservePublishDir);
       }
       throw new Error(`Unsupported ${label}[${i}] type: ${typeof entry}`);
     });
@@ -366,26 +376,29 @@ function rewriteExports(exportsField: unknown, publishDir: string, label: string
   return Object.fromEntries(
     Object.entries(exportsField).map(([key, value]) => {
       if (key === 'require' || key === 'import' || key === 'default' || key === 'types' || key === 'node') {
-        return [key, rewriteExports(value, publishDir, `${label}.${key}`)];
+        return [key, rewriteExports(value, publishDir, `${label}.${key}`, preservePublishDir)];
       }
-      return [key, rewriteExports(value, publishDir, `${label}.${key}`)];
+      return [key, rewriteExports(value, publishDir, `${label}.${key}`, preservePublishDir)];
     }),
   );
 }
 
-function rewriteImports(importsField: unknown, publishDir: string): unknown {
+function rewriteImports(importsField: unknown, publishDir: string, preservePublishDir: boolean): unknown {
   if (!isPlainObject(importsField)) {
     throw new Error(`Unsupported imports type: ${typeof importsField}`);
   }
 
   return Object.fromEntries(
-    Object.entries(importsField).map(([key, value]) => [key, rewriteExports(value, publishDir, `imports.${key}`)]),
+    Object.entries(importsField).map(([key, value]) => [
+      key,
+      rewriteExports(value, publishDir, `imports.${key}`, preservePublishDir),
+    ]),
   );
 }
 
-function rewriteBin(binField: unknown, publishDir: string): unknown {
+function rewriteBin(binField: unknown, publishDir: string, preservePublishDir: boolean): unknown {
   if (typeof binField === 'string') {
-    return rewriteDistPath(binField, publishDir);
+    return rewriteDistPath(binField, publishDir, preservePublishDir);
   }
 
   if (!isPlainObject(binField)) {
@@ -397,7 +410,7 @@ function rewriteBin(binField: unknown, publishDir: string): unknown {
     if (typeof value !== 'string') {
       throw new Error(`Unsupported bin.${key} type: ${typeof value}`);
     }
-    rewritten[key] = rewriteDistPath(value, publishDir);
+    rewritten[key] = rewriteDistPath(value, publishDir, preservePublishDir);
   }
   return rewritten;
 }

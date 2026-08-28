@@ -37,6 +37,7 @@ const PUBLISH_PACKAGES_OPTION_KEYS = new Set([
   'includeRootFiles',
   'noDefaultRootFiles',
   'publishDir',
+  'preservePublishDir',
   'versionPlaceholder',
   'buildCommand',
   'skipBuild',
@@ -81,6 +82,8 @@ export interface PublishPackagesOptions {
   noDefaultRootFiles?: boolean;
   /** Publish directory inside each package. Defaults to `dist`. */
   publishDir?: string;
+  /** Keep the configured publishDir inside the npm package instead of flattening it to the package root. Defaults to `false`. */
+  preservePublishDir?: boolean;
   /** Placeholder rewritten to the target version. Defaults to `0.0.0-PLACEHOLDER`. */
   versionPlaceholder?: string;
   /** Command used to build the publish directory. Defaults to `pnpm build`. */
@@ -115,6 +118,7 @@ export interface PublishPackagesPlan {
   includeRootFiles: ReadonlyArray<string>;
   noDefaultRootFiles: boolean;
   publishDir: string;
+  preservePublishDir: boolean;
   versionPlaceholder: string;
   buildCommand: string;
   skipBuild: boolean;
@@ -209,6 +213,7 @@ export function resolvePublishPackagesPlan(options: PublishPackagesOptions): Pub
     includeRootFiles: Object.freeze([...(options.includeRootFiles ?? [])]),
     noDefaultRootFiles: options.noDefaultRootFiles ?? false,
     publishDir: options.publishDir ?? DEFAULT_PUBLISH_DIR,
+    preservePublishDir: options.preservePublishDir ?? false,
     versionPlaceholder: options.versionPlaceholder ?? DEFAULT_VERSION_PLACEHOLDER,
     buildCommand: options.buildCommand ?? DEFAULT_BUILD_COMMAND,
     skipBuild: options.skipBuild ?? false,
@@ -388,6 +393,7 @@ function validatePublishPackagesOptions(options: PublishPackagesOptions): void {
   validateOptionalBoolean(options.skipBuild, 'skipBuild');
   validateOptionalBoolean(options.provenance, 'provenance');
   validateOptionalBoolean(options.dryRun, 'dryRun');
+  validateOptionalBoolean(options.preservePublishDir, 'preservePublishDir');
   validateOptionalString(options.cwd, 'cwd');
   validateOptionalString(options.version, 'version');
   validateOptionalString(options.npmTag, 'npmTag');
@@ -453,6 +459,7 @@ function toPublishPackageOptions(plan: PublishPackagesPlan, cwd: string): Publis
     includeRootFiles: plan.includeRootFiles,
     noDefaultRootFiles: plan.noDefaultRootFiles,
     publishDir: plan.publishDir,
+    preservePublishDir: plan.preservePublishDir,
     versionPlaceholder: plan.versionPlaceholder,
     buildCommand: plan.buildCommand,
     skipBuild: plan.skipBuild,

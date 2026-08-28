@@ -1,5 +1,19 @@
-import { copyFileSync, existsSync, lstatSync, mkdirSync, realpathSync, writeFileSync } from 'node:fs';
-import { isAbsolute, resolve, relative as pathRelative, basename as pathBasename } from 'node:path';
+import {
+  chmodSync,
+  copyFileSync,
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readlinkSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, isAbsolute, join, resolve, relative as pathRelative, basename as pathBasename } from 'node:path';
 
 import { createPublishPackageJson } from './manifest';
 import {
@@ -33,31 +47,73 @@ export function publishPackage(options: PublishPackageOptions = {}): void {
     }
   }
 
-  ensurePathWithinRoot(packageRoot, plan.resolvedPublishDir, 'publish directory');
-  mkdirSync(plan.resolvedPublishDir, { recursive: true });
-  detectCopyCollisions([...plan.packageFiles, ...plan.rootFiles]);
-  copyFilesFromDirectory(plan.cwd, plan.resolvedPublishDir, plan.packageFiles);
-  copyFilesFromDirectory(plan.rootDir, plan.resolvedPublishDir, plan.rootFiles);
-
-  const publishPackageData = createPublishPackageJson(plan.sourcePackageJson, {
-    version: plan.version,
-    internalPackageNames: plan.internalPackageNames,
-    rootMetadata: toRootMetadata(plan.rootPackageJson, pathRelative(plan.rootDir, plan.cwd)),
-    rewrite: {
-      versionPlaceholder: plan.versionPlaceholder,
-      publishDir: plan.publishDir,
-    },
-  });
-
-  const targetPackageJson = resolve(plan.resolvedPublishDir, PACKAGE_JSON);
-
-  for (const name of plan.packageNames) {
+  if (!plan.preservePublishDir) {
     ensurePathWithinRoot(packageRoot, plan.resolvedPublishDir, 'publish directory');
-    writeJson(targetPackageJson, {
-      ...publishPackageData,
-      name,
+    mkdirSync(plan.resolvedPublishDir, { recursive: true });
+    detectCopyCollisions([...plan.packageFiles, ...plan.rootFiles]);
+    copyFilesFromDirectory(plan.cwd, plan.resolvedPublishDir, plan.packageFiles);
+    copyFilesFromDirectory(plan.rootDir, plan.resolvedPublishDir, plan.rootFiles);
+
+    const publishPackageData = createPublishPackageJson(plan.sourcePackageJson, {
+      version: plan.version,
+      internalPackageNames: plan.internalPackageNames,
+      rootMetadata: toRootMetadata(plan.rootPackageJson, pathRelative(plan.rootDir, plan.cwd)),
+      rewrite: {
+        versionPlaceholder: plan.versionPlaceholder,
+        publishDir: plan.publishDir,
+        preservePublishDir: false,
+      },
     });
-    runNpmPublish(plan, name);
+
+    const targetPackageJson = resolve(plan.resolvedPublishDir, PACKAGE_JSON);
+
+    for (const name of plan.packageNames) {
+      ensurePathWithinRoot(packageRoot, plan.resolvedPublishDir, 'publish directory');
+      writeJson(targetPackageJson, {
+        ...publishPackageData,
+        name,
+      });
+      runNpmPublish(plan, name, plan.resolvedPublishDir);
+    }
+    return;
+  }
+
+  let stagingRoot: string | undefined;
+  try {
+    stagingRoot = mkdtempSync(join(tmpdir(), 'repo-toolkit-publish-'));
+    const stagedPublishDir = resolve(stagingRoot, plan.publishDir);
+    ensurePathWithinRoot(packageRoot, plan.resolvedPublishDir, 'publish directory');
+    mkdirSync(stagedPublishDir, { recursive: true });
+    copyBuildOutputRecursively(plan.resolvedPublishDir, stagedPublishDir, packageRoot);
+    detectCopyCollisions([...plan.packageFiles, ...plan.rootFiles]);
+    copyFilesFromDirectory(plan.cwd, stagingRoot, plan.packageFiles);
+    copyFilesFromDirectory(plan.rootDir, stagingRoot, plan.rootFiles);
+
+    const publishPackageData = createPublishPackageJson(plan.sourcePackageJson, {
+      version: plan.version,
+      internalPackageNames: plan.internalPackageNames,
+      rootMetadata: toRootMetadata(plan.rootPackageJson, pathRelative(plan.rootDir, plan.cwd)),
+      rewrite: {
+        versionPlaceholder: plan.versionPlaceholder,
+        publishDir: plan.publishDir,
+        preservePublishDir: true,
+      },
+    });
+
+    const targetPackageJson = resolve(stagingRoot, PACKAGE_JSON);
+
+    for (const name of plan.packageNames) {
+      ensurePathWithinRoot(packageRoot, plan.resolvedPublishDir, 'publish directory');
+      writeJson(targetPackageJson, {
+        ...publishPackageData,
+        name,
+      });
+      runNpmPublish(plan, name, stagingRoot);
+    }
+  } finally {
+    if (stagingRoot && existsSync(stagingRoot)) {
+      rmSync(stagingRoot, { recursive: true, force: true });
+    }
   }
 }
 
@@ -67,7 +123,7 @@ function runBuild(plan: PublishPackagePlan): void {
   });
 }
 
-function runNpmPublish(plan: PublishPackagePlan, packageName: string): void {
+function runNpmPublish(plan: PublishPackagePlan, packageName: string, cwd: string): void {
   const publishArgs = ['publish', '--access', plan.access];
 
   if (plan.npmTag) {
@@ -78,9 +134,6 @@ function runNpmPublish(plan: PublishPackagePlan, packageName: string): void {
     publishArgs.push('--registry', plan.registry);
   }
 
-  // Forward the OTP through npm's environment rather than `--otp`, so it does
-  // not appear in argv / process listings. `npm_config_otp` is the documented
-  // npm-config channel.
   const env: Record<string, string> | undefined = plan.otp ? { npm_config_otp: plan.otp } : undefined;
 
   if (plan.provenance) {
@@ -91,9 +144,9 @@ function runNpmPublish(plan: PublishPackagePlan, packageName: string): void {
     publishArgs.push('--dry-run');
   }
 
-  console.log(`publishing ${packageName} from ${plan.resolvedPublishDir}`);
+  console.log(`publishing ${packageName} from ${cwd}`);
   wrapRunnerErrors('npm publish', () => {
-    plan.runner.run('npm', publishArgs, { cwd: plan.resolvedPublishDir, env });
+    plan.runner.run('npm', publishArgs, { cwd, env });
   });
 }
 
@@ -174,4 +227,53 @@ function detectCopyCollisions(allFiles: ReadonlyArray<string>): void {
 
 function writeJson(filePath: string, value: unknown): void {
   writeFileSync(filePath, `${JSON.stringify(value, null, 2)}\n`, 'utf8');
+}
+
+function isPathWithinRoot(rootPath: string, targetPath: string): boolean {
+  const relativePath = pathRelative(rootPath, targetPath);
+  return relativePath === '' || (!relativePath.startsWith('..') && !isAbsolute(relativePath));
+}
+
+function copyBuildOutputRecursively(srcDir: string, destDir: string, packageRoot: string): void {
+  const srcReal = realpathSync(srcDir);
+  const entries = readdirSync(srcReal, { withFileTypes: true });
+  for (const entry of entries) {
+    const srcPath = resolve(srcReal, entry.name);
+    const destPath = resolve(destDir, entry.name);
+    const lstat = lstatSync(srcPath);
+    if (lstat.isSymbolicLink()) {
+      const linkTarget = readlinkSync(srcPath);
+      const resolvedTarget = resolve(dirname(srcPath), linkTarget);
+      let targetCheckPath: string;
+      try {
+        targetCheckPath = realpathSync(resolvedTarget);
+      } catch {
+        targetCheckPath = resolvedTarget;
+      }
+      if (!isPathWithinRoot(packageRoot, targetCheckPath) || !isPathWithinRoot(srcReal, targetCheckPath)) {
+        continue;
+      }
+      symlinkSync(linkTarget, destPath);
+      continue;
+    }
+    if (lstat.isDirectory()) {
+      mkdirSync(destPath, { recursive: true });
+      try {
+        chmodSync(destPath, lstat.mode);
+      } catch (_error) {
+        void _error;
+      }
+      copyBuildOutputRecursively(srcPath, destPath, packageRoot);
+      continue;
+    }
+    if (lstat.isFile()) {
+      copyFileSync(srcPath, destPath);
+      try {
+        chmodSync(destPath, lstat.mode);
+      } catch (_error) {
+        void _error;
+      }
+      continue;
+    }
+  }
 }
