@@ -39,6 +39,14 @@ inputs:
     description: Walk the doc tree and log the plan without API calls. The fixture forces this to 'true'.
     required: false
     default: 'true'
+  clean:
+    description: Move all page descendants to trash before recreation. WARNING destructive — all page descendants, including manual/unlabeled pages, are moved to trash; parentPageId is retained.
+    required: false
+    default: 'false'
+  update-parent-page:
+    description: Update parent page summary region. Set to 'false' to skip parent summary updates.
+    required: false
+    default: 'true'
 runs:
   using: node20
   main: action-dist/index.js

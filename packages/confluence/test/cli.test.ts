@@ -27,6 +27,8 @@ const PRESERVED_ENV_KEYS = [
   'CONFLUENCE_DRY_RUN',
   'CONFLUENCE_SKIP_UNCHANGED',
   'CONFLUENCE_RENDER_HTML_BLOCKS',
+  'CONFLUENCE_CLEAN',
+  'CONFLUENCE_UPDATE_PARENT_PAGE',
   'INPUT_FOLDER',
   'INPUT_USERNAME',
   'INPUT_API-TOKEN',
@@ -42,6 +44,8 @@ const PRESERVED_ENV_KEYS = [
   'INPUT_DRY-RUN',
   'INPUT_SKIP-UNCHANGED',
   'INPUT_RENDER-HTML-BLOCKS',
+  'INPUT_CLEAN',
+  'INPUT_UPDATE-PARENT-PAGE',
   'GITHUB_SERVER_URL',
   'GITHUB_REPOSITORY',
 ];
@@ -279,6 +283,44 @@ describe('confluence cli boolean environment forms', () => {
     const result = flagResult(['--no-skip-unchanged']);
     const options = buildOptions(result);
     expect(options.skipUnchanged).toBe(false);
+  });
+
+  it('parses clean and update-parent-page CLI booleans', () => {
+    const cleanResult = flagResult(['--clean']);
+    expect(buildOptions(cleanResult).clean).toBe(true);
+    const updateResult = flagResult(['--update-parent-page']);
+    expect(buildOptions(updateResult).updateParentPage).toBe(true);
+    const noUpdateResult = flagResult(['--no-update-parent-page']);
+    expect(buildOptions(noUpdateResult).updateParentPage).toBe(false);
+  });
+
+  it('rejects invalid clean and update-parent-page env booleans with precise error', () => {
+    process.env.CONFLUENCE_CLEAN = 'maybe';
+    expect(() => optionsFromEnv()).toThrow(/CONFLUENCE_CLEAN.*maybe/);
+    delete process.env.CONFLUENCE_CLEAN;
+    process.env.CONFLUENCE_UPDATE_PARENT_PAGE = 'bad';
+    expect(() => optionsFromEnv()).toThrow(/CONFLUENCE_UPDATE_PARENT_PAGE.*bad/);
+    delete process.env.CONFLUENCE_UPDATE_PARENT_PAGE;
+    process.env.INPUT_CLEAN = 'maybe';
+    expect(() => optionsFromEnv()).toThrow(/INPUT_CLEAN.*maybe/);
+    delete process.env.INPUT_CLEAN;
+    process.env['INPUT_UPDATE-PARENT-PAGE'] = 'maybe';
+    expect(() => optionsFromEnv()).toThrow(/INPUT_UPDATE-PARENT-PAGE.*maybe/);
+    delete process.env['INPUT_UPDATE-PARENT-PAGE'];
+  });
+
+  it('CONFLUENCE_CLEAN and CONFLUENCE_UPDATE_PARENT_PAGE take precedence over INPUT_*', () => {
+    process.env.INPUT_CLEAN = 'true';
+    process.env.CONFLUENCE_CLEAN = 'false';
+    process.env['INPUT_UPDATE-PARENT-PAGE'] = 'false';
+    process.env.CONFLUENCE_UPDATE_PARENT_PAGE = 'true';
+    const fromEnv = optionsFromEnv();
+    expect(fromEnv.clean).toBe(false);
+    expect(fromEnv.updateParentPage).toBe(true);
+    delete process.env.CONFLUENCE_CLEAN;
+    expect(optionsFromEnv().clean).toBe(true);
+    delete process.env.CONFLUENCE_UPDATE_PARENT_PAGE;
+    expect(optionsFromEnv().updateParentPage).toBe(false);
   });
 });
 
@@ -585,6 +627,181 @@ describe('confluence cli page-title-strategy', () => {
       expect(stdout).toContain('Index');
     } finally {
       await rm(tempTree, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('confluence cli clean and update-parent-page', () => {
+  let envSnapshot: Record<string, string | undefined>;
+
+  beforeEach(() => {
+    envSnapshot = snapshotEnv();
+    clearConfluenceEnv();
+  });
+
+  afterEach(() => {
+    restoreEnv(envSnapshot);
+  });
+
+  it('defaults clean false and updateParentPage true via plan when no source supplies them', async () => {
+    const { resolveConfluenceSyncPlan } = await import('../src/index');
+    const merged = await resolveConfluenceOptions({ result: flagResult([]) });
+    const plan = resolveConfluenceSyncPlan({
+      folder: 'docs',
+      username: 'u',
+      apiToken: 't',
+      baseUrl: 'https://x/wiki',
+      spaceKey: 'ENG',
+      parentPageId: '123',
+      ...merged,
+    } as ConfluenceSyncOptions);
+    expect(plan.clean).toBe(false);
+    expect(plan.updateParentPage).toBe(true);
+
+    const plan2 = resolveConfluenceSyncPlan({
+      folder: 'docs',
+      username: 'u',
+      apiToken: 't',
+      baseUrl: 'https://x/wiki',
+      spaceKey: 'ENG',
+      parentPageId: '123',
+    } as ConfluenceSyncOptions);
+    expect(plan2.clean).toBe(false);
+    expect(plan2.updateParentPage).toBe(true);
+  });
+
+  it('resolves precedence CLI > config > CONFLUENCE_* > INPUT_* > default for clean', async () => {
+    process.env.INPUT_CLEAN = 'true';
+    process.env.CONFLUENCE_CLEAN = 'false';
+    const configPath = await writeConfig({ clean: true } as unknown as Partial<ConfluenceSyncOptions>);
+    const result = flagResult(['--clean', '--config', configPath]);
+    const merged = await resolveConfluenceOptions({ result });
+    expect(merged.clean).toBe(true);
+
+    const result2 = flagResult(['--config', configPath]);
+    const merged2 = await resolveConfluenceOptions({ result: result2 });
+    expect(merged2.clean).toBe(true);
+
+    const result3 = flagResult([]);
+    const merged3 = await resolveConfluenceOptions({ result: result3 });
+    expect(merged3.clean).toBe(false);
+
+    delete process.env.CONFLUENCE_CLEAN;
+    const merged4 = await resolveConfluenceOptions({ result: result3 });
+    expect(merged4.clean).toBe(true);
+
+    delete process.env.INPUT_CLEAN;
+    const merged5 = await resolveConfluenceOptions({ result: result3 });
+    expect(merged5.clean).toBeUndefined();
+    const { resolveConfluenceSyncPlan } = await import('../src/index');
+    const plan = resolveConfluenceSyncPlan({
+      folder: 'docs',
+      username: 'u',
+      apiToken: 't',
+      baseUrl: 'https://x/wiki',
+      spaceKey: 'ENG',
+      parentPageId: '123',
+      ...merged5,
+    } as ConfluenceSyncOptions);
+    expect(plan.clean).toBe(false);
+  });
+
+  it('resolves precedence CLI > config > CONFLUENCE_* > INPUT_* > default for updateParentPage', async () => {
+    process.env['INPUT_UPDATE-PARENT-PAGE'] = 'false';
+    process.env.CONFLUENCE_UPDATE_PARENT_PAGE = 'true';
+    const configPath = await writeConfig({ updateParentPage: false } as unknown as Partial<ConfluenceSyncOptions>);
+    const result = flagResult(['--no-update-parent-page', '--config', configPath]);
+    const merged = await resolveConfluenceOptions({ result });
+    expect(merged.updateParentPage).toBe(false);
+
+    const resultPos = flagResult(['--update-parent-page', '--config', configPath]);
+    const mergedPos = await resolveConfluenceOptions({ result: resultPos });
+    expect(mergedPos.updateParentPage).toBe(true);
+
+    const result2 = flagResult(['--config', configPath]);
+    const merged2 = await resolveConfluenceOptions({ result: result2 });
+    expect(merged2.updateParentPage).toBe(false);
+
+    const result3 = flagResult([]);
+    const merged3 = await resolveConfluenceOptions({ result: result3 });
+    expect(merged3.updateParentPage).toBe(true);
+
+    delete process.env.CONFLUENCE_UPDATE_PARENT_PAGE;
+    const merged4 = await resolveConfluenceOptions({ result: result3 });
+    expect(merged4.updateParentPage).toBe(false);
+
+    delete process.env['INPUT_UPDATE-PARENT-PAGE'];
+    const merged5 = await resolveConfluenceOptions({ result: result3 });
+    expect(merged5.updateParentPage).toBeUndefined();
+    const { resolveConfluenceSyncPlan } = await import('../src/index');
+    const plan = resolveConfluenceSyncPlan({
+      folder: 'docs',
+      username: 'u',
+      apiToken: 't',
+      baseUrl: 'https://x/wiki',
+      spaceKey: 'ENG',
+      parentPageId: '123',
+      ...merged5,
+    } as ConfluenceSyncOptions);
+    expect(plan.updateParentPage).toBe(true);
+  });
+
+  it('help output lists --clean with destructive warning and --update-parent-page with defaults', async () => {
+    const { stdout, code } = await runCli(['--help'], {});
+    expect(code).toBe(0);
+    expect(stdout).toContain('--clean');
+    expect(stdout).toContain('CONFLUENCE_CLEAN');
+    expect(stdout).toContain('WARNING');
+    expect(stdout).toContain('parentPageId is retained');
+    expect(stdout).toContain('--update-parent-page');
+    expect(stdout).toContain('--no-update-parent-page');
+    expect(stdout).toContain('CONFLUENCE_UPDATE_PARENT_PAGE');
+  });
+
+  it('dry-run with clean logs intent without remote count and with parent summary', async () => {
+    const tmp = await makeDocTree();
+    try {
+      const { code, stdout } = await runCli(['--dry-run', '--folder', join(tmp, 'docs'), '--clean'], {});
+      expect(code).toBe(0);
+      expect(stdout).toContain('[dry-run] clean requested');
+      expect(stdout).toContain('every page descendant');
+      expect(stdout).not.toContain('trashed page');
+    } finally {
+      await rm(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it('dry-run with --no-update-parent-page omits parent summary', async () => {
+    const tmp = await makeDocTree();
+    try {
+      const { code, stdout } = await runCli(
+        ['--dry-run', '--folder', join(tmp, 'docs'), '--no-update-parent-page'],
+        {},
+      );
+      expect(code).toBe(0);
+      expect(stdout).not.toContain('[dry-run] parent summary:');
+      expect(stdout).not.toContain('[dry-run] parent tree:');
+    } finally {
+      await rm(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it('env clean true triggers dry-run clean intent and env false does not', async () => {
+    const tmp = await makeDocTree();
+    try {
+      const { code: code1, stdout: stdout1 } = await runCli(['--dry-run', '--folder', join(tmp, 'docs')], {
+        CONFLUENCE_CLEAN: 'true',
+      });
+      expect(code1).toBe(0);
+      expect(stdout1).toContain('[dry-run] clean requested');
+
+      const { code: code2, stdout: stdout2 } = await runCli(['--dry-run', '--folder', join(tmp, 'docs')], {
+        CONFLUENCE_CLEAN: 'false',
+      });
+      expect(code2).toBe(0);
+      expect(stdout2).not.toContain('[dry-run] clean requested');
+    } finally {
+      await rm(tmp, { recursive: true, force: true });
     }
   });
 });

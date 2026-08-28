@@ -8,7 +8,12 @@ const TEST_DIR = fileURLToPath(new URL('.', import.meta.url));
 const DIST_INDEX_DTS = resolve(TEST_DIR, '..', 'dist', 'index.d.ts');
 
 import {
+  CONFLUENCE_MANAGED_LABEL,
   PAGE_TITLE_STRATEGIES,
+  planCleanDeletions,
+  planStalePruning,
+  ReconciliationError,
+  ParentSummaryError,
   resolveConfluenceSyncPlan,
   syncConfluenceToDocs,
   validateLocalSync,
@@ -18,8 +23,12 @@ import {
   type ConfluenceSyncOptions,
   type ConfluenceGateway,
   type Page,
+  type PageDescendant,
+  type PageLabel,
+  type RemoteInventoryEntry,
   type SyncChange,
 } from '../src/index';
+import { PARENT_SUMMARY_START_MARKER, PARENT_SUMMARY_END_MARKER } from '../src/parent-summary';
 
 function pageFixture(id: string, title: string, versionNumber = 1, bodyValue = '', parentId = 'PARENT'): Page {
   return {
@@ -43,12 +52,29 @@ function buildFakeClient(opts: {
   spaceId?: string;
   existingPages?: Page[];
   initialAttachmentIds?: Record<string, string>;
+  initialLabels?: Record<string, PageLabel[]>;
+  extraDescendants?: PageDescendant[];
 }): { client: ConfluenceGateway; calls: RecordedCall[] } {
   const spaceId = opts.spaceId ?? 'SPACE';
   const pages = new Map<string, Page>();
   const attachmentsByPage = new Map<string, Map<string, { id: string; filename?: string }>>();
+  const labelsByPage = new Map<string, PageLabel[]>();
+  for (const [pageId, labels] of Object.entries(opts.initialLabels ?? {})) {
+    labelsByPage.set(pageId, [...labels]);
+  }
   const calls: RecordedCall[] = [];
   let pageIdCounter = 100;
+
+  const allPages = (): Map<string, Page> => {
+    const all = new Map<string, Page>();
+    for (const page of opts.existingPages ?? []) {
+      all.set(page.id, page);
+    }
+    for (const [id, page] of pages) {
+      all.set(id, page);
+    }
+    return all;
+  };
 
   const client: ConfluenceGateway = {
     async getSpaceIdByKey(key: string): Promise<string> {
@@ -113,6 +139,58 @@ function buildFakeClient(opts: {
       const next = pageFixture(input.id, input.title, input.version.number, input.body.value, parentId);
       pages.set(input.id, { ...next, body: { storage: { value: input.body.value, representation: 'storage' } } });
       return next;
+    },
+    async getPageDescendants(pageId: string): Promise<PageDescendant[]> {
+      calls.push({ method: 'getPageDescendants', args: [pageId] });
+      const all = allPages();
+      const results: PageDescendant[] = [];
+      for (const page of all.values()) {
+        if (page.id === pageId) {
+          continue;
+        }
+        let depth = 0;
+        let current: Page | undefined = page;
+        const seen = new Set<string>();
+        let matched = false;
+        while (current) {
+          const pid: string | undefined = current.parentId;
+          if (pid === pageId) {
+            depth += 1;
+            matched = true;
+            break;
+          }
+          if (pid === undefined || seen.has(pid)) {
+            break;
+          }
+          seen.add(pid);
+          depth += 1;
+          current = all.get(pid);
+        }
+        if (matched) {
+          results.push({ id: page.id, type: 'page', title: page.title, parentId: page.parentId, depth });
+        }
+      }
+      results.sort((a, b) => (a.depth ?? 0) - (b.depth ?? 0));
+      return [...results, ...(opts.extraDescendants ?? [])];
+    },
+    async getPageLabels(pageId: string): Promise<PageLabel[]> {
+      calls.push({ method: 'getPageLabels', args: [pageId] });
+      return [...(labelsByPage.get(pageId) ?? [])];
+    },
+    async addManagedLabel(pageId: string): Promise<void> {
+      calls.push({ method: 'addManagedLabel', args: [pageId] });
+      const labels = labelsByPage.get(pageId) ?? [];
+      if (!labels.some((l) => l.prefix === 'global' && l.name === CONFLUENCE_MANAGED_LABEL)) {
+        labels.push({ prefix: 'global', name: CONFLUENCE_MANAGED_LABEL });
+      }
+      labelsByPage.set(pageId, labels);
+    },
+    async deletePage(pageId: string): Promise<void> {
+      calls.push({ method: 'deletePage', args: [pageId] });
+      pages.delete(pageId);
+      const remaining = (opts.existingPages ?? []).filter((p) => p.id !== pageId);
+      opts.existingPages = remaining;
+      labelsByPage.delete(pageId);
     },
     async getAttachments(
       pageId: string,
@@ -263,6 +341,7 @@ describe('syncConfluenceToDocs', () => {
       parentPageId: '123',
       dryRun: true,
       client: client,
+      updateParentPage: false,
       log: logSpy,
     });
     expect(calls).toHaveLength(0);
@@ -283,6 +362,7 @@ describe('syncConfluenceToDocs', () => {
       spaceKey: 'ENG',
       parentPageId: '123',
       client: client,
+      updateParentPage: false,
       log: logSpy,
     });
     const methods = calls.map((c) => c.method);
@@ -319,6 +399,7 @@ describe('syncConfluenceToDocs', () => {
       parentPageId: '123',
       repositoryUrl: 'https://github.com/acme/docs',
       client: client,
+      updateParentPage: false,
       log: logSpy,
     });
     const createCall = calls.find((c) => c.method === 'createPage')?.args[0] as
@@ -344,6 +425,7 @@ describe('syncConfluenceToDocs', () => {
       spaceKey: 'ENG',
       parentPageId: '123',
       client: client,
+      updateParentPage: false,
       log: logSpy,
     });
     const uploadCalls = calls.filter((c) => c.method === 'uploadAttachment');
@@ -369,6 +451,7 @@ describe('syncConfluenceToDocs', () => {
       spaceKey: 'ENG',
       parentPageId: '123',
       client: client,
+      updateParentPage: false,
       log: logSpy,
     });
     // CFARC-03: a leaf page with no local uploads is created with its final
@@ -397,6 +480,7 @@ describe('syncConfluenceToDocs', () => {
       spaceKey: 'ENG',
       parentPageId: '123',
       client: client,
+      updateParentPage: false,
       log: logSpy,
     });
     expect(calls.some((c) => c.method === 'updatePage')).toBe(false);
@@ -417,6 +501,7 @@ describe('syncConfluenceToDocs', () => {
       spaceKey: 'ENG',
       parentPageId: '123',
       client: client,
+      updateParentPage: false,
       log: () => {},
     });
     const pageByTitle = calls.filter((c) => c.method === 'getPagesByTitle');
@@ -440,6 +525,7 @@ describe('syncConfluenceToDocs', () => {
       spaceKey: 'ENG',
       parentPageId: '123',
       client: client,
+      updateParentPage: false,
       log: () => {},
     });
 
@@ -464,6 +550,7 @@ describe('syncConfluenceToDocs', () => {
         spaceKey: 'ENG',
         parentPageId: '123',
         client: client,
+        updateParentPage: false,
         log: () => {},
       }),
     ).rejects.toThrowError(/Multiple Confluence pages matched title intro/);
@@ -485,6 +572,7 @@ describe('syncConfluenceToDocs', () => {
         spaceKey: 'ENG',
         parentPageId: '123',
         client: client,
+        updateParentPage: false,
         log: () => {},
       }),
     ).rejects.toThrowError(/conflicting page titles/);
@@ -510,6 +598,7 @@ describe('syncConfluenceToDocs', () => {
           spaceKey: 'ENG',
           parentPageId: '123',
           client: client,
+          updateParentPage: false,
           log: () => {},
         }),
       ).rejects.toThrowError(/escapes the documentation root/);
@@ -531,6 +620,7 @@ describe('syncConfluenceToDocs', () => {
       parentPageId: '123',
       renderHtmlBlocks: true,
       client: client,
+      updateParentPage: false,
       log: () => {},
     });
     // CFARC-03: leaf with no attachments is created in one POST with its
@@ -552,6 +642,7 @@ describe('syncConfluenceToDocs', () => {
       spaceKey: 'ENG',
       parentPageId: '123',
       client: client,
+      updateParentPage: false,
       log: () => {},
     });
     const created = calls.find((c) => c.method === 'createPage')?.args[0] as { body?: { value: string } } | undefined;
@@ -580,6 +671,7 @@ describe('CFNAME-02: page title strategies in sync', () => {
     parentPageId: '123',
     client,
     log: () => {},
+    updateParentPage: false,
   });
 
   const nestedLeaf = 'community-nodes/cdogs-document-generator/credentials.md';
@@ -823,6 +915,7 @@ describe('CFARC-02: content-addressed attachments and no-op second sync', () => 
       parentPageId: '123',
       client: client,
       log: () => {},
+      updateParentPage: false,
     });
 
     const firstRunGetAtt = calls.filter((c) => c.method === 'getAttachments').length;
@@ -844,6 +937,7 @@ describe('CFARC-02: content-addressed attachments and no-op second sync', () => 
       parentPageId: '123',
       client: client,
       log: () => {},
+      updateParentPage: false,
     });
 
     const uploadsAfterSecond = calls.filter((c) => c.method === 'uploadAttachment').length;
@@ -875,6 +969,7 @@ describe('CFARC-02: content-addressed attachments and no-op second sync', () => 
       spaceKey: 'ENG',
       parentPageId: '123',
       client: client,
+      updateParentPage: false,
       log: () => {},
     });
 
@@ -904,6 +999,7 @@ describe('CFARC-02: content-addressed attachments and no-op second sync', () => 
       parentPageId: '123',
       client: client,
       log: () => {},
+      updateParentPage: false,
     });
     const firstPuts = calls.filter((c) => c.method === 'updatePage').length;
     const firstUploads = calls.filter((c) => c.method === 'uploadAttachment').length;
@@ -919,6 +1015,7 @@ describe('CFARC-02: content-addressed attachments and no-op second sync', () => 
       parentPageId: '123',
       client: client,
       log: () => {},
+      updateParentPage: false,
     });
     const secondPuts = calls.filter((c) => c.method === 'updatePage').length;
     const secondUploads = calls.filter((c) => c.method === 'uploadAttachment').length;
@@ -960,6 +1057,7 @@ describe('CFARC-03: validate locally before remote mutation', () => {
           spaceKey: 'ENG',
           parentPageId: '123',
           client: client,
+          updateParentPage: false,
           log: () => {},
         }),
       ).rejects.toBeInstanceOf(LocalSyncValidationAggregateError);
@@ -986,6 +1084,7 @@ describe('CFARC-03: validate locally before remote mutation', () => {
         spaceKey: 'ENG',
         parentPageId: '123',
         client: client,
+        updateParentPage: false,
         log: () => {},
       }),
     ).rejects.toBeInstanceOf(LocalSyncValidationAggregateError);
@@ -1010,6 +1109,7 @@ describe('CFARC-03: validate locally before remote mutation', () => {
         spaceKey: 'ENG',
         parentPageId: '123',
         client: client,
+        updateParentPage: false,
         log: () => {},
       });
     } catch (error) {
@@ -1104,6 +1204,7 @@ describe('CFARC-03: validate locally before remote mutation', () => {
       spaceKey: 'ENG',
       parentPageId: '123',
       client: client,
+      updateParentPage: false,
       log: logSpy,
     } as ConfluenceSyncOptions);
 
@@ -1157,6 +1258,7 @@ describe('CFARC-03: validate locally before remote mutation', () => {
         spaceKey: 'ENG',
         parentPageId: '123',
         client: client,
+        updateParentPage: false,
         log: logSpy,
       } as ConfluenceSyncOptions);
     } catch (error) {
@@ -1202,6 +1304,7 @@ describe('CFARC-03: validate locally before remote mutation', () => {
       spaceKey: 'ENG',
       parentPageId: '123',
       client,
+      updateParentPage: false,
       log: () => {},
     });
 
@@ -1227,6 +1330,7 @@ describe('CFARC-03: validate locally before remote mutation', () => {
         folder: tmp,
         parentPageId: '123',
         client,
+        updateParentPage: false,
         log: () => {},
       } as ConfluenceSyncOptions),
     ).rejects.toThrowError(/spaceKey is required/);
@@ -1254,6 +1358,7 @@ describe('CFARC-03: validate locally before remote mutation', () => {
       spaceKey: 'ENG',
       parentPageId: '123',
       client,
+      updateParentPage: false,
       log: () => {},
       // No username / apiToken / baseUrl supplied — the gateway replaces them.
     } as ConfluenceSyncOptions);
@@ -1304,11 +1409,16 @@ describe('CFARC-04: public declarations expose only intentional package contract
     'resolveSyncPlan',
     'LocalSyncValidationAggregateError',
     'SyncMutationError',
+    'ReconciliationError',
+    'ParentSummaryError',
     'validateLocalSync',
+    'planStalePruning',
+    'planCleanDeletions',
     'INTERACTIVE_FLAG',
     // gateway + client
     'ConfluenceClient',
     'ConfluenceApiError',
+    'CONFLUENCE_MANAGED_LABEL',
     // doc-tree + markdown
     'readDocTree',
     'titleFromSegment',
@@ -1342,6 +1452,9 @@ describe('CFARC-04: public declarations expose only intentional package contract
     'SyncChange',
     'SyncFailure',
     'SyncResult',
+    'ReconciliationFailure',
+    'RemoteInventoryEntry',
+    'DeletionPlan',
     'ConfluenceGateway',
     'AttachmentGateway',
     'ConfluenceClientOptions',
@@ -1351,6 +1464,8 @@ describe('CFARC-04: public declarations expose only intentional package contract
     'PageVersion',
     'CreatePageInput',
     'UpdatePageInput',
+    'PageDescendant',
+    'PageLabel',
     'DocEntry',
     'DocTree',
     'PageTitleStrategy',
@@ -1445,5 +1560,797 @@ describe('CFARC-04: public declarations expose only intentional package contract
       const re = new RegExp(`\\b${name}\\b`);
       expect(re.test(dts)).toBe(false);
     }
+  });
+});
+
+describe('CFPRUNE-02: deletion planners', () => {
+  const labeled = (id: string, parentId: string): RemoteInventoryEntry => ({
+    id,
+    type: 'page',
+    parentId,
+    labeled: true,
+  });
+
+  it('plans deepest-first deletion of stale labeled pages and protects expected ids', () => {
+    const result = planStalePruning({
+      parentPageId: 'ROOT',
+      expectedIds: new Set(['keep']),
+      inventory: [
+        labeled('folder', 'ROOT'),
+        labeled('leaf', 'folder'),
+        labeled('keep', 'ROOT'),
+        { id: 'manual', type: 'page', parentId: 'ROOT', labeled: false },
+      ],
+    });
+    expect(result.deletions).toEqual(['leaf', 'folder']);
+    expect(result.blocked).toEqual([]);
+  });
+
+  it('blocks a stale labeled ancestor that contains an unlabeled descendant', () => {
+    const result = planStalePruning({
+      parentPageId: 'ROOT',
+      expectedIds: new Set(),
+      inventory: [
+        labeled('folder', 'ROOT'),
+        { id: 'manual', type: 'page', parentId: 'folder', labeled: false },
+        labeled('sibling', 'ROOT'),
+      ],
+    });
+    expect(result.deletions).toEqual(['sibling']);
+    expect(result.blocked).toEqual(['folder']);
+  });
+
+  it('blocks a stale labeled ancestor that contains non-page content', () => {
+    const result = planStalePruning({
+      parentPageId: 'ROOT',
+      expectedIds: new Set(),
+      inventory: [labeled('folder', 'ROOT'), { id: 'wb', type: 'whiteboard', parentId: 'folder', labeled: false }],
+    });
+    expect(result.deletions).toEqual([]);
+    expect(result.blocked).toEqual(['folder']);
+  });
+
+  it('blocks a stale labeled ancestor that contains an expected descendant', () => {
+    const result = planStalePruning({
+      parentPageId: 'ROOT',
+      expectedIds: new Set(['mapped']),
+      inventory: [labeled('folder', 'ROOT'), labeled('mapped', 'folder')],
+    });
+    expect(result.deletions).toEqual([]);
+    expect(result.blocked).toEqual(['folder']);
+  });
+
+  it('does not treat the target parent as a deletion candidate even if listed', () => {
+    const result = planStalePruning({
+      parentPageId: 'ROOT',
+      expectedIds: new Set(),
+      inventory: [labeled('ROOT', 'OTHER'), labeled('stale', 'ROOT')],
+    });
+    expect(result.deletions).toEqual(['stale']);
+  });
+
+  it('resolves depths from parent chains when depth metadata is absent', () => {
+    const result = planStalePruning({
+      parentPageId: 'ROOT',
+      expectedIds: new Set(),
+      inventory: [
+        { id: 'a', type: 'page', parentId: 'ROOT', labeled: true },
+        { id: 'b', type: 'page', parentId: 'a', labeled: true },
+        { id: 'c', type: 'page', parentId: 'b', labeled: true },
+      ],
+    });
+    expect(result.deletions).toEqual(['c', 'b', 'a']);
+  });
+
+  it('fails closed on an incomplete inventory (missing ancestor, no depth metadata)', () => {
+    expect(() =>
+      planStalePruning({
+        parentPageId: 'ROOT',
+        expectedIds: new Set(),
+        inventory: [labeled('leaf', 'ghost')],
+      }),
+    ).toThrowError(/Incomplete descendant inventory/);
+  });
+
+  it('fails closed on duplicate inventory ids and parent cycles', () => {
+    expect(() =>
+      planStalePruning({
+        parentPageId: 'ROOT',
+        expectedIds: new Set(),
+        inventory: [labeled('a', 'ROOT'), labeled('a', 'ROOT')],
+      }),
+    ).toThrowError(/duplicate id/);
+    expect(() =>
+      planStalePruning({
+        parentPageId: 'ROOT',
+        expectedIds: new Set(),
+        inventory: [
+          { id: 'a', type: 'page', parentId: 'b', labeled: true },
+          { id: 'b', type: 'page', parentId: 'a', labeled: true },
+        ],
+      }),
+    ).toThrowError(/Incomplete descendant inventory/);
+  });
+
+  it('plans clean deletion of every page descendant deepest-first', () => {
+    const result = planCleanDeletions({
+      parentPageId: 'ROOT',
+      inventory: [
+        { id: 'folder', type: 'page', parentId: 'ROOT', depth: 1, labeled: false },
+        { id: 'leaf', type: 'page', parentId: 'folder', depth: 2, labeled: true },
+      ],
+    });
+    expect(result.deletions).toEqual(['leaf', 'folder']);
+    expect(result.blocked).toEqual([]);
+  });
+
+  it('fails clean before any deletion when non-page descendants exist', () => {
+    expect(() =>
+      planCleanDeletions({
+        parentPageId: 'ROOT',
+        inventory: [{ id: 'db', type: 'database', parentId: 'ROOT', depth: 1, labeled: false }],
+      }),
+    ).toThrowError(/clean refused/);
+  });
+
+  it('never includes the target parent in clean deletions', () => {
+    const result = planCleanDeletions({
+      parentPageId: 'ROOT',
+      inventory: [{ id: 'ROOT', type: 'page', depth: 0, labeled: true }],
+    });
+    expect(result.deletions).toEqual([]);
+  });
+});
+
+describe('CFPRUNE-02: ownership labels, clean, and pruning', () => {
+  let tmp: string;
+
+  beforeEach(async () => {
+    tmp = await mkdtemp(join(tmpdir(), 'rt-sync-cfprune02-'));
+  });
+  afterEach(async () => {
+    await rm(tmp, { recursive: true, force: true });
+  });
+
+  const baseOptions = (client: ConfluenceGateway, extra?: Partial<ConfluenceSyncOptions>) => ({
+    folder: tmp,
+    username: 'u',
+    apiToken: 't',
+    baseUrl: 'https://x/wiki',
+    spaceKey: 'ENG',
+    parentPageId: '123',
+    client,
+    log: () => {},
+    updateParentPage: false,
+    ...extra,
+  });
+
+  const managedLabel = (): PageLabel => ({ prefix: 'global', name: CONFLUENCE_MANAGED_LABEL });
+
+  const labeledIds = (calls: RecordedCall[]): string[] =>
+    calls.filter((c) => c.method === 'addManagedLabel').map((c) => c.args[0] as string);
+  const deletedIds = (calls: RecordedCall[]): string[] =>
+    calls.filter((c) => c.method === 'deletePage').map((c) => c.args[0] as string);
+
+  it('resolves clean to false by default', () => {
+    const plan = resolveConfluenceSyncPlan({
+      folder: 'docs',
+      username: 'u',
+      apiToken: 't',
+      baseUrl: 'https://x/wiki',
+      spaceKey: 'ENG',
+      parentPageId: '1234',
+    });
+    expect(plan.clean).toBe(false);
+    const explicit = resolveConfluenceSyncPlan({
+      folder: 'docs',
+      username: 'u',
+      apiToken: 't',
+      baseUrl: 'https://x/wiki',
+      spaceKey: 'ENG',
+      parentPageId: '1234',
+      clean: true,
+    });
+    expect(explicit.clean).toBe(true);
+  });
+
+  it('labels every mapped folder and leaf page, and never labels the target parent', async () => {
+    await mkdir(join(tmp, 'guide'));
+    await writeFile(join(tmp, 'guide', 'intro.md'), '# Intro');
+    const { client, calls } = buildFakeClient({ spaceId: 'SPACE' });
+    const result = await syncConfluenceToDocs(baseOptions(client));
+    const created = calls
+      .filter((c) => c.method === 'createPage')
+      .map((c) => (c.args[0] as { title: string; parentId: string }).title);
+    expect(created).toEqual(['guide', 'intro']);
+    const createdIds = calls
+      .filter((c) => c.method === 'updatePage' || c.method === 'createPage')
+      .map((c) => (c.args[0] as { id?: string }).id)
+      .filter((id): id is string => typeof id === 'string');
+    void createdIds;
+    expect(labeledIds(calls)).toHaveLength(2);
+    expect(labeledIds(calls)).not.toContain('123');
+    expect(result?.labelsAdded).toEqual(labeledIds(calls));
+    expect(result?.pruneDeletions).toEqual([]);
+    expect(result?.cleanDeletions).toEqual([]);
+    expect(result?.blocked).toEqual([]);
+  });
+
+  it('label check precedes add: a second identical sync performs no label POST or deletion', async () => {
+    await writeFile(join(tmp, 'intro.md'), '# Intro');
+    const { client, calls } = buildFakeClient({ spaceId: 'SPACE' });
+    await syncConfluenceToDocs(baseOptions(client, { updateParentPage: false }));
+    expect(labeledIds(calls)).toHaveLength(1);
+    await syncConfluenceToDocs(baseOptions(client, { updateParentPage: false }));
+    expect(labeledIds(calls)).toHaveLength(1);
+    expect(calls.some((c) => c.method === 'deletePage')).toBe(false);
+    expect(calls.some((c) => c.method === 'updatePage')).toBe(false);
+  });
+
+  it('adopts an existing unlabeled page mapped by title by adding the marker', async () => {
+    await writeFile(join(tmp, 'intro.md'), '# Intro');
+    const existing = pageFixture('P1', 'intro', 3, '<h1>Intro</h1>', '123');
+    const { client, calls } = buildFakeClient({ spaceId: 'SPACE', existingPages: [existing] });
+    await syncConfluenceToDocs(baseOptions(client));
+    expect(labeledIds(calls)).toEqual(['P1']);
+  });
+
+  it('prunes a labeled stale page after a local file is removed', async () => {
+    await writeFile(join(tmp, 'keep.md'), '# Keep');
+    const stale = pageFixture('P-stale', 'gone', 1, '', '123');
+    const { client, calls } = buildFakeClient({
+      spaceId: 'SPACE',
+      existingPages: [stale],
+      initialLabels: { 'P-stale': [managedLabel()] },
+    });
+    const result = await syncConfluenceToDocs(baseOptions(client));
+    expect(deletedIds(calls)).toEqual(['P-stale']);
+    expect(result?.pruneDeletions).toEqual(['P-stale']);
+  });
+
+  it('deletes a removed directory hierarchy deepest-first', async () => {
+    await writeFile(join(tmp, 'top.md'), '# Top');
+    const { client, calls } = buildFakeClient({
+      spaceId: 'SPACE',
+      existingPages: [
+        pageFixture('P-dir', 'olddir', 1, '', '123'),
+        pageFixture('P-sub', 'sub', 1, '', 'P-dir'),
+        pageFixture('P-leaf', 'oldleaf', 1, '', 'P-sub'),
+      ],
+      initialLabels: {
+        'P-dir': [managedLabel()],
+        'P-sub': [managedLabel()],
+        'P-leaf': [managedLabel()],
+      },
+    });
+    await syncConfluenceToDocs(baseOptions(client));
+    expect(deletedIds(calls)).toEqual(['P-leaf', 'P-sub', 'P-dir']);
+  });
+
+  it('never deletes an unlabeled page during default pruning', async () => {
+    await writeFile(join(tmp, 'keep.md'), '# Keep');
+    const { client, calls } = buildFakeClient({
+      spaceId: 'SPACE',
+      existingPages: [pageFixture('P-manual', 'manual', 1, '', '123')],
+    });
+    const result = await syncConfluenceToDocs(baseOptions(client));
+    expect(deletedIds(calls)).toEqual([]);
+    expect(result?.pruneDeletions).toEqual([]);
+  });
+
+  it('retains a stale labeled ancestor whose descendant is unlabeled and reports it blocked', async () => {
+    await writeFile(join(tmp, 'top.md'), '# Top');
+    const { client, calls } = buildFakeClient({
+      spaceId: 'SPACE',
+      existingPages: [
+        pageFixture('P-dir', 'olddir', 1, '', '123'),
+        pageFixture('P-manual', 'manual-child', 1, '', 'P-dir'),
+        pageFixture('P-stale', 'stale', 1, '', '123'),
+      ],
+      initialLabels: { 'P-dir': [managedLabel()], 'P-stale': [managedLabel()] },
+    });
+    const result = await syncConfluenceToDocs(baseOptions(client));
+    expect(deletedIds(calls)).toEqual(['P-stale']);
+    expect(result?.blocked).toEqual(['P-dir']);
+  });
+
+  it('title-strategy migration prunes a labeled old page but preserves an unlabeled one', async () => {
+    await writeFile(join(tmp, 'creds.md'), '# Creds');
+    const { client, calls } = buildFakeClient({
+      spaceId: 'SPACE',
+      existingPages: [
+        pageFixture('P-old-labeled', 'creds', 1, '', '123'),
+        pageFixture('P-old-unlabeled', 'creds-old', 1, '', '123'),
+      ],
+      initialLabels: { 'P-old-labeled': [managedLabel()] },
+    });
+    await syncConfluenceToDocs(baseOptions(client, { pageTitleStrategy: 'filename' }));
+    const createdTitles = calls
+      .filter((c) => c.method === 'createPage')
+      .map((c) => (c.args[0] as { title: string }).title);
+    expect(createdTitles).toEqual(['creds.md']);
+    expect(deletedIds(calls)).toEqual(['P-old-labeled']);
+  });
+
+  it('an empty local tree prunes all safely deletable labeled descendants and preserves unlabeled ones', async () => {
+    const logSpy = vi.fn();
+    const { client, calls } = buildFakeClient({
+      spaceId: 'SPACE',
+      existingPages: [pageFixture('P-stale', 'stale', 1, '', '123'), pageFixture('P-manual', 'manual', 1, '', '123')],
+      initialLabels: { 'P-stale': [managedLabel()] },
+    });
+    const result = await syncConfluenceToDocs(baseOptions(client, { log: logSpy }));
+    expect(deletedIds(calls)).toEqual(['P-stale']);
+    expect(result?.changes).toEqual([]);
+    expect(logSpy.mock.calls.some((c) => /No markdown files found/.test(c[0]))).toBe(true);
+  });
+
+  it('clean: true trashes labeled and unlabeled page descendants before creation and never the target', async () => {
+    await writeFile(join(tmp, 'new.md'), '# New');
+    const { client, calls } = buildFakeClient({
+      spaceId: 'SPACE',
+      existingPages: [
+        pageFixture('P-labeled', 'labeled', 1, '', '123'),
+        pageFixture('P-manual', 'manual', 1, '', '123'),
+        pageFixture('P-sub', 'sub', 1, '', 'P-labeled'),
+      ],
+      initialLabels: { 'P-labeled': [managedLabel()], 'P-sub': [managedLabel()] },
+    });
+    const result = await syncConfluenceToDocs(baseOptions(client, { clean: true }));
+    expect(deletedIds(calls)).toEqual(['P-sub', 'P-labeled', 'P-manual']);
+    expect(deletedIds(calls)).not.toContain('123');
+    expect(result?.cleanDeletions).toEqual(['P-sub', 'P-labeled', 'P-manual']);
+    expect(result?.pruneDeletions).toEqual([]);
+    const firstCreateIndex = calls.findIndex((c) => c.method === 'createPage');
+    const lastDeleteIndex = calls.map((c) => c.method).lastIndexOf('deletePage');
+    expect(firstCreateIndex).toBeGreaterThan(-1);
+    expect(lastDeleteIndex).toBeLessThan(firstCreateIndex);
+    const createdIds = calls.filter((c) => c.method === 'getPageLabels').map((c) => c.args[0] as string);
+    expect(createdIds).not.toContain('123');
+    expect(labeledIds(calls)).toHaveLength(1);
+  });
+
+  it('clean: true with an empty local tree leaves no deletable page descendants and creates nothing', async () => {
+    const { client, calls } = buildFakeClient({
+      spaceId: 'SPACE',
+      existingPages: [pageFixture('P-a', 'a', 1, '', '123'), pageFixture('P-b', 'b', 1, '', 'P-a')],
+    });
+    const result = await syncConfluenceToDocs(baseOptions(client, { clean: true }));
+    expect(deletedIds(calls)).toEqual(['P-b', 'P-a']);
+    expect(calls.some((c) => c.method === 'createPage')).toBe(false);
+    expect(result?.changes).toEqual([]);
+  });
+
+  it('clean: true fails closed before any deletion when a non-page descendant exists', async () => {
+    await writeFile(join(tmp, 'new.md'), '# New');
+    const { client, calls } = buildFakeClient({
+      spaceId: 'SPACE',
+      existingPages: [pageFixture('P-x', 'x', 1, '', '123')],
+      extraDescendants: [{ id: 'W1', type: 'whiteboard', parentId: 'P-x' }],
+    });
+    await expect(syncConfluenceToDocs(baseOptions(client, { clean: true }))).rejects.toThrowError(/clean refused/);
+    expect(calls.some((c) => c.method === 'deletePage')).toBe(false);
+    expect(calls.some((c) => c.method === 'createPage')).toBe(false);
+  });
+
+  it('any local validation failure causes zero gateway calls even with clean: true', async () => {
+    await writeFile(join(tmp, 'page.md'), '![logo](./missing.png)');
+    const { client, calls } = buildFakeClient({ spaceId: 'SPACE' });
+    await expect(syncConfluenceToDocs(baseOptions(client, { clean: true }))).rejects.toBeInstanceOf(
+      LocalSyncValidationAggregateError,
+    );
+    expect(calls).toHaveLength(0);
+  });
+
+  it('a label failure aborts with SyncMutationError and prevents any pruning', async () => {
+    await writeFile(join(tmp, 'a.md'), '# A');
+    const { client, calls } = buildFakeClient({
+      spaceId: 'SPACE',
+      existingPages: [pageFixture('P-stale', 'stale', 1, '', '123')],
+      initialLabels: { 'P-stale': [managedLabel()] },
+    });
+    client.addManagedLabel = async (): Promise<void> => {
+      throw new Error('label endpoint down');
+    };
+    await expect(syncConfluenceToDocs(baseOptions(client))).rejects.toBeInstanceOf(SyncMutationError);
+    expect(calls.some((c) => c.method === 'deletePage')).toBe(false);
+    expect(calls.some((c) => c.method === 'getPageDescendants')).toBe(false);
+  });
+
+  it('a page-update failure prevents pruning', async () => {
+    await writeFile(join(tmp, 'a.md'), '# A');
+    const existing = pageFixture('P1', 'a', 1, 'STALE', '123');
+    const { client, calls } = buildFakeClient({
+      spaceId: 'SPACE',
+      existingPages: [existing, pageFixture('P-stale', 'stale', 1, '', '123')],
+      initialLabels: { 'P-stale': [managedLabel()] },
+    });
+    client.updatePage = async (): Promise<Page> => {
+      throw new Error('boom');
+    };
+    await expect(syncConfluenceToDocs(baseOptions(client))).rejects.toBeInstanceOf(SyncMutationError);
+    expect(deletedIds(calls)).toEqual([]);
+  });
+
+  it('a partial prune reports completed, failed, and unprocessed deletions', async () => {
+    await writeFile(join(tmp, 'top.md'), '# Top');
+    const { client, calls } = buildFakeClient({
+      spaceId: 'SPACE',
+      existingPages: [
+        pageFixture('P-1', 's1', 1, '', '123'),
+        pageFixture('P-2', 's2', 1, '', '123'),
+        pageFixture('P-3', 's3', 1, '', '123'),
+      ],
+      initialLabels: { 'P-1': [managedLabel()], 'P-2': [managedLabel()], 'P-3': [managedLabel()] },
+    });
+    const originalDelete = client.deletePage.bind(client);
+    let deleteCount = 0;
+    client.deletePage = async (pageId: string): Promise<void> => {
+      deleteCount += 1;
+      if (deleteCount === 2) {
+        throw new Error('trash failed');
+      }
+      return originalDelete(pageId);
+    };
+    let thrown: unknown;
+    try {
+      await syncConfluenceToDocs(baseOptions(client));
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toBeInstanceOf(ReconciliationError);
+    const err = thrown as ReconciliationError;
+    expect(err.phase).toBe('prune');
+    expect(err.completed).toEqual(['P-1']);
+    expect(err.failure.pageId).toBe('P-2');
+    expect(err.failure.error.message).toMatch(/trash failed/);
+    expect(err.unprocessed).toEqual(['P-3']);
+    expect(deletedIds(calls)).toEqual(['P-1']);
+  });
+
+  it('a partial clean aborts before any creation with completed/failed/unprocessed evidence', async () => {
+    await writeFile(join(tmp, 'new.md'), '# New');
+    const { client, calls } = buildFakeClient({
+      spaceId: 'SPACE',
+      existingPages: [pageFixture('P-1', 's1', 1, '', '123'), pageFixture('P-2', 's2', 1, '', '123')],
+    });
+    const originalDelete = client.deletePage.bind(client);
+    let deleteCount = 0;
+    client.deletePage = async (pageId: string): Promise<void> => {
+      deleteCount += 1;
+      if (deleteCount === 2) {
+        throw new Error('trash failed');
+      }
+      return originalDelete(pageId);
+    };
+    let thrown: unknown;
+    try {
+      await syncConfluenceToDocs(baseOptions(client, { clean: true }));
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toBeInstanceOf(ReconciliationError);
+    const err = thrown as ReconciliationError;
+    expect(err.phase).toBe('clean');
+    expect(err.completed).toEqual(['P-1']);
+    expect(err.failure.pageId).toBe('P-2');
+    expect(err.unprocessed).toEqual([]);
+    expect(calls.some((c) => c.method === 'createPage')).toBe(false);
+  });
+
+  it('dry-run with clean makes zero gateway calls and logs clean and prune intent', async () => {
+    await writeFile(join(tmp, 'a.md'), '# A');
+    const logSpy = vi.fn();
+    const { client, calls } = buildFakeClient({ spaceId: 'SPACE' });
+    await syncConfluenceToDocs({
+      folder: tmp,
+      dryRun: true,
+      clean: true,
+      client,
+      updateParentPage: false,
+      log: logSpy,
+    });
+    expect(calls).toHaveLength(0);
+    const lines = logSpy.mock.calls.map((c) => String(c[0]));
+    expect(lines.some((l) => /clean requested/.test(l))).toBe(true);
+    expect(lines.some((l) => /prune stale labeled descendants/.test(l))).toBe(true);
+  });
+});
+
+describe('CFPARENT-01: parent documentation dashboard', () => {
+  let tmp: string;
+
+  beforeEach(async () => {
+    tmp = await mkdtemp(join(tmpdir(), 'rt-sync-parent-'));
+  });
+  afterEach(async () => {
+    await rm(tmp, { recursive: true, force: true });
+  });
+
+  const baseOptions = (client: ConfluenceGateway, extra?: Partial<ConfluenceSyncOptions>) => ({
+    folder: tmp,
+    username: 'u',
+    apiToken: 't',
+    baseUrl: 'https://x/wiki',
+    spaceKey: 'ENG',
+    parentPageId: '123',
+    client,
+    log: () => {},
+    ...extra,
+  });
+
+  it('resolves updateParentPage to true by default', () => {
+    const plan = resolveConfluenceSyncPlan({
+      folder: 'docs',
+      username: 'u',
+      apiToken: 't',
+      baseUrl: 'https://x/wiki',
+      spaceKey: 'ENG',
+      parentPageId: '1234',
+    });
+    expect(plan.updateParentPage).toBe(true);
+    const disabled = resolveConfluenceSyncPlan({
+      folder: 'docs',
+      username: 'u',
+      apiToken: 't',
+      baseUrl: 'https://x/wiki',
+      spaceKey: 'ENG',
+      parentPageId: '1234',
+      updateParentPage: false,
+    });
+    expect(disabled.updateParentPage).toBe(false);
+  });
+
+  it('disabled option performs zero parent GET/PUT and leaves existing region untouched', async () => {
+    await writeFile(join(tmp, 'a.md'), '# A');
+    const parentBody = `<p>Manual</p>\n${PARENT_SUMMARY_START_MARKER}\n<p>old</p>\n${PARENT_SUMMARY_END_MARKER}`;
+    const parentPage = pageFixture('123', 'Parent', 5, parentBody, '999');
+    const { client, calls } = buildFakeClient({ spaceId: 'SPACE', existingPages: [parentPage] });
+    await syncConfluenceToDocs(baseOptions(client, { updateParentPage: false }));
+    expect(calls.some((c) => c.method === 'getPage' && (c.args[0] as string) === '123')).toBe(false);
+    expect(calls.some((c) => c.method === 'updatePage' && (c.args[0] as { id: string }).id === '123')).toBe(false);
+    const after = await client.getPage('123');
+    expect(after.body?.storage?.value).toBe(parentBody);
+  });
+
+  it('first append preserves manual content byte-for-byte outside region', async () => {
+    await writeFile(join(tmp, 'a.md'), '# A');
+    const manual = '<p>Manual content</p>';
+    const parentPage = pageFixture('123', 'Parent', 2, manual, '999');
+    const { client, calls } = buildFakeClient({ spaceId: 'SPACE', existingPages: [parentPage] });
+    const result = await syncConfluenceToDocs(baseOptions(client));
+    expect(result?.parentStatus).toBe('updated');
+    const updated = await client.getPage('123');
+    const body = updated.body?.storage?.value ?? '';
+    expect(body.startsWith(manual)).toBe(true);
+    expect(body).toContain(PARENT_SUMMARY_START_MARKER);
+    expect(body).toContain(PARENT_SUMMARY_END_MARKER);
+    expect(body).toContain('Synced documentation');
+    const updateCall = calls.find((c) => c.method === 'updatePage' && (c.args[0] as { id: string }).id === '123')
+      ?.args[0] as { title: string; version: { number: number } };
+    expect(updateCall.title).toBe('Parent');
+    expect(updateCall.version.number).toBe(3);
+  });
+
+  it('in-place replacement preserves outside bytes', async () => {
+    await writeFile(join(tmp, 'a.md'), '# A');
+    const firstManual = '<p>Top</p>';
+    const trailing = '<p>Bottom</p>';
+    const parentPage = pageFixture('123', 'Parent', 1, firstManual, '999');
+    const { client } = buildFakeClient({ spaceId: 'SPACE', existingPages: [parentPage] });
+    await syncConfluenceToDocs(baseOptions(client));
+    const afterFirst = (await client.getPage('123')).body?.storage?.value ?? '';
+    expect(afterFirst).toContain(trailing === '' ? '' : '');
+    await writeFile(join(tmp, 'b.md'), '# B');
+    const logSpy = vi.fn();
+    await syncConfluenceToDocs({ ...baseOptions(client), log: logSpy });
+    const afterSecond = (await client.getPage('123')).body?.storage?.value ?? '';
+    expect(afterSecond.startsWith(firstManual)).toBe(true);
+    expect(afterSecond).toContain('Markdown pages: 2');
+    expect(afterSecond).not.toContain('Markdown pages: 1');
+  });
+
+  it('empty tree renders zero statistics and No managed child pages', async () => {
+    const parentPage = pageFixture('123', 'Parent', 1, '<p>Manual</p>', '999');
+    const { client } = buildFakeClient({ spaceId: 'SPACE', existingPages: [parentPage] });
+    const result = await syncConfluenceToDocs(baseOptions(client));
+    expect(result?.parentStatus).toBe('updated');
+    const body = (await client.getPage('123')).body?.storage?.value ?? '';
+    expect(body).toContain('Markdown pages: 0');
+    expect(body).toContain('Directory pages: 0');
+    expect(body).toContain('Total managed pages: 0');
+    expect(body).toContain('Maximum depth: 0');
+    expect(body).toContain('Attachment references: 0');
+    expect(body).toContain('Mermaid blocks: 0');
+    expect(body).toContain('No managed child pages');
+  });
+
+  it('second identical deployment performs no parent PUT (parent-unchanged)', async () => {
+    await writeFile(join(tmp, 'a.md'), '# A');
+    const parentPage = pageFixture('123', 'Parent', 1, '', '999');
+    const { client, calls } = buildFakeClient({ spaceId: 'SPACE', existingPages: [parentPage] });
+    await syncConfluenceToDocs(baseOptions(client));
+    const firstPuts = calls.filter(
+      (c) => c.method === 'updatePage' && (c.args[0] as { id: string }).id === '123',
+    ).length;
+    expect(firstPuts).toBe(1);
+    const logSpy = vi.fn();
+    await syncConfluenceToDocs({ ...baseOptions(client), log: logSpy });
+    const secondPuts = calls.filter(
+      (c) => c.method === 'updatePage' && (c.args[0] as { id: string }).id === '123',
+    ).length;
+    expect(secondPuts).toBe(1);
+    expect(logSpy.mock.calls.some((c) => /parent-unchanged/.test(c[0]))).toBe(true);
+  });
+
+  it('malformed markers fail closed without changing parent body', async () => {
+    await writeFile(join(tmp, 'a.md'), '# A');
+    const malformed = `<p>Manual</p>\n${PARENT_SUMMARY_START_MARKER}\n<p>old</p>\n${PARENT_SUMMARY_START_MARKER}\n${PARENT_SUMMARY_END_MARKER}`;
+    const parentPage = pageFixture('123', 'Parent', 1, malformed, '999');
+    const { client, calls } = buildFakeClient({ spaceId: 'SPACE', existingPages: [parentPage] });
+    let thrown: unknown;
+    try {
+      await syncConfluenceToDocs(baseOptions(client));
+    } catch (e) {
+      thrown = e;
+    }
+    expect(thrown).toBeInstanceOf(ParentSummaryError);
+    expect(calls.some((c) => c.method === 'updatePage' && (c.args[0] as { id: string }).id === '123')).toBe(false);
+    const after = (await client.getPage('123')).body?.storage?.value ?? '';
+    expect(after).toBe(malformed);
+  });
+
+  it('duplicate markers fail closed without PUT', async () => {
+    await writeFile(join(tmp, 'a.md'), '# A');
+    const dup = `${PARENT_SUMMARY_START_MARKER}\n<p>a</p>\n${PARENT_SUMMARY_END_MARKER}\n${PARENT_SUMMARY_START_MARKER}\n<p>b</p>\n${PARENT_SUMMARY_END_MARKER}`;
+    const parentPage = pageFixture('123', 'Parent', 1, dup, '999');
+    const { client } = buildFakeClient({ spaceId: 'SPACE', existingPages: [parentPage] });
+    await expect(syncConfluenceToDocs(baseOptions(client))).rejects.toBeInstanceOf(ParentSummaryError);
+  });
+
+  it('parent PUT failure reports child reconciliation already completed', async () => {
+    await writeFile(join(tmp, 'a.md'), '# A');
+    const parentPage = pageFixture('123', 'Parent', 1, '', '999');
+    const { client } = buildFakeClient({ spaceId: 'SPACE', existingPages: [parentPage] });
+    const originalUpdate = client.updatePage.bind(client);
+    client.updatePage = async (input: {
+      id: string;
+      title: string;
+      body: { value: string };
+      version: { number: number };
+    }): Promise<Page> => {
+      if (input.id === '123') {
+        throw new Error('parent 409 conflict');
+      }
+      return originalUpdate(input);
+    };
+    let thrown: unknown;
+    try {
+      await syncConfluenceToDocs(baseOptions(client));
+    } catch (e) {
+      thrown = e;
+    }
+    expect(thrown).toBeInstanceOf(ParentSummaryError);
+    const err = thrown as ParentSummaryError;
+    expect(err.phase).toBe('parent-summary');
+    expect(err.changes.length).toBe(1);
+    expect(err.failure.pageId).toBe('123');
+    expect(err.failure.error.message).toMatch(/409/);
+    expect(err.changes[0].entry.segments.join('/')).toBe('a.md');
+  });
+
+  it('child sync failure produces no parent GET/PUT', async () => {
+    await writeFile(join(tmp, 'a.md'), '# A');
+    const parentPage = pageFixture('123', 'Parent', 1, '', '999');
+    const { client, calls } = buildFakeClient({ spaceId: 'SPACE', existingPages: [parentPage] });
+    client.createPage = async () => {
+      throw new Error('create failed');
+    };
+    await expect(syncConfluenceToDocs(baseOptions(client))).rejects.toBeInstanceOf(SyncMutationError);
+    expect(calls.some((c) => c.method === 'getPage' && (c.args[0] as string) === '123')).toBe(false);
+    expect(calls.some((c) => c.method === 'updatePage' && (c.args[0] as { id: string }).id === '123')).toBe(false);
+  });
+
+  it('reconciliation failure produces no parent GET/PUT', async () => {
+    await writeFile(join(tmp, 'a.md'), '# A');
+    const parentPage = pageFixture('123', 'Parent', 1, '', '999');
+    const stale = pageFixture('P-stale', 'stale', 1, '', '123');
+    const { client, calls } = buildFakeClient({
+      spaceId: 'SPACE',
+      existingPages: [parentPage, stale],
+      initialLabels: { 'P-stale': [{ prefix: 'global', name: CONFLUENCE_MANAGED_LABEL }] },
+    });
+    const originalDelete = client.deletePage.bind(client);
+    client.deletePage = async () => {
+      throw new Error('delete failed');
+    };
+    void originalDelete;
+    await expect(syncConfluenceToDocs(baseOptions(client))).rejects.toBeInstanceOf(ReconciliationError);
+    expect(calls.some((c) => c.method === 'updatePage' && (c.args[0] as { id: string }).id === '123')).toBe(false);
+  });
+
+  it('statistics exactly match validated local plan', async () => {
+    await mkdir(join(tmp, 'guide'));
+    await mkdir(join(tmp, 'img'));
+    await writeFile(join(tmp, 'img', 'logo.png'), Buffer.from([1]));
+    await writeFile(join(tmp, 'guide', 'intro.md'), '![logo](../img/logo.png)\n\n```mermaid\ngraph TD\nA-->B\n```');
+    await writeFile(join(tmp, 'guide', 'other.md'), '# Other');
+    const parentPage = pageFixture('123', 'Parent', 1, '', '999');
+    const { client } = buildFakeClient({ spaceId: 'SPACE', existingPages: [parentPage] });
+    const result = await syncConfluenceToDocs(baseOptions(client));
+    expect(result?.parentStatus).toBe('updated');
+    const body = (await client.getPage('123')).body?.storage?.value ?? '';
+    expect(body).toContain('Markdown pages: 2');
+    expect(body).toContain('Directory pages: 1');
+    expect(body).toContain('Total managed pages: 3');
+    expect(body).toContain('Maximum depth: 2');
+    expect(body).toContain('Attachment references: 1');
+    expect(body).toContain('Mermaid blocks: 1');
+  });
+
+  it('tree includes every mapped page exactly once with id-backed link and title', async () => {
+    await mkdir(join(tmp, 'guide'));
+    await writeFile(join(tmp, 'guide', 'intro.md'), '# Intro');
+    await writeFile(join(tmp, 'root.md'), '# Root');
+    const parentPage = pageFixture('123', 'Parent', 1, '', '999');
+    const { client } = buildFakeClient({ spaceId: 'SPACE', existingPages: [parentPage] });
+    await syncConfluenceToDocs(baseOptions(client));
+    const body = (await client.getPage('123')).body?.storage?.value ?? '';
+    const linkMatches = [...body.matchAll(/ri:content-id="([^"]+)"/g)].map((m) => m[1]);
+    expect(linkMatches.length).toBe(3);
+    expect(body).toContain('guide');
+    expect(body).toContain('intro');
+    expect(body).toContain('root');
+    expect(body).toContain('(directory)');
+    expect(body).toContain('(page)');
+  });
+
+  it('provenance links to repositoryUrl when present, generic otherwise', async () => {
+    await writeFile(join(tmp, 'a.md'), '# A');
+    const parentPage = pageFixture('123', 'Parent', 1, '', '999');
+    const { client } = buildFakeClient({ spaceId: 'SPACE', existingPages: [parentPage] });
+    await syncConfluenceToDocs({ ...baseOptions(client), repositoryUrl: 'https://github.com/acme/repo' });
+    let body = (await client.getPage('123')).body?.storage?.value ?? '';
+    expect(body).toContain('https://github.com/acme/repo');
+    expect(body).toContain('<a href=');
+
+    const parentPage2 = pageFixture('123', 'Parent', 1, '', '999');
+    const client2 = buildFakeClient({ spaceId: 'SPACE', existingPages: [parentPage2] }).client;
+    await syncConfluenceToDocs({ ...baseOptions(client2), repositoryUrl: undefined });
+    body = (await client2.getPage('123')).body?.storage?.value ?? '';
+    expect(body).toContain('maintained by <code>repo-toolkit-confluence</code>');
+    expect(body).not.toContain('<a href=');
+  });
+
+  it('summary includes stable guidance and no secrets', async () => {
+    await writeFile(join(tmp, 'a.md'), '# A');
+    const parentPage = pageFixture('123', 'Parent', 1, '', '999');
+    const { client } = buildFakeClient({ spaceId: 'SPACE', existingPages: [parentPage] });
+    await syncConfluenceToDocs(baseOptions(client));
+    const body = (await client.getPage('123')).body?.storage?.value ?? '';
+    expect(body).toContain('repo-toolkit-confluence');
+    expect(body).toContain('pruned');
+    expect(body).toContain('clean: true');
+    expect(body).not.toContain('apiToken');
+    expect(body).not.toContain('/tmp');
+  });
+
+  it('dryRun renders local statistics and title tree without gateway calls or remote links', async () => {
+    await mkdir(join(tmp, 'guide'));
+    await writeFile(join(tmp, 'guide', 'intro.md'), '# Intro');
+    const logSpy = vi.fn();
+    const { client, calls } = buildFakeClient({ spaceId: 'SPACE' });
+    await syncConfluenceToDocs({
+      folder: tmp,
+      dryRun: true,
+      client,
+      log: logSpy,
+    });
+    expect(calls).toHaveLength(0);
+    const lines = logSpy.mock.calls.map((c) => String(c[0]));
+    expect(lines.some((l) => /parent summary/.test(l))).toBe(true);
+    expect(lines.some((l) => /Markdown pages: 1/.test(l))).toBe(true);
+    expect(lines.some((l) => /parent tree/.test(l))).toBe(true);
+    expect(lines.some((l) => /ri:content-id/.test(l))).toBe(false);
   });
 });

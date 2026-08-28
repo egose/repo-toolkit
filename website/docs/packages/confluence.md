@@ -42,25 +42,28 @@ repo-toolkit-confluence \
 
 ### Flags
 
-| Flag                          | Description                                                                                                                                                                                                                                                                                                                  | Default                              |
-| ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------ |
-| `--config <path>`             | JSON / `.mjs` / `.cjs` config file. CLI flags override config for the same option; env fills gaps; see [precedence](#configuration-precedence).                                                                                                                                                                              | —                                    |
-| `--cwd <path>`                | Working directory; `--folder` and secret-file paths resolve against this.                                                                                                                                                                                                                                                    | `process.cwd()`                      |
-| `--folder <path>`             | Folder containing the documentation to publish (required, unless `--interactive` collects it).                                                                                                                                                                                                                               | —                                    |
-| `--username <value>`          | Confluence username or email (required).                                                                                                                                                                                                                                                                                     | —                                    |
-| `--api-token <value>`         | Confluence API token (required). Alias: `--password`. Prefer a secret file; see [credentials](#credentials).                                                                                                                                                                                                                 | —                                    |
-| `--api-token-file <path>`     | File whose contents become the API token (one trailing newline + surrounding whitespace stripped). Alias: `--password-file`. Resolved relative to `--cwd`.                                                                                                                                                                   | —                                    |
-| `--confluence-base-url <url>` | Confluence URL with `/wiki` (required). Alias: `--base-url`.                                                                                                                                                                                                                                                                 | —                                    |
-| `--space-key <key>`           | Confluence space key (required; resolved to a `spaceId` via the API).                                                                                                                                                                                                                                                        | —                                    |
-| `--parent-page-id <id>`       | Numeric page id under which docs are published (required).                                                                                                                                                                                                                                                                   | —                                    |
-| `--version-message <text>`    | Version-message suffix appended to every page/attachment PUT.                                                                                                                                                                                                                                                                | `Synced via repo-toolkit-confluence` |
-| `--page-title-strategy <val>` | Leaf page title strategy — `filename-stem` (default, filename without final `.md`), `filename` (with extension), `sentence-case-parent` (stem + immediate parent), `sentence-case-parents` (stem + all parents), `sentence-case-path` (stem + all parents + filename with extension). Folder pages keep raw directory names. | `filename-stem`                      |
-| `--skip-unchanged`            | Skip pages whose body is unchanged.                                                                                                                                                                                                                                                                                          | `true` (skip)                        |
-| `--no-skip-unchanged`         | Re-upload every page even when unchanged.                                                                                                                                                                                                                                                                                    | —                                    |
-| `--dry-run`                   | Walk the doc tree and run the same local preflight (read + convert every markdown file, validate every local image source) then print the plan. No API mutation calls; bypasses required-field checks so no credentials are needed.                                                                                          | `false`                              |
-| `--render-html-blocks`        | Render ` ```html ` fenced blocks as inline HTML via the Confluence `html` macro instead of a code box. **Unsafe for untrusted Markdown.**                                                                                                                                                                                    | `false`                              |
-| `-i, --interactive`           | Prompt on a real TTY for missing non-secret required fields. The API token is never prompted.                                                                                                                                                                                                                                | `false`                              |
-| `-h, --help`                  | Show help and return.                                                                                                                                                                                                                                                                                                        | —                                    |
+| Flag                          | Description                                                                                                                                                                                                                                                                                                                                                                                                                        | Default                              |
+| ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------ |
+| `--config <path>`             | JSON / `.mjs` / `.cjs` config file. CLI flags override config for the same option; env fills gaps; see [precedence](#configuration-precedence).                                                                                                                                                                                                                                                                                    | —                                    |
+| `--cwd <path>`                | Working directory; `--folder` and secret-file paths resolve against this.                                                                                                                                                                                                                                                                                                                                                          | `process.cwd()`                      |
+| `--folder <path>`             | Folder containing the documentation to publish (required, unless `--interactive` collects it).                                                                                                                                                                                                                                                                                                                                     | —                                    |
+| `--username <value>`          | Confluence username or email (required).                                                                                                                                                                                                                                                                                                                                                                                           | —                                    |
+| `--api-token <value>`         | Confluence API token (required). Alias: `--password`. Prefer a secret file; see [credentials](#credentials).                                                                                                                                                                                                                                                                                                                       | —                                    |
+| `--api-token-file <path>`     | File whose contents become the API token (one trailing newline + surrounding whitespace stripped). Alias: `--password-file`. Resolved relative to `--cwd`.                                                                                                                                                                                                                                                                         | —                                    |
+| `--confluence-base-url <url>` | Confluence URL with `/wiki` (required). Alias: `--base-url`.                                                                                                                                                                                                                                                                                                                                                                       | —                                    |
+| `--space-key <key>`           | Confluence space key (required; resolved to a `spaceId` via the API).                                                                                                                                                                                                                                                                                                                                                              | —                                    |
+| `--parent-page-id <id>`       | Numeric page id under which docs are published (required).                                                                                                                                                                                                                                                                                                                                                                         | —                                    |
+| `--version-message <text>`    | Version-message suffix appended to every page/attachment PUT.                                                                                                                                                                                                                                                                                                                                                                      | `Synced via repo-toolkit-confluence` |
+| `--page-title-strategy <val>` | Leaf page title strategy — `filename-stem` (default, filename without final `.md`), `filename` (with extension), `sentence-case-parent` (stem + immediate parent), `sentence-case-parents` (stem + all parents), `sentence-case-path` (stem + all parents + filename with extension). Folder pages keep raw directory names.                                                                                                       | `filename-stem`                      |
+| `--skip-unchanged`            | Skip pages whose body is unchanged.                                                                                                                                                                                                                                                                                                                                                                                                | `true` (skip)                        |
+| `--no-skip-unchanged`         | Re-upload every page even when unchanged.                                                                                                                                                                                                                                                                                                                                                                                          | —                                    |
+| `--dry-run`                   | Walk the doc tree and run the same local preflight (read + convert every markdown file, validate every local image source) then print the plan. No API mutation calls; bypasses required-field checks so no credentials are needed. Dry-run can show clean/prune and parent-summary intent but cannot list/count remote deletion candidates, fetch parent content, or provide mapped remote links because it makes zero API calls. | `false`                              |
+| `--render-html-blocks`        | Render ` ```html ` fenced blocks as inline HTML via the Confluence `html` macro instead of a code box. **Unsafe for untrusted Markdown.**                                                                                                                                                                                                                                                                                          | `false`                              |
+| `--clean`                     | Move all page descendants to trash before recreation. **WARNING: destructive — all page descendants, including manual/unlabeled pages, are moved to trash; parentPageId is retained and never deleted.** Pages are moved to trash (recoverable), never purged.                                                                                                                                                                     | `false`                              |
+| `--update-parent-page`        | Update parent page summary region.                                                                                                                                                                                                                                                                                                                                                                                                 | `true`                               |
+| `--no-update-parent-page`     | Do not update parent page summary.                                                                                                                                                                                                                                                                                                                                                                                                 | —                                    |
+| `-i, --interactive`           | Prompt on a real TTY for missing non-secret required fields. The API token is never prompted.                                                                                                                                                                                                                                                                                                                                      | `false`                              |
+| `-h, --help`                  | Show help and return.                                                                                                                                                                                                                                                                                                                                                                                                              | —                                    |
 
 ## Configuration precedence
 
@@ -98,10 +101,13 @@ true|false|1|0|yes|no|on|off.` naming the offending variable and value.
 | spaceKey                | `CONFLUENCE_SPACE_KEY`           | `INPUT_SPACE-KEY`                             |
 | parentPageId            | `CONFLUENCE_PARENT_PAGE_ID`      | `INPUT_PARENT-PAGE-ID`                        |
 | versionMessage          | `CONFLUENCE_VERSION_MESSAGE`     | `INPUT_VERSION-MESSAGE`                       |
+| repositoryUrl           | `CONFLUENCE_REPOSITORY_URL`      | `INPUT_REPOSITORY-URL`                        |
 | pageTitleStrategy       | `CONFLUENCE_PAGE_TITLE_STRATEGY` | `INPUT_PAGE-TITLE-STRATEGY`                   |
 | skipUnchanged (bool)    | `CONFLUENCE_SKIP_UNCHANGED`      | `INPUT_SKIP-UNCHANGED`                        |
 | dryRun (bool)           | `CONFLUENCE_DRY_RUN`             | `INPUT_DRY-RUN`                               |
 | renderHtmlBlocks (bool) | `CONFLUENCE_RENDER_HTML_BLOCKS`  | `INPUT_RENDER-HTML-BLOCKS`                    |
+| clean (bool)            | `CONFLUENCE_CLEAN`               | `INPUT_CLEAN`                                 |
+| updateParentPage (bool) | `CONFLUENCE_UPDATE_PARENT_PAGE`  | `INPUT_UPDATE-PARENT-PAGE`                    |
 
 `CONFLUENCE_*` takes precedence over the lower-specificity `INPUT_*` form, so
 non-Action users can supply env credentials with documented semantics while
@@ -266,30 +272,158 @@ Because writes are versioned, two sync processes editing the same page cannot
 silently clobber each other: the loser gets a 409 and exits nonzero. There is
 no built-in retry-on-conflict policy; rerun the sync to reconcile.
 
-## Additive (non-pruning) sync
+## Managed ownership and reconciliation
 
-Sync is strictly additive with respect to Confluence: it only creates pages
-that do not yet exist and updates the body of pages it can map. It **never
-deletes** Confluence pages or attachments that are absent locally. Removing a
-file from your docs folder will not remove the corresponding Confluence page;
-you must delete it in Confluence yourself.
+The sync makes the local documentation tree authoritative for pages it creates
+or adopts, without deleting unrelated Confluence content.
 
-This is intentional for docs-as-code: most teams want edits made directly in
-Confluence (sibling pages, free-form notes) to survive a sync. The trade-off
-is that the local tree is not the source of truth for **removal**.
+### Ownership label
 
-A few other reconciliation rules:
+- Every generated folder page and Markdown leaf page created, updated, or
+  otherwise mapped by a successful sync carries the fixed global Confluence
+  label `repo-toolkit-confluence` (`CONFLUENCE_MANAGED_LABEL`, prefix `global`).
+  The value is not configurable. Comparison checks both name and prefix — a
+  personal label with the same name is not an ownership marker.
+- Existing labels are preserved; sync never replaces or removes labels.
+- The label is added only when absent, so repeated unchanged syncs issue no
+  redundant `POST /wiki/rest/api/content/{id}/label`.
+- The target `parentPageId` is an external anchor and is never labeled.
+- A page is not considered safely managed until the marker POST succeeds. A
+  create/update followed by a label failure surfaces structured partial-mutation
+  evidence and prevents the prune phase from running.
+- Existing pages found by title-under-parent become tool-managed once the sync
+  maps them and successfully adds the marker — this is adoption. Because the
+  page now carries the marker, removing its local source later makes it
+  eligible for pruning. Documentation calls this out prominently.
+- Removing the marker from a managed page opts it out of pruning until a
+  future sync maps/adopts it again and re-applies the label.
 
-- The local tree is hashed by **page title under parent**: collisions between a
-  file-page and a folder-page with the same title under the same parent are
-  rejected up front with `Local documentation tree contains conflicting page
-titles under the same parent: <title>`.
-- If two Confluence pages match a title under the same parent, sync throws
-  `Multiple Confluence pages matched title <title> under parent <parentId>`
-  rather than guessing.
-- Pages are cached per space+title+parent within a single sync run; the cache
-  is not persisted, so cross-sync concurrency is governed by the 409 path
-  above.
+### Default managed pruning (`clean: false`, the default)
+
+- Local preflight (read/convert every Markdown file, validate every local image
+  source) runs before any remote call. Pruning only runs after every local page
+  has synced and its ownership label has been verified or added successfully.
+- The orchestrator tracks the page ids actually mapped during this run,
+  including synthetic folder pages and Markdown leaves, by id — not by
+  re-querying titles after mutation.
+- All descendants under `parentPageId` are enumerated via paginated
+  `GET /wiki/api/v2/pages/{id}/descendants` (same-origin cursor, bounded page
+  cap), but `parentPageId` itself is never a deletion candidate. Decisions are
+  scoped to that subtree; a space-wide label query is not used.
+- A remote page is stale only when it has the exact global
+  `repo-toolkit-confluence` marker and its id is absent from the current
+  mapped-id set.
+- Stale pages are deleted deepest-first (children before parents) by id via
+  `DELETE /wiki/api/v2/pages/{id}`. Each delete moves the page to trash
+  (recoverable); `purge=true` is never requested. Attachments are not deleted
+  independently — trashing a page scopes its attachments.
+- Unlabeled/manual pages are never deleted by default pruning.
+- If deleting a stale labeled ancestor could also remove an unlabeled,
+  non-page, inaccessible, or otherwise retained descendant, that ancestor is
+  blocked and reported as `blocked` rather than risking collateral deletion.
+  Safe stale siblings are still deleted.
+- A local tree with zero Markdown entries is valid for reconciliation: it
+  deletes every safely deletable managed descendant and retains every
+  manual/unlabeled descendant.
+- If sync fails before pruning, no stale-page deletions occur. If pruning
+  fails partway, the run stops and returns structured evidence
+  (`ReconciliationError` with `phase: 'prune'`, `completed`, `failure`
+  (`pageId` + error), and `unprocessed`).
+
+### Explicit clean (`clean: true`)
+
+- `clean` defaults to `false` through every input path (API/config
+  `clean: false`, CLI `--clean` absent, `CONFLUENCE_CLEAN=false`,
+  `INPUT_CLEAN=false`). No destructive reset occurs when the option is omitted.
+- After successful local preflight and before creating/updating pages, the
+  subtree is enumerated and every page descendant is moved to trash,
+  regardless of ownership label, deepest-first. `parentPageId` is never
+  deleted. Label lookup is not required — `clean` is deliberately stronger
+  than managed pruning.
+- **WARNING:** All page descendants, including manual/unlabeled pages, are
+  moved to trash before recreation. Pages are moved to trash (recoverable
+  through Confluence trash), never purged.
+- If the subtree contains a non-page type (whiteboard, database, embed,
+  folder) or an incomplete inventory whose retention cannot be proven, `clean`
+  fails closed before the first deletion with an unsupported-tree /
+  collateral-deletion error; it does not silently widen from pages to other
+  content.
+- After clean succeeds, the normal sync and labeling run; no redundant
+  post-sync prune against the newly created mapped set occurs.
+- A local tree with zero Markdown entries plus `clean: true` still performs
+  the clean and leaves the target page with no safely deletable page
+  descendants.
+- On a partial clean failure, the run aborts before page creation and exposes
+  `ReconciliationError` with `phase: 'clean'`, `completed`, `failure`, and
+  `unprocessed`.
+
+## Parent page summary (`updateParentPage: true`, the default)
+
+When `updateParentPage` is `true` (the default via API/config
+`updateParentPage: true`, CLI `--update-parent-page` / absent flag,
+`CONFLUENCE_UPDATE_PARENT_PAGE=true`, `INPUT_UPDATE-PARENT-PAGE=true`), the
+target parent page is updated after child-page sync, ownership labeling, and
+clean/prune reconciliation have completed successfully. If any earlier phase
+fails, the parent summary is left unchanged.
+
+- The parent page is fetched, its title and every byte of body content outside
+  one tool-managed region are preserved, and the update is applied with
+  `version.number = current + 1` under the existing optimistic-concurrency
+  contract. The region is bounded by
+  `<!-- repo-toolkit-confluence:parent-summary:start -->` and
+  `<!-- repo-toolkit-confluence:parent-summary:end -->` which survive a
+  storage-format round trip. The region is uniquely identifiable; malformed or
+  duplicate markers fail closed without rewriting the parent; the whole parent
+  body is never replaced as a shortcut.
+- On the first run the managed region is appended without removing existing
+  content; on later runs that region is replaced in place. Setting
+  `updateParentPage: false` (or `--no-update-parent-page`,
+  `CONFLUENCE_UPDATE_PARENT_PAGE=false`, `INPUT_UPDATE-PARENT-PAGE=false`)
+  leaves both existing managed and manual parent content untouched — it does
+  not remove a previously generated region.
+- The PUT is skipped when the reconstructed body is byte-equal to the current
+  body. No wall-clock timestamp, current page version, per-run
+  created/updated/deleted counts, or other volatile values are included, so
+  identical deployments do not force an update.
+- The region contains:
+  - `Synced documentation` heading with provenance equivalent to the footer on
+    generated child pages. When `repositoryUrl` resolves, it links to that URL;
+    when absent, only that the subtree is maintained by
+    `repo-toolkit-confluence` is stated — absolute runner paths are never
+    exposed.
+  - Deterministic structural statistics derived from the validated local plan
+    and final mapping: Markdown page count, generated directory-page count,
+    total managed child-page count, maximum documentation depth, local
+    attachment-reference count, and Mermaid-block count. Zero values render
+    explicitly for an empty tree.
+  - A nested deterministic directory-style tree for every generated directory
+    and Markdown page, in local relative-path order, displaying the resolved
+    Confluence title, distinguishing directory pages from Markdown leaves, and
+    linking each item to its mapped Confluence page via an id-backed
+    storage-format `ri:page` link. Links are built from returned page metadata
+    / id, not title-only search.
+  - Stable guidance that generated descendants carry the
+    `repo-toolkit-confluence` label, missing labeled pages are pruned after
+    successful sync, unlabeled pages are preserved by default, and explicit
+    clean moves all safely deletable page descendants to trash.
+  - The summary is compact and storage-format safe; it does not copy
+    child-page bodies, headings, excerpts, attachment names, repository
+    secrets, credentials, local absolute paths, or unbounded remote metadata.
+- With an empty local tree, provenance/guidance, zero statistics, and an
+  explicit `No managed child pages` tree state are rendered.
+- `updateParentPage: false` causes zero parent `GET`/`PUT` calls and does not
+  remove a previously generated region. The target parent itself remains
+  unlabeled and is never deleted even when `updateParentPage` is on.
+- A parent `GET`/`PUT` failure after child reconciliation returns structured
+  phase-specific evidence (`ParentSummaryError` with `phase: 'parent-summary'`,
+  `changes`, `labelsAdded`, `cleanDeletions`, `pruneDeletions`, `blocked`, and
+  `failure` containing the parent `pageId` and error) showing that child work
+  succeeded but the parent summary did not. The run still surfaces Confluence
+  409 conflicts without write retries.
+- Dry-run with `updateParentPage: true` retains zero API calls; it may print
+  locally known parent-summary statistics and title tree, but it cannot claim
+  the parent would be unchanged or emit remote id-backed links because it has
+  not fetched the parent or mapped remote ids.
 
 ## Leaf page title strategies
 
@@ -309,9 +443,32 @@ Parent folders are the `DocEntry.segments` before the filename. Exclude the conf
 
 ### Migration and uniqueness notes
 
-> **Changing the strategy changes title-based identity — migration is manual.** Confluence lookup is title-under-parent with no persisted source-path-to-page-id mapping, and sync is strictly additive and non-pruning: it creates pages that do not yet exist and updates bodies it can map, but never deletes or renames pages. Switching `pageTitleStrategy` therefore seeks a new title and may **create a new page while leaving the old page untouched**. Operators must manually rename, delete, or archive the previously generated pages (or migrate them) before switching strategies in production. In particular, `--dry-run` is the recommended way to verify generated titles — it logs `would sync <path> as "<title>"` for every entry — before any remote mutation.
+> **Changing the strategy changes title-based identity.** Confluence lookup is title-under-parent with no persisted source-path-to-page-id mapping. Switching `pageTitleStrategy` therefore seeks a new title and may **create a new page while leaving the old page untouched** — it does not rename or move existing pages. Previously labeled pages created under the old strategy carry the `repo-toolkit-confluence` ownership label and are **pruned (moved to trash) after a successful sync** under the new strategy because they become stale labeled descendants. Pages created before the labeling feature or otherwise unlabeled remain unlabeled and are **never pruned automatically** — they require manual cleanup in Confluence. Use `--dry-run` to preview generated titles (`would sync <path> as "<title>"`) before switching strategies in production.
 >
 > Path-based strategies (`sentence-case-parent` / `sentence-case-parents` / `sentence-case-path`) reduce predictable local collisions (for example, repeated basenames such as `credentials.md`, `architecture.md`, or `README.md` in separate subtrees) but **do not guarantee uniqueness against unrelated or manually created pages** already present under the same Confluence parent. Existing unrelated pages can still cause Confluence API conflicts. Local preflight detects only conflicts within the supplied doc tree. Do not truncate or hash generated titles; if Confluence imposes a remote title-length limit, retain the existing API error behavior and document that path-based strategies can produce longer titles.
+
+## Dry run
+
+`--dry-run` walks the doc tree and runs the same local preflight (read + convert every Markdown file, validate every local image source) then prints the plan without any API mutation calls. Credentials are not required under `--dry-run`. The same local hierarchy validation applies, and dry-run logs:
+
+- `would sync <path> as "<title>"` for every Markdown entry (with optional attachment/Mermaid counts)
+- `[dry-run] clean requested: a real sync would move every page descendant of the target page to trash before recreating the local hierarchy.` when `clean: true`
+- `a real sync would label every mapped page with the ownership marker and prune stale labeled descendants.` always, but without a concrete remote deletion count
+- Parent-summary intent when `updateParentPage: true` — deterministic statistics (`Markdown pages`, `Directory pages`, `Total managed pages`, `Maximum depth`, `Attachment references`, `Mermaid blocks`) and title tree, but no mapped remote links or claim that the parent would be unchanged.
+
+Because dry-run makes zero API calls, it cannot enumerate or count remote deletion candidates, fetch parent content, or provide id-backed links. Transition to a real sync to reconcile and update the parent summary.
+
+## Permissions and concurrency
+
+Required Confluence permissions and API scopes for a real sync:
+
+- Read descendants of the configured `parentPageId` (`GET /wiki/api/v2/pages/{id}/descendants`, paginated, same-origin cursor).
+- Read labels on descendants (`GET /wiki/api/v2/pages/{id}/labels`) and add the ownership marker (`POST /wiki/rest/api/content/{id}/label` with `[{ "prefix": "global", "name": "repo-toolkit-confluence" }]`).
+- Create and update pages and attachments under the target (`POST`/`PUT` pages, `GET`/`PUT` page bodies, attachment upload via v1 multipart `POST /wiki/rest/api/content/{pageId}/child/attachment` with `X-Atlassian-Token: no-check`).
+- Read and update the target parent page body (`GET /wiki/api/v2/pages/{id}`, `PUT` with `version.number = current + 1`).
+- Delete (move to trash) pages when pruning or cleaning (`DELETE /wiki/api/v2/pages/{id}` without `purge=true`). Pages are moved to trash and remain recoverable; they are never purged.
+
+Concurrent sync/clean jobs against the same `parentPageId` are unsupported and dangerous. Callers must serialize deployments for the same target; the tool does not add distributed locking. Two syncs racing on the same page are detected via optimistic concurrency (server returns HTTP 409 on version conflict) and the loser exits nonzero — rerun to reconcile. Downstream `egose/actions/confluence` wiring for `clean` and `update-parent-page` is a named release follow-up if that repository requires separately declared inputs.
 
 ## JavaScript API
 
@@ -327,6 +484,8 @@ const plan = resolveConfluenceSyncPlan({
   spaceKey: 'ENG',
   parentPageId: '123456789',
   pageTitleStrategy: 'sentence-case-parents', // optional; default: 'filename-stem'
+  clean: false, // optional; default: false
+  updateParentPage: true, // optional; default: true
 });
 
 await syncConfluenceToDocs({ ...plan, renderHtmlBlocks: false });
@@ -394,8 +553,9 @@ remains credentials-free (no gateway needed).
 - `syncConfluenceToDocs(options)` — walk the doc tree and sync pages,
   attachments, and mermaid blocks.
 - `resolveConfluenceSyncPlan(options)` — resolve and validate the sync plan
-  (`ConfluenceSyncPlan`) without starting a sync. Useful for previewing
-  defaults.
+  (`ConfluenceSyncPlan`) without starting a sync. Fills `clean` (default
+  `false`), `updateParentPage` (default `true`), and `pageTitleStrategy`
+  (default `filename-stem`). Useful for previewing defaults.
 - `ConfluenceClient`, `ConfluenceApiError` — the bundled HTTP client. Page/
   space/attachment-list calls use the v2 API; binary attachment uploads use
   the v1 multipart endpoint with `X-Atlassian-Token: no-check` because v2 has
@@ -406,6 +566,12 @@ remains credentials-free (no gateway needed).
   implementing the gateway is accepted by `syncConfluenceToDocs({ client })`
   and the rewriters without `as unknown as` casts. Supplying `client` skips
   the bundled-client credential/baseUrl required-field checks.
+- `CONFLUENCE_MANAGED_LABEL` (`repo-toolkit-confluence`), `planStalePruning`,
+  `planCleanDeletions`, `ReconciliationError` (phase `clean`/`prune`),
+  `ParentSummaryError` (phase `parent-summary`), `SyncResult` (`changes`,
+  `labelsAdded`, `cleanDeletions`, `pruneDeletions`, `blocked`,
+  `parentStatus`), `SyncMutationError`, `LocalSyncValidationAggregateError` —
+  managed ownership, reconciliation evidence, and parent-summary contracts.
 - `markdownToStorage(markdown, options)` — the standalone Markdown →
   Confluence storage-format converter. Returns `{ html, mermaidBlocks }`.
 - `escapeXmlAttribute`, `escapeAttachmentFilename`, `isRemoteUrl`,
@@ -453,10 +619,19 @@ inputs:
   dry-run: { required: false, default: 'false' }
   skip-unchanged: { required: false, default: 'true' }
   render-html-blocks: { required: false, default: 'false' }
+  clean: { required: false, default: 'false' }
+  update-parent-page: { required: false, default: 'true' }
 ```
+
+`clean` is destructive — when `true`, every page descendant of `parentPageId`,
+including manual/unlabeled pages, is moved to trash (recoverable), never
+purged, before recreation. `update-parent-page` controls the parent summary
+region (default on); set `false` to skip parent updates and leave existing
+managed and manual parent content untouched. If `egose/actions/confluence`
+requires separately declared inputs, wire both there as a release follow-up.
 
 A runnable smoke fixture lives under
 [`packages/confluence/action-fixture`](https://github.com/egose/repo-toolkit/blob/main/packages/confluence/action-fixture)
 and demonstrates starting a sync with mocked `INPUT_*` inputs and no network,
-so an Action runner can confirm the bundle wires the CLI to `INPUT_*` inputs
-end-to-end.
+including `INPUT_CLEAN` and `INPUT_UPDATE-PARENT-PAGE`, so an Action runner
+can confirm the bundle wires the CLI to `INPUT_*` inputs end-to-end.
