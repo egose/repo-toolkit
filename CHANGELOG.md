@@ -1,3 +1,9 @@
+## [0.22.0](https://github.com/egose/repo-toolkit/compare/v0.21.0...v0.22.0) (2026-08-28)
+
+### Features
+
+* **confluence:** simplify parent summary provenance and ownership text ([f57d4f7](https://github.com/egose/repo-toolkit/commit/f57d4f79b7252f7873dff6a315a83dd6eaa6f8d2))
+
 ## [0.21.0](https://github.com/egose/repo-toolkit/compare/v0.20.0...v0.21.0) (2026-08-28)
 
 ### Features
