@@ -38,6 +38,7 @@ omit `--version`. If `package.json.version` still uses the placeholder, pass
 | `--tag <version>`                 | Alias for `--version`                                                                                        | —                                           |
 | `--npm-tag <dist-tag>`            | npm dist-tag                                                                                                 | inferred from the prerelease `preid`        |
 | `--publish-dir <path>`            | Publish directory inside the package root.                                                                   | `dist`                                      |
+| `--preserve-publish-dir`          | Keep publishDir inside the npm package (default: flattened to package root)                                  | `false`                                     |
 | `--version-placeholder <text>`    | Placeholder rewritten to the target version.                                                                 | `0.0.0-PLACEHOLDER`                         |
 | `--package-files <file>[,<file>]` | Files copied from the package root into the publish dir (replaces defaults). Subpaths are flattened.         | `['README.md', 'CHANGELOG.md', 'llms.txt']` |
 | `--include-package-file <path>`   | Additional file copied from the package root (repeatable, additive).                                         | —                                           |
@@ -54,6 +55,20 @@ omit `--version`. If `package.json.version` still uses the placeholder, pass
 | `--dry-run`                       | Forward `--dry-run` to `npm publish`.                                                                        | `false`                                     |
 | `-h, --help`                      | Show help                                                                                                    | —                                           |
 
+### Publish layout
+
+`publishDir` remains the build-output directory (default `dist`). The layout choice only affects how that directory appears inside the published npm tarball. **Flattened publishing remains the default.**
+
+- **Default (flattened, `preservePublishDir: false`)**: the contents of `publishDir` become the npm package root. A build file `dist/index.js` is published as `package/index.js` and manifest fields are rewritten (`"main": "dist/index.js"` → `"main": "./index.js"`, likewise `module`/`types`/`bin`/`exports`/`imports`).
+  - Tarball: `package/index.js`, `package/index.d.ts`, `package/README.md`, `package/LICENSE`
+  - Manifest: `{ "main": "./index.js", "types": "./index.d.ts" }`
+- **Opt-in preserved (`--preserve-publish-dir` / `preservePublishDir: true`)**: the configured directory is retained inside the package. `dist/index.js` is published as `package/dist/index.js` and manifest paths keep their prefix (`"main": "./dist/index.js"`).
+  - Tarball: `package/dist/index.js`, `package/dist/index.d.ts`, `package/README.md`, `package/LICENSE`
+  - Manifest: `{ "main": "./dist/index.js", "types": "./dist/index.d.ts" }`
+  - A custom `publishDir` such as `artifacts/npm` is retained as `package/artifacts/npm/**`, not reduced to its basename.
+
+Preserved mode uses an isolated temporary staging root rather than publishing from the source package root, so only the build output, generated `package.json`, and configured `packageFiles`/`rootFiles` are included — repository `src/`, tests, and other source files are not published wholesale.
+
 ## Config File
 
 ```js
@@ -64,6 +79,7 @@ export default {
   rootFiles: ['LICENSE'],
   packageFiles: ['README.md', 'CHANGELOG.md'],
   publishDir: 'dist',
+  preservePublishDir: false,
   versionPlaceholder: '0.0.0-PLACEHOLDER',
   buildCommand: 'pnpm build',
   dryRun: true,

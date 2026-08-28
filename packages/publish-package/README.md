@@ -27,6 +27,7 @@ Useful flags:
 - `--version <version>` (alias: `--tag`)
 - `--npm-tag <dist-tag>`
 - `--publish-dir <path>`
+- `--preserve-publish-dir`
 - `--version-placeholder <text>`
 - `--package-files <file>[,<file>]` (replaces defaults)
 - `--include-package-file <path>` (repeatable, additive)
@@ -41,6 +42,20 @@ Useful flags:
 - `--otp <code>`
 - `--provenance`
 - `--dry-run`
+
+### Publish layout
+
+`publishDir` remains the build-output directory (default `dist`). The layout choice only affects how that directory appears inside the published npm tarball. Flattened publishing remains the default.
+
+- **Default (flattened, `preservePublishDir: false`)**: the contents of `publishDir` become the npm package root. A build file `dist/index.js` is published as `package/index.js` and manifest fields are rewritten (`"main": "dist/index.js"` → `"main": "./index.js"`, likewise `module`/`types`/`bin`/`exports`/`imports`).
+  - Tarball: `package/index.js`, `package/index.d.ts`, `package/README.md`, `package/LICENSE`
+  - Manifest: `{ "main": "./index.js", "types": "./index.d.ts" }`
+- **Opt-in preserved (`--preserve-publish-dir` / `preservePublishDir: true`)**: the configured directory is retained inside the package. `dist/index.js` is published as `package/dist/index.js` and manifest paths keep their prefix (`"main": "./dist/index.js"`).
+  - Tarball: `package/dist/index.js`, `package/dist/index.d.ts`, `package/README.md`, `package/LICENSE`
+  - Manifest: `{ "main": "./dist/index.js", "types": "./dist/index.d.ts" }`
+  - A custom `publishDir` such as `artifacts/npm` is retained as `package/artifacts/npm/**`, not reduced to its basename.
+
+Preserved mode uses an isolated temporary staging root rather than publishing from the source package root, so only the build output, generated `package.json`, and configured `packageFiles`/`rootFiles` are included — repository `src/`, tests, and other source files are not published wholesale.
 
 ## JavaScript API
 
@@ -114,6 +129,7 @@ The minimum supported platform contract is Node 20 with `bash` available on `PAT
 - `includeRootFiles` _(string[])_ Additional files appended to `rootFiles`.
 - `noDefaultRootFiles` _(boolean)_ Skip copying default root files.
 - `publishDir` _(string)_ Publish directory inside the package root (default: `dist`).
+- `preservePublishDir` _(boolean)_ Keep the configured `publishDir` inside the npm package instead of flattening it to the package root (default: `false`).
 - `versionPlaceholder` _(string)_ Placeholder rewritten to the target version (default: `0.0.0-PLACEHOLDER`).
 - `buildCommand` _(string)_ Command used to build the publish dir (default: `pnpm build`).
 - `skipBuild` _(boolean)_ Skip the build step.

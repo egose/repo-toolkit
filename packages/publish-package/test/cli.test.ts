@@ -62,6 +62,7 @@ describe('CLI flag resolution (PPARC-03)', () => {
     expect(parseCli(['--dry-run'])).toEqual({ dryRun: true });
     expect(parseCli(['--no-default-package-files'])).toEqual({ noDefaultPackageFiles: true });
     expect(parseCli(['--no-default-root-files'])).toEqual({ noDefaultRootFiles: true });
+    expect(parseCli(['--preserve-publish-dir'])).toEqual({ preservePublishDir: true });
   });
 
   it('parses list flags --package-files and --root-files (comma split)', () => {
@@ -180,6 +181,20 @@ describe('CLI config precedence (PPARC-03)', () => {
     const merged = await merge(['--cwd', cwd, '--config', 'opts.json']);
     expect(merged.access).toBe('restricted');
   });
+
+  it('preservePublishDir flows from config and CLI overrides config false', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'pp-cli-preserve-'));
+    workDirs.push(cwd);
+    await mkConfig(cwd, 'conf.json', { preservePublishDir: true });
+    const fromConfig = await merge(['--config', 'conf.json'], cwd);
+    expect(fromConfig.preservePublishDir).toBe(true);
+
+    const cwd2 = await mkdtemp(join(tmpdir(), 'pp-cli-preserve-'));
+    workDirs.push(cwd2);
+    await mkConfig(cwd2, 'conf.json', { preservePublishDir: false });
+    const fromCliOverride = await merge(['--config', 'conf.json', '--preserve-publish-dir'], cwd2);
+    expect(fromCliOverride.preservePublishDir).toBe(true);
+  });
 });
 
 describe('help README parity (PPARC-03)', () => {
@@ -195,7 +210,7 @@ describe('help README parity (PPARC-03)', () => {
 
     const flagsInReadme = [
       ...readme.matchAll(
-        /`--(config|cwd|root-dir|package-json|version|tag|npm-tag|publish-dir|version-placeholder|package-files|include-package-file|no-default-package-files|root-files|include-root-file|no-default-root-files|build-command|skip-build|access|registry|otp|provenance|dry-run|interactive|help)`/g,
+        /`--(config|cwd|root-dir|package-json|version|tag|npm-tag|publish-dir|preserve-publish-dir|version-placeholder|package-files|include-package-file|no-default-package-files|root-files|include-root-file|no-default-root-files|build-command|skip-build|access|registry|otp|provenance|dry-run|interactive|help)`/g,
       ),
     ].map((m) => m[1]);
 
@@ -216,6 +231,7 @@ describe('help README parity (PPARC-03)', () => {
         'version',
         'npm-tag',
         'publish-dir',
+        'preserve-publish-dir',
         'version-placeholder',
         'package-files',
         'include-package-file',

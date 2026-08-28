@@ -62,6 +62,8 @@ export interface PublishPackageOptions {
   skipBuild?: boolean;
   /** Names treated as internal workspace packages for dependency-range rewriting. */
   internalPackageNames?: ReadonlyArray<string> | Set<string>;
+  /** Keep the configured publishDir inside the npm package instead of flattening it to the package root. Defaults to `false`. */
+  preservePublishDir?: boolean;
   /**
    * Process runner used to execute the build command and `npm publish`.
    *
@@ -94,6 +96,7 @@ export interface PublishPackagePlan {
   provenance: boolean;
   dryRun: boolean;
   internalPackageNames: Set<string>;
+  preservePublishDir: boolean;
   runner: ProcessRunner;
 }
 
@@ -146,6 +149,7 @@ export function resolvePublishPackagePlan(options: PublishPackageOptions = {}): 
     provenance: options.provenance ?? false,
     dryRun: options.dryRun ?? false,
     internalPackageNames: toStringSet(options.internalPackageNames),
+    preservePublishDir: options.preservePublishDir ?? false,
     runner: options.runner ?? defaultProcessRunner,
   };
 }

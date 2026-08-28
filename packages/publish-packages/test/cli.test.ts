@@ -72,6 +72,7 @@ describe('CLI flag resolution (MPPARC-03)', () => {
     expect(parseCli(['--dry-run'])).toEqual({ dryRun: true });
     expect(parseCli(['--no-default-package-files'])).toEqual({ noDefaultPackageFiles: true });
     expect(parseCli(['--no-default-root-files'])).toEqual({ noDefaultRootFiles: true });
+    expect(parseCli(['--preserve-publish-dir'])).toEqual({ preservePublishDir: true });
   });
 
   it('parses list flags --package-files and --root-files (comma split, accumulating across occurrences)', () => {
@@ -199,6 +200,20 @@ describe('CLI config precedence (MPPARC-03)', () => {
     expect(merged.filters).toEqual(['pkg-a', 'pkg-b']);
     expect(merged.packageFiles).toEqual(['README.md']);
   });
+
+  it('preservePublishDir flows from config and CLI overrides config false', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'mpp-cli-preserve-'));
+    tempPaths.push(cwd);
+    await mkConfig(cwd, 'conf.json', { preservePublishDir: true });
+    const fromConfig = await merge(['--config', 'conf.json'], cwd);
+    expect(fromConfig.preservePublishDir).toBe(true);
+
+    const cwd2 = await mkdtemp(join(tmpdir(), 'mpp-cli-preserve-'));
+    tempPaths.push(cwd2);
+    await mkConfig(cwd2, 'conf.json', { preservePublishDir: false });
+    const fromCliOverride = await merge(['--config', 'conf.json', '--preserve-publish-dir'], cwd2);
+    expect(fromCliOverride.preservePublishDir).toBe(true);
+  });
 });
 
 describe('help README parity (MPPARC-03)', () => {
@@ -214,7 +229,7 @@ describe('help README parity (MPPARC-03)', () => {
 
     const flagsInReadme = [
       ...readme.matchAll(
-        /`--(config|cwd|version|tag|npm-tag|filter|from|package-files|include-package-file|no-default-package-files|root-files|include-root-file|no-default-root-files|publish-dir|version-placeholder|build-command|skip-build|access|registry|otp|provenance|dry-run|interactive|help)`/g,
+        /`--(config|cwd|version|tag|npm-tag|filter|from|package-files|include-package-file|no-default-package-files|root-files|include-root-file|no-default-root-files|publish-dir|preserve-publish-dir|version-placeholder|build-command|skip-build|access|registry|otp|provenance|dry-run|interactive|help)`/g,
       ),
     ].map((m) => m[1]);
 
@@ -241,6 +256,7 @@ describe('help README parity (MPPARC-03)', () => {
         'include-root-file',
         'no-default-root-files',
         'publish-dir',
+        'preserve-publish-dir',
         'version-placeholder',
         'build-command',
         'skip-build',
