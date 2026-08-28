@@ -1,3 +1,9 @@
+## [0.24.0](https://github.com/egose/repo-toolkit/compare/v0.23.0...v0.24.0) (2026-08-28)
+
+### Features
+
+* add optional preserved publish directory support ([7ef8b04](https://github.com/egose/repo-toolkit/commit/7ef8b04ece61e568301c89c958c10319325ccdc9))
+
 ## [0.23.0](https://github.com/egose/repo-toolkit/compare/v0.22.0...v0.23.0) (2026-08-28)
 
 ### Features
