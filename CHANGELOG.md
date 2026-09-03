@@ -1,3 +1,10 @@
+## [0.25.0](https://github.com/egose/repo-toolkit/compare/v0.24.0...v0.25.0) (2026-09-03)
+
+### Features
+
+* add artifact recipes and version bump selection ([0eeafff](https://github.com/egose/repo-toolkit/commit/0eeafff882606c99218b4cf28b78440d28dad988))
+* update package publisher CLI for workspace wrapper ([6373266](https://github.com/egose/repo-toolkit/commit/63732661a15aa024e559e289ae6e9fc8577bd80d))
+
 ## [0.24.0](https://github.com/egose/repo-toolkit/compare/v0.23.0...v0.24.0) (2026-08-28)
 
 ### Features
