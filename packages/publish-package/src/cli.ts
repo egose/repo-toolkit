@@ -5,8 +5,11 @@ import {
   parseFlags,
   type FlagSpec,
   INTERACTIVE_FLAG,
+  VersionResolutionError,
   canPrompt,
   DEFAULT_VERSION_PLACEHOLDER,
+  isPlainObject,
+  isVersionBump,
   promptForRequiredValue,
   resolveCliOptions,
 } from './index';
@@ -18,6 +21,7 @@ const SPECS: FlagSpec[] = [
   { name: 'root-dir' },
   { name: 'package-json' },
   { name: 'version', aliases: ['tag'] },
+  { name: 'bump' },
   { name: 'npm-tag' },
   { name: 'publish-dir' },
   { name: 'preserve-publish-dir', boolean: true },
@@ -35,6 +39,9 @@ const SPECS: FlagSpec[] = [
   { name: 'otp' },
   { name: 'provenance', boolean: true },
   { name: 'dry-run', boolean: true },
+  { name: 'publish-access' },
+  { name: 'prepare-only', boolean: true },
+  { name: 'allow-private-template', boolean: true },
   INTERACTIVE_FLAG,
 ];
 
@@ -53,6 +60,7 @@ Options:
   --package-json <path>          Source package.json path (default: package.json)
   --version <version>            Target version (default: package.json.version)
   --tag <version>                Alias for --version
+  --bump <major|minor|patch>     Derive the version from the npm registry (mutually exclusive with --version)
   --npm-tag <dist-tag>           npm dist-tag (defaults to prerelease preid)
   --publish-dir <path>           Publish directory inside package root (default: dist)
   --preserve-publish-dir         Keep publishDir inside the npm package (default: flattened to package root)
@@ -69,7 +77,10 @@ Options:
   --registry <url>               npm registry URL
   --otp <code>                   npm OTP code
   --provenance                   Request npm provenance attestation
-  --dry-run                      Forward --dry-run to npm publish
+  --dry-run                      Forward --dry-run to npm publish (still calls npm publish)
+  --publish-access <level>       Inject publishConfig.access into generated manifests
+  --prepare-only                 Prepare and pack artifacts WITHOUT calling npm publish
+  --allow-private-template       Opt-in: allow a private source manifest as a non-publishable template
   -i, --interactive              Prompt for missing required values interactively
   -h, --help                     Show this help message
 `);
@@ -87,6 +98,7 @@ export function buildOptions(result: ReturnType<typeof parseFlags>): Partial<Pub
   if (values['root-dir']) options.rootDir = values['root-dir'];
   if (values['package-json']) options.packageJsonPath = values['package-json'];
   if (values.version) options.version = values.version;
+  if (values.bump) options.bump = values.bump as PublishPackageOptions['bump'];
   if (values['npm-tag']) options.npmTag = values['npm-tag'];
   if (values['publish-dir']) options.publishDir = values['publish-dir'];
   if (values['preserve-publish-dir'] !== undefined) options.preservePublishDir = true;
@@ -100,6 +112,9 @@ export function buildOptions(result: ReturnType<typeof parseFlags>): Partial<Pub
   if (values.otp) options.otp = values.otp;
   if (values.provenance !== undefined) options.provenance = true;
   if (values['dry-run'] !== undefined) options.dryRun = true;
+  if (values['publish-access']) options.publishAccess = values['publish-access'];
+  if (values['prepare-only'] !== undefined) options.prepareOnly = true;
+  if (values['allow-private-template'] !== undefined) options.allowPrivateTemplate = true;
 
   if (repeat['package-files']) options.packageFiles = repeat['package-files'];
   if (repeat['include-package-file']) options.includePackageFiles = repeat['include-package-file'];
@@ -107,6 +122,73 @@ export function buildOptions(result: ReturnType<typeof parseFlags>): Partial<Pub
   if (repeat['include-root-file']) options.includeRootFiles = repeat['include-root-file'];
 
   return options;
+}
+
+/**
+ * Fails fast on an invalid version selection before any prompt or subprocess
+ * runs. `version` and `bump` are mutually exclusive regardless of whether they
+ * came from the CLI or the config file; an invalid `bump` value is rejected
+ * here as well.
+ */
+export function assertVersionSelection(options: PublishPackageOptions): void {
+  if (options.bump === undefined) {
+    return;
+  }
+
+  if (options.version !== undefined) {
+    throw new VersionResolutionError(
+      'ambiguous-selection',
+      '--version and --bump are mutually exclusive (config and CLI sources included)',
+    );
+  }
+
+  if (!isVersionBump(options.bump)) {
+    throw new VersionResolutionError(
+      'invalid-version',
+      `--bump must be one of "major", "minor", or "patch": ${String(options.bump)}`,
+    );
+  }
+}
+
+/**
+ * JSON config files cannot express executable recipe hooks. A JSON config may
+ * only use the declarative recipe fields (id, packageName, stageDir,
+ * requireTarball, preserveSourceFiles, publishAccess, static manifestOverlay).
+ * Hook fields, or a non-object manifestOverlay, fail with an explanatory
+ * message directing the user to a JavaScript config.
+ */
+export function assertJsonConfigRecipesDeclarative(options: PublishPackageOptions, configPath: string): void {
+  if (!configPath.endsWith('.json')) {
+    return;
+  }
+
+  const artifacts = options.artifacts;
+
+  if (!Array.isArray(artifacts)) {
+    return;
+  }
+
+  for (const artifact of artifacts) {
+    if (!isPlainObject(artifact)) {
+      continue;
+    }
+
+    for (const hook of ['build', 'validate'] as const) {
+      if (artifact[hook] !== undefined) {
+        throw new Error(
+          `artifact recipe hook "${hook}" is a function and cannot be expressed in a JSON config (${configPath}); use a JavaScript config file (.mjs/.cjs) with an artifacts array instead`,
+        );
+      }
+    }
+
+    const overlay = artifact.manifestOverlay;
+
+    if (overlay !== undefined && !isPlainObject(overlay)) {
+      throw new Error(
+        `artifact recipe "manifestOverlay" must be a plain object in a JSON config (${configPath}); use a JavaScript config file (.mjs/.cjs) to supply an overlay callback`,
+      );
+    }
+  }
 }
 
 function sourceVersionNeedsPrompt(merged: PublishPackageOptions): boolean {
@@ -138,6 +220,12 @@ async function main(): Promise<void> {
     buildOptions,
   });
 
+  assertVersionSelection(merged);
+
+  if (result.values.config) {
+    assertJsonConfigRecipesDeclarative(merged, result.values.config);
+  }
+
   if (interactive && !merged.version && sourceVersionNeedsPrompt(merged)) {
     merged.version = await promptForRequiredValue({
       message: 'Target version:',
@@ -149,7 +237,7 @@ async function main(): Promise<void> {
     });
   }
 
-  publishPackage(merged);
+  await publishPackage(merged);
 }
 
 main().catch((error: unknown) => {

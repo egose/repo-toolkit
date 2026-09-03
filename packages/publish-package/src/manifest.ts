@@ -37,6 +37,12 @@ export interface PublishRewriteOptions {
   metadataPlaceholder?: string;
   publishDir?: string;
   preservePublishDir?: boolean;
+  /**
+   * Preserve the source manifest's `files` allow-list instead of injecting
+   * the safe default ({@link DEFAULT_PUBLISH_FILES_FIELD}). The source value
+   * must be an array of strings; anything else is rejected.
+   */
+  preserveSourceFiles?: boolean;
 }
 
 export interface CreatePublishPackageJsonOptions {
@@ -44,6 +50,11 @@ export interface CreatePublishPackageJsonOptions {
   internalPackageNames: Set<string>;
   rootMetadata?: RootMetadata;
   rewrite?: PublishRewriteOptions;
+  /**
+   * Inject `publishConfig.access` into the generated manifest. This is
+   * metadata only; npm publication still passes `--access` explicitly.
+   */
+  publishAccess?: string;
 }
 
 export function createPublishPackageJson(
@@ -104,11 +115,15 @@ export function createPublishPackageJson(
   validatePublishManifestFields(publishPackageJson);
 
   // Inject a `files` field so npm doesn't accidentally include stray files
-  // (e.g. .map files, temp artefacts) from the publish directory.
-  publishPackageJson.files = [...DEFAULT_PUBLISH_FILES_FIELD];
+  // (e.g. .map files, temp artefacts) from the publish directory. A recipe
+  // may opt into preserving a validated source allow-list instead.
+  publishPackageJson.files = resolvePublishFiles(packageJson.files, rewrite.preserveSourceFiles === true);
 
-  if (rootMetadata.author !== undefined && publishPackageJson.author === undefined) {
-    publishPackageJson.author = rootMetadata.author;
+  const resolvedAuthor = resolvePlaceholderField(packageJson.author, rootMetadata.author, metadataPlaceholder);
+  if (resolvedAuthor !== undefined) {
+    publishPackageJson.author = resolvedAuthor;
+  } else {
+    delete publishPackageJson.author;
   }
 
   if (rootMetadata.bugs !== undefined && publishPackageJson.bugs === undefined) {
@@ -127,7 +142,38 @@ export function createPublishPackageJson(
     metadataPlaceholder,
   );
 
+  if (options.publishAccess !== undefined) {
+    publishPackageJson.publishConfig = mergePublishConfigAccess(
+      publishPackageJson.publishConfig,
+      options.publishAccess,
+    );
+  }
+
   return publishPackageJson;
+}
+
+function resolvePublishFiles(sourceFiles: unknown, preserveSourceFiles: boolean): string[] {
+  if (!preserveSourceFiles) {
+    return [...DEFAULT_PUBLISH_FILES_FIELD];
+  }
+
+  if (!Array.isArray(sourceFiles) || sourceFiles.some((entry) => typeof entry !== 'string')) {
+    throw new Error('preserveSourceFiles requires the source manifest "files" field to be an array of strings');
+  }
+
+  return [...sourceFiles];
+}
+
+function mergePublishConfigAccess(existingPublishConfig: unknown, access: string): Record<string, unknown> {
+  if (existingPublishConfig === undefined) {
+    return { access };
+  }
+
+  if (!isPlainObject(existingPublishConfig)) {
+    throw new Error('Invalid publishConfig: expected an object');
+  }
+
+  return { ...existingPublishConfig, access };
 }
 
 function resolvePlaceholderField(sourceValue: unknown, rootValue: unknown, placeholder: string): unknown {
@@ -413,4 +459,115 @@ function rewriteBin(binField: unknown, publishDir: string, preservePublishDir: b
     rewritten[key] = rewriteDistPath(value, publishDir, preservePublishDir);
   }
   return rewritten;
+}
+
+/**
+ * Release-safety fields an artifact manifest overlay may never set. These are
+ * either stripped from source manifests for release safety (`scripts`,
+ * `devDependencies`, `packageManager`, `private`) or fixed by the plan.
+ */
+export const OVERLAY_DENIED_FIELDS = ['private', 'scripts', 'devDependencies', 'packageManager'] as const;
+
+export interface ManifestOverlayPolicyContext {
+  /** Target release version from the plan. */
+  version: string;
+  /** Final package name of the artifact receiving the overlay. */
+  packageName: string;
+  internalPackageNames: Set<string>;
+  versionPlaceholder: string;
+}
+
+/**
+ * Applies a per-artifact manifest overlay to a generated publish manifest
+ * and re-finalizes the result.
+ *
+ * Overlay policy (ARTIFACT-04 decision): a protected-field DENY-LIST, not a
+ * strict allow-list. Rationale: the consumer's public manifest surface spans
+ * open-ended fields (description, keywords, exports, publishConfig, files,
+ * dependency-map adjustments) that a closed allow-list would have to
+ * enumerate and maintain; the release-safety boundary is instead a small,
+ * stable set of protected fields. The overlay therefore may set any field
+ * except:
+ *
+ * - `private`, `scripts`, `devDependencies`, `packageManager` — always
+ *   rejected (release-safety fields stripped by manifest generation).
+ * - `version` — rejected when it conflicts with the plan release version.
+ * - `name` — rejected when it conflicts with the artifact's package name.
+ *
+ * Shape constraints: `exports` is validated with the same shape validation
+ * the source manifest receives, `files` must be an array of strings, and
+ * dependency fields must be objects of string ranges.
+ *
+ * After merging, dependency/version-placeholder rewriting is re-applied and
+ * the final manifest is re-validated, so an overlay cannot smuggle
+ * unresolved `workspace:` ranges or placeholder versions into the output.
+ */
+export function applyManifestOverlay(
+  manifest: PackageJson,
+  overlay: Record<string, unknown>,
+  context: ManifestOverlayPolicyContext,
+): PackageJson {
+  for (const field of OVERLAY_DENIED_FIELDS) {
+    if (Object.prototype.hasOwnProperty.call(overlay, field)) {
+      throw new Error(`artifact manifest overlay must not set "${field}"`);
+    }
+  }
+
+  if (Object.prototype.hasOwnProperty.call(overlay, 'version') && overlay.version !== context.version) {
+    throw new Error(`artifact manifest overlay version conflicts with the release version: ${String(overlay.version)}`);
+  }
+
+  if (Object.prototype.hasOwnProperty.call(overlay, 'name') && overlay.name !== context.packageName) {
+    throw new Error(`artifact manifest overlay name conflicts with the artifact package name: ${String(overlay.name)}`);
+  }
+
+  if (overlay.exports !== undefined) {
+    const shape = validateExportsShape(overlay.exports, 'exports');
+    if (!shape.valid) {
+      throw new Error(`artifact manifest overlay has an invalid exports field: ${shape.reason ?? 'invalid shape'}`);
+    }
+  }
+
+  if (
+    overlay.files !== undefined &&
+    (!Array.isArray(overlay.files) || overlay.files.some((e) => typeof e !== 'string'))
+  ) {
+    throw new Error('artifact manifest overlay files must be an array of strings');
+  }
+
+  for (const field of DEPENDENCY_FIELDS) {
+    const value = overlay[field];
+    if (value === undefined) {
+      continue;
+    }
+    if (!isPlainObject(value)) {
+      throw new Error(`artifact manifest overlay ${field} must be an object`);
+    }
+    for (const [depName, range] of Object.entries(value)) {
+      if (typeof range !== 'string') {
+        throw new Error(`artifact manifest overlay ${field}.${depName} must be a string range`);
+      }
+    }
+  }
+
+  const merged: PackageJson = { ...manifest, ...overlay };
+
+  for (const field of DEPENDENCY_FIELDS) {
+    if (merged[field] === undefined) {
+      continue;
+    }
+    const rewritten = rewriteDependencyMap(
+      merged[field],
+      context.version,
+      context.internalPackageNames,
+      context.versionPlaceholder,
+    );
+    if (rewritten !== undefined) {
+      merged[field] = rewritten;
+    }
+  }
+
+  validatePublishManifestFields(merged);
+
+  return merged;
 }
