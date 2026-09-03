@@ -201,7 +201,7 @@ describe('artifact layout end-to-end (PPDIR-04)', () => {
       };
 
       const flatLog = vi.spyOn(console, 'log').mockImplementation(() => {});
-      publishPackage({
+      await publishPackage({
         cwd: flat.pkgDir,
         rootDir: flat.rootDir,
         version: '1.2.3',
@@ -293,7 +293,7 @@ describe('artifact layout end-to-end (PPDIR-04)', () => {
       };
 
       const preservedLog = vi.spyOn(console, 'log').mockImplementation(() => {});
-      publishPackage({
+      await publishPackage({
         cwd: preserved.pkgDir,
         rootDir: preserved.rootDir,
         version: '1.2.3',
@@ -392,7 +392,7 @@ describe('artifact layout end-to-end (PPDIR-04)', () => {
         },
       };
       const flatLog = vi.spyOn(console, 'log').mockImplementation(() => {});
-      publishPackage({
+      await publishPackage({
         cwd: pkgFlat,
         rootDir: rootFlat,
         version: '1.2.3',
@@ -444,7 +444,7 @@ describe('artifact layout end-to-end (PPDIR-04)', () => {
         },
       };
       const presLog = vi.spyOn(console, 'log').mockImplementation(() => {});
-      publishPackage({
+      await publishPackage({
         cwd: pkgPres,
         rootDir: rootPres,
         version: '1.2.3',
@@ -498,7 +498,7 @@ describe('artifact layout end-to-end (PPDIR-04)', () => {
         },
       };
       const log = vi.spyOn(console, 'log').mockImplementation(() => {});
-      publishPackage({
+      await publishPackage({
         cwd: pkgDir,
         rootDir,
         version: '1.2.3',
@@ -529,7 +529,7 @@ describe('artifact layout end-to-end (PPDIR-04)', () => {
         },
       };
       const log2 = vi.spyOn(console, 'log').mockImplementation(() => {});
-      expect(() =>
+      await expect(
         publishPackage({
           cwd: pkgDir2,
           rootDir: rootDir2,
@@ -539,7 +539,7 @@ describe('artifact layout end-to-end (PPDIR-04)', () => {
           dryRun: true,
           runner: failRunner,
         }),
-      ).toThrow(/fake npm failure/);
+      ).rejects.toThrow(/fake npm failure/);
       log2.mockRestore();
       expect(failStaging).not.toBeNull();
       expect(existsSync(failStaging!)).toBe(false);

@@ -10,6 +10,8 @@ import {
   parseFlags,
   publishPackage,
   resolvePublishPackagePlan,
+  resolveArtifactContext,
+  type PackageArtifactContext,
   resolveCliOptions,
   promptForRequiredValue,
   canPrompt,
@@ -480,6 +482,116 @@ describe('createPublishPackageJson', () => {
     expect(out.repository).toEqual({ type: 'git', url: 'https://example.com/root.git' });
   });
 
+  it('treats an author equal to the metadata placeholder as absent and inherits the root author', () => {
+    const out = createPublishPackageJson(
+      {
+        name: '@repo-toolkit/publish-package',
+        version: '0.0.0-PLACEHOLDER',
+        author: 'PLACEHOLDER',
+      },
+      {
+        version: '1.2.3',
+        internalPackageNames: internalNames,
+        rootMetadata: { author: 'Root Owner' },
+      },
+    );
+
+    expect(out.author).toBe('Root Owner');
+    expect(JSON.stringify(out)).not.toContain('PLACEHOLDER');
+  });
+
+  it('omits author when the placeholder has no root value to inherit', () => {
+    const out = createPublishPackageJson(
+      {
+        name: '@repo-toolkit/publish-package',
+        version: '0.0.0-PLACEHOLDER',
+        author: 'PLACEHOLDER',
+      },
+      {
+        version: '1.2.3',
+        internalPackageNames: internalNames,
+      },
+    );
+
+    expect(Object.prototype.hasOwnProperty.call(out, 'author')).toBe(false);
+  });
+
+  it('keeps a real package-local author over the placeholder rule', () => {
+    const out = createPublishPackageJson(
+      {
+        name: '@repo-toolkit/publish-package',
+        version: '0.0.0-PLACEHOLDER',
+        author: 'Package Owner',
+      },
+      {
+        version: '1.2.3',
+        internalPackageNames: internalNames,
+        rootMetadata: { author: 'Root Owner' },
+      },
+    );
+
+    expect(out.author).toBe('Package Owner');
+  });
+
+  it('preserves a validated source files allow-list when preserveSourceFiles is set', () => {
+    const out = createPublishPackageJson(
+      {
+        name: '@repo-toolkit/publish-package',
+        version: '0.0.0-PLACEHOLDER',
+        files: ['dist', 'README.md'],
+      },
+      {
+        version: '1.2.3',
+        internalPackageNames: internalNames,
+        rewrite: { preserveSourceFiles: true },
+      },
+    );
+
+    expect(out.files).toEqual(['dist', 'README.md']);
+  });
+
+  it('rejects preserveSourceFiles when the source files field is not an array of strings', () => {
+    expect(() =>
+      createPublishPackageJson(
+        { name: '@repo-toolkit/publish-package', version: '0.0.0-PLACEHOLDER' },
+        { version: '1.2.3', internalPackageNames: internalNames, rewrite: { preserveSourceFiles: true } },
+      ),
+    ).toThrow(/files" field to be an array of strings/);
+
+    expect(() =>
+      createPublishPackageJson(
+        { name: '@repo-toolkit/publish-package', version: '0.0.0-PLACEHOLDER', files: ['ok', 42] },
+        { version: '1.2.3', internalPackageNames: internalNames, rewrite: { preserveSourceFiles: true } },
+      ),
+    ).toThrow(/files" field to be an array of strings/);
+  });
+
+  it('injects publishConfig.access when publishAccess is requested', () => {
+    const out = createPublishPackageJson(
+      {
+        name: '@repo-toolkit/publish-package',
+        version: '0.0.0-PLACEHOLDER',
+        publishConfig: { registry: 'https://registry.example.org' },
+      },
+      {
+        version: '1.2.3',
+        internalPackageNames: internalNames,
+        publishAccess: 'public',
+      },
+    );
+
+    expect(out.publishConfig).toEqual({ registry: 'https://registry.example.org', access: 'public' });
+  });
+
+  it('does not add publishConfig when publishAccess is not requested', () => {
+    const out = createPublishPackageJson(
+      { name: '@repo-toolkit/publish-package', version: '0.0.0-PLACEHOLDER' },
+      { version: '1.2.3', internalPackageNames: internalNames },
+    );
+
+    expect(Object.prototype.hasOwnProperty.call(out, 'publishConfig')).toBe(false);
+  });
+
   it('rewrites array-form exports entries leaf by leaf', () => {
     const out = createPublishPackageJson(
       {
@@ -626,7 +738,7 @@ describe('resolvePublishPackagePlan', () => {
   });
 
   it('uses package.json.version when a real version is already present', async () => {
-    const rootDir = await mkdtemp(join(tmpdir(), 'repo-toolkit-publish-package-plan-'));
+    const rootDir = await mkdtemp(join(tmpdir(), 'pp-index-plan-'));
 
     try {
       await writeFile(
@@ -787,6 +899,176 @@ describe('resolvePublishPackagePlan source validation', () => {
   });
 });
 
+describe('resolvePublishPackagePlan artifacts', () => {
+  async function makeFixture(manifest: Record<string, unknown>): Promise<string> {
+    const rootDir = await mkdtemp(join(tmpdir(), 'pp-artifacts-'));
+    await writeFile(join(rootDir, 'package.json'), `${JSON.stringify(manifest)}\n`);
+    return rootDir;
+  }
+
+  it('resolves an implicit single artifact with safe defaults', async () => {
+    const rootDir = await makeFixture({ name: '@ex/pkg', version: '1.0.0' });
+    try {
+      const plan = resolvePublishPackagePlan({ cwd: rootDir });
+
+      expect(plan.prepareOnly).toBe(false);
+      expect(plan.allowPrivateTemplate).toBe(false);
+      expect(plan.artifacts).toHaveLength(1);
+      expect(plan.artifacts[0].id).toBe('default');
+      expect(plan.artifacts[0].packageName).toBe('@ex/pkg');
+      expect(plan.artifacts[0].stageDir).toBe(plan.resolvedPublishDir);
+      expect(plan.artifacts[0].requireTarball).toBe(false);
+    } finally {
+      await rm(rootDir, { recursive: true, force: true });
+    }
+  });
+
+  it('keeps additionalNames sequencing in the implicit artifact', async () => {
+    const rootDir = await makeFixture({ name: '@ex/pkg', additionalNames: ['@ex/alias'], version: '1.0.0' });
+    try {
+      const plan = resolvePublishPackagePlan({ cwd: rootDir });
+
+      expect(plan.artifacts).toHaveLength(1);
+      expect(plan.packageNames).toEqual(['@ex/pkg', '@ex/alias']);
+    } finally {
+      await rm(rootDir, { recursive: true, force: true });
+    }
+  });
+
+  it('refuses a private source manifest without the explicit opt-in', async () => {
+    const rootDir = await makeFixture({ name: '@ex/pkg', version: '1.0.0', private: true });
+    try {
+      expect(() => resolvePublishPackagePlan({ cwd: rootDir })).toThrow(/Refusing to publish private package/);
+    } finally {
+      await rm(rootDir, { recursive: true, force: true });
+    }
+  });
+
+  it('plans a private template with the opt-in and generates a manifest without private', async () => {
+    const rootDir = await makeFixture({ name: '@ex/pkg', version: '1.0.0', private: true });
+    try {
+      const plan = resolvePublishPackagePlan({ cwd: rootDir, allowPrivateTemplate: true });
+
+      expect(plan.allowPrivateTemplate).toBe(true);
+
+      const generated = createPublishPackageJson(plan.sourcePackageJson, {
+        version: plan.version,
+        internalPackageNames: plan.internalPackageNames,
+      });
+
+      expect(Object.prototype.hasOwnProperty.call(generated, 'private')).toBe(false);
+    } finally {
+      await rm(rootDir, { recursive: true, force: true });
+    }
+  });
+
+  it('resolves two recipes to distinct contained stages in deterministic order', async () => {
+    const rootDir = await makeFixture({ name: '@ex/pkg', version: '1.0.0' });
+    try {
+      const build = (context: PackageArtifactContext): void => {
+        expect(context.cwd).toBe(rootDir);
+        expect(context.runner).toBe(plan.runner);
+      };
+      const plan = resolvePublishPackagePlan({
+        cwd: rootDir,
+        prepareOnly: true,
+        artifacts: [
+          { id: 'plain', packageName: '@ex/pkg-plain', build, requireTarball: true },
+          { id: 'tw', packageName: '@ex/pkg-tw', validate: build },
+        ],
+      });
+
+      expect(plan.prepareOnly).toBe(true);
+      expect(plan.artifacts.map((artifact) => artifact.id)).toEqual(['plain', 'tw']);
+      expect(plan.artifacts[0].stageDir).not.toBe(plan.artifacts[1].stageDir);
+
+      for (const artifact of plan.artifacts) {
+        expect(artifact.stageDir.startsWith(rootDir)).toBe(true);
+      }
+
+      const context = resolveArtifactContext(plan, plan.artifacts[0]);
+      expect(context.artifactId).toBe('plain');
+      expect(context.packageName).toBe('@ex/pkg-plain');
+      expect(context.version).toBe('1.0.0');
+    } finally {
+      await rm(rootDir, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects duplicate artifact ids', async () => {
+    const rootDir = await makeFixture({ name: '@ex/pkg', version: '1.0.0' });
+    try {
+      expect(() =>
+        resolvePublishPackagePlan({
+          cwd: rootDir,
+          artifacts: [
+            { id: 'a', packageName: '@ex/a' },
+            { id: 'a', packageName: '@ex/b' },
+          ],
+        }),
+      ).toThrow(/duplicate artifact id/);
+    } finally {
+      await rm(rootDir, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects duplicate artifact package names', async () => {
+    const rootDir = await makeFixture({ name: '@ex/pkg', version: '1.0.0' });
+    try {
+      expect(() =>
+        resolvePublishPackagePlan({
+          cwd: rootDir,
+          artifacts: [
+            { id: 'a', packageName: '@ex/same' },
+            { id: 'b', packageName: '@ex/same' },
+          ],
+        }),
+      ).toThrow(/duplicate artifact package name/);
+    } finally {
+      await rm(rootDir, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects empty names and escaping stage paths', async () => {
+    const rootDir = await makeFixture({ name: '@ex/pkg', version: '1.0.0' });
+    try {
+      expect(() => resolvePublishPackagePlan({ cwd: rootDir, artifacts: [{ id: 'a', packageName: '' }] })).toThrow(
+        /packageName must be a non-empty string/,
+      );
+
+      expect(() =>
+        resolvePublishPackagePlan({
+          cwd: rootDir,
+          artifacts: [{ id: 'a', packageName: '@ex/a', stageDir: '../escape' }],
+        }),
+      ).toThrow(/escapes the package root/);
+
+      expect(() =>
+        resolvePublishPackagePlan({
+          cwd: rootDir,
+          artifacts: [{ id: 'a', packageName: '@ex/a', stageDir: '/tmp/absolute' }],
+        }),
+      ).toThrow(/stageDir must be relative/);
+    } finally {
+      await rm(rootDir, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects artifacts combined with source additionalNames', async () => {
+    const rootDir = await makeFixture({ name: '@ex/pkg', additionalNames: ['@ex/alias'], version: '1.0.0' });
+    try {
+      expect(() =>
+        resolvePublishPackagePlan({
+          cwd: rootDir,
+          artifacts: [{ id: 'a', packageName: '@ex/a' }],
+        }),
+      ).toThrow(/cannot be combined with source manifest additionalNames/);
+    } finally {
+      await rm(rootDir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe('publishPackage copy collisions', () => {
   it('rejects two distinct sources that flatten to the same basename', async () => {
     const rootDir = await mkdtemp(join(tmpdir(), 'pp-collision-'));
@@ -798,14 +1080,14 @@ describe('publishPackage copy collisions', () => {
       await writeFile(join(rootDir, 'README.md'), 'readme\n');
       await writeFile(join(rootDir, 'docs', 'README.md'), 'docs readme\n');
 
-      expect(() =>
+      await expect(
         publishPackage({
           cwd: rootDir,
           skipBuild: true,
           dryRun: true,
           includePackageFiles: ['docs/README.md'],
         }),
-      ).toThrow(/Copy destination collision/);
+      ).rejects.toThrow(/Copy destination collision/);
     } finally {
       await rm(rootDir, { recursive: true, force: true });
     }
@@ -818,14 +1100,14 @@ describe('publishPackage copy collisions', () => {
       await writeFile(join(rootDir, 'package.json'), `${JSON.stringify({ name: '@ex/pkg', version: '1.0.0' })}\n`);
       await writeFile(join(rootDir, 'dist', 'index.js'), 'export {}\n');
 
-      expect(() =>
+      await expect(
         publishPackage({
           cwd: rootDir,
           skipBuild: true,
           dryRun: true,
           includePackageFiles: ['README.md', 'README.md'],
         }),
-      ).toThrow(/Duplicate copy entry/);
+      ).rejects.toThrow(/Duplicate copy entry/);
     } finally {
       await rm(rootDir, { recursive: true, force: true });
     }
@@ -834,7 +1116,7 @@ describe('publishPackage copy collisions', () => {
 
 describe('publishPackage', () => {
   it('writes a publish-ready package.json and copies files in dry-run mode (last additionalName wins)', async () => {
-    const rootDir = await mkdtemp(join(tmpdir(), 'repo-toolkit-publish-package-'));
+    const rootDir = await mkdtemp(join(tmpdir(), 'pp-index-'));
     const publishDir = join(rootDir, 'artifacts', 'npm');
     const runner = createFakeRunner();
 
@@ -864,7 +1146,7 @@ describe('publishPackage', () => {
 
       const logSpy = (await import('vitest')).vi.spyOn(console, 'log').mockImplementation(() => {});
 
-      publishPackage({
+      await publishPackage({
         cwd: rootDir,
         version: '1.2.3',
         publishDir: 'artifacts/npm',
@@ -898,7 +1180,7 @@ describe('publishPackage', () => {
   });
 
   it('rejects private packages before writing to the publish directory', async () => {
-    const rootDir = await mkdtemp(join(tmpdir(), 'repo-toolkit-publish-package-private-'));
+    const rootDir = await mkdtemp(join(tmpdir(), 'pp-index-private-'));
 
     try {
       await writeFile(
@@ -906,13 +1188,13 @@ describe('publishPackage', () => {
         `${JSON.stringify({ name: '@example/pkg', version: '1.2.3', private: true })}\n`,
       );
 
-      expect(() =>
+      await expect(
         publishPackage({
           cwd: rootDir,
           skipBuild: true,
           dryRun: true,
         }),
-      ).toThrowError(/Refusing to publish private package/);
+      ).rejects.toThrowError(/Refusing to publish private package/);
       expect(existsSync(join(rootDir, 'dist', 'package.json'))).toBe(false);
     } finally {
       await rm(rootDir, { recursive: true, force: true });
@@ -920,7 +1202,7 @@ describe('publishPackage', () => {
   });
 
   it('rejects traversal copy sources before modifying the publish directory', async () => {
-    const rootDir = await mkdtemp(join(tmpdir(), 'repo-toolkit-publish-package-traversal-'));
+    const rootDir = await mkdtemp(join(tmpdir(), 'pp-index-traversal-'));
     const outsideFile = join(rootDir, '..', 'outside.txt');
 
     try {
@@ -929,14 +1211,14 @@ describe('publishPackage', () => {
       await writeFile(join(rootDir, 'dist', 'index.js'), 'export {}\n');
       await writeFile(outsideFile, 'marker\n');
 
-      expect(() =>
+      await expect(
         publishPackage({
           cwd: rootDir,
           skipBuild: true,
           dryRun: true,
           includePackageFiles: ['../outside.txt'],
         }),
-      ).toThrowError(/parent-directory segments/);
+      ).rejects.toThrowError(/parent-directory segments/);
       expect(existsSync(join(rootDir, 'dist', 'outside.txt'))).toBe(false);
       await expect(readFile(outsideFile, 'utf8')).resolves.toBe('marker\n');
     } finally {
@@ -946,8 +1228,8 @@ describe('publishPackage', () => {
   });
 
   it('rejects symlinked copy sources that escape the package root', async () => {
-    const rootDir = await mkdtemp(join(tmpdir(), 'repo-toolkit-publish-package-symlink-source-'));
-    const outsideDir = await mkdtemp(join(tmpdir(), 'repo-toolkit-publish-package-outside-'));
+    const rootDir = await mkdtemp(join(tmpdir(), 'pp-index-symlink-source-'));
+    const outsideDir = await mkdtemp(join(tmpdir(), 'pp-index-outside-'));
 
     try {
       await mkdir(join(rootDir, 'dist'), { recursive: true });
@@ -957,14 +1239,14 @@ describe('publishPackage', () => {
       await writeFile(join(outsideDir, 'secret.md'), 'secret\n');
       await symlink(join(outsideDir, 'secret.md'), join(rootDir, 'docs', 'secret.md'));
 
-      expect(() =>
+      await expect(
         publishPackage({
           cwd: rootDir,
           skipBuild: true,
           dryRun: true,
           includePackageFiles: ['docs/secret.md'],
         }),
-      ).toThrowError(/escapes the package root/);
+      ).rejects.toThrowError(/escapes the package root/);
       expect(existsSync(join(rootDir, 'dist', 'secret.md'))).toBe(false);
     } finally {
       await rm(outsideDir, { recursive: true, force: true });
@@ -973,21 +1255,21 @@ describe('publishPackage', () => {
   });
 
   it('rejects publishDir symlinks that escape the package root before running the build', async () => {
-    const rootDir = await mkdtemp(join(tmpdir(), 'repo-toolkit-publish-package-symlink-dist-'));
-    const outsideDir = await mkdtemp(join(tmpdir(), 'repo-toolkit-publish-package-dest-outside-'));
+    const rootDir = await mkdtemp(join(tmpdir(), 'pp-index-symlink-dist-'));
+    const outsideDir = await mkdtemp(join(tmpdir(), 'pp-index-dest-outside-'));
     const markerPath = join(rootDir, 'build-ran.txt');
 
     try {
       await writeFile(join(rootDir, 'package.json'), `${JSON.stringify({ name: '@example/pkg', version: '1.2.3' })}\n`);
       await symlink(outsideDir, join(rootDir, 'dist'));
 
-      expect(() =>
+      await expect(
         publishPackage({
           cwd: rootDir,
           buildCommand: `touch ${JSON.stringify(markerPath)}`,
           dryRun: true,
         }),
-      ).toThrowError(/publish directory escapes the package root/);
+      ).rejects.toThrowError(/publish directory escapes the package root/);
       expect(existsSync(markerPath)).toBe(false);
     } finally {
       await rm(outsideDir, { recursive: true, force: true });
@@ -1065,7 +1347,7 @@ describe('publishPackage with injected runner', () => {
     try {
       await makePackageFixture(rootDir, { name: '@example/pkg', version: '1.2.3' });
 
-      publishPackage({
+      await publishPackage({
         cwd: rootDir,
         version: '1.2.3',
         buildCommand: 'pnpm build',
@@ -1090,7 +1372,7 @@ describe('publishPackage with injected runner', () => {
     try {
       await makePackageFixture(rootDir, { name: '@example/pkg', version: '1.2.3' });
 
-      publishPackage({
+      await publishPackage({
         cwd: rootDir,
         version: '1.2.3',
         skipBuild: true,
@@ -1112,7 +1394,7 @@ describe('publishPackage with injected runner', () => {
     try {
       await makePackageFixture(rootDir, { name: '@example/pkg', version: '1.2.3-beta.4' });
 
-      publishPackage({
+      await publishPackage({
         cwd: rootDir,
         version: '1.2.3-beta.4',
         access: 'restricted',
@@ -1152,7 +1434,7 @@ describe('publishPackage with injected runner', () => {
     try {
       await makePackageFixture(rootDir, { name: '@example/pkg', version: '1.2.3' });
 
-      publishPackage({
+      await publishPackage({
         cwd: rootDir,
         version: '1.2.3',
         otp: '123456',
@@ -1178,7 +1460,7 @@ describe('publishPackage with injected runner', () => {
     try {
       await makePackageFixture(rootDir, { name: '@example/pkg', version: '1.2.3' });
 
-      publishPackage({
+      await publishPackage({
         cwd: rootDir,
         version: '1.2.3',
         skipBuild: true,
@@ -1203,7 +1485,7 @@ describe('publishPackage with injected runner', () => {
         version: '1.2.3',
       });
 
-      publishPackage({ cwd: rootDir, version: '1.2.3', skipBuild: true, dryRun: true, runner });
+      await publishPackage({ cwd: rootDir, version: '1.2.3', skipBuild: true, dryRun: true, runner });
 
       const npmRuns = runner.runs.filter((entry) => entry.kind === 'run');
       expect(npmRuns).toHaveLength(3);
@@ -1226,9 +1508,9 @@ describe('publishPackage with injected runner', () => {
 
       runner.setFailAfter(0);
 
-      expect(() =>
+      await expect(
         publishPackage({ cwd: rootDir, version: '1.2.3', skipBuild: true, dryRun: true, runner }),
-      ).toThrowError();
+      ).rejects.toThrowError();
       const npmRuns = runner.runs.filter((entry) => entry.kind === 'run');
       expect(npmRuns).toHaveLength(1);
     } finally {
@@ -1244,7 +1526,7 @@ describe('publishPackage with injected runner', () => {
       await makePackageFixture(rootDir, { name: '@example/pkg', version: '1.2.3' });
       runner.setFailAfter(0);
 
-      expect(() => publishPackage({ cwd: rootDir, version: '1.2.3', dryRun: true, runner })).toThrowError(
+      await expect(publishPackage({ cwd: rootDir, version: '1.2.3', dryRun: true, runner })).rejects.toThrowError(
         /fake: pnpm build failed/,
       );
       expect(runner.runs.some((entry) => entry.kind === 'run')).toBe(false);
@@ -1267,9 +1549,9 @@ describe('publishPackage with injected runner', () => {
     try {
       await makePackageFixture(rootDir, { name: '@example/pkg', version: '1.2.3' });
 
-      expect(() =>
+      await expect(
         publishPackage({ cwd: rootDir, version: '1.2.3', otp: '123456', skipBuild: true, dryRun: true, runner }),
-      ).toThrowError(/npm publish: failed otp=\[redacted\] during publish/);
+      ).rejects.toThrowError(/npm publish: failed otp=\[redacted\] during publish/);
     } finally {
       await rm(rootDir, { recursive: true, force: true });
     }

@@ -126,7 +126,7 @@ async function main(): Promise<void> {
     validate: (v) => (v.length === 0 ? 'Version is required' : undefined),
   });
 
-  publishPackages(merged);
+  await publishPackages(merged);
 }
 
 main().catch((error: unknown) => {

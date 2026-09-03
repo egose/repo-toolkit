@@ -228,7 +228,7 @@ export function resolvePublishPackagesPlan(options: PublishPackagesOptions): Pub
   };
 }
 
-export function publishPackages(options: PublishPackagesOptions): void {
+export async function publishPackages(options: PublishPackagesOptions): Promise<void> {
   const plan = resolvePublishPackagesPlan(options);
   const publishOptionsByPackage = plan.packages.map((pkg) => ({
     pkg,
@@ -251,7 +251,7 @@ export function publishPackages(options: PublishPackagesOptions): void {
     console.log(`processing ${entry.pkg.dir}`);
 
     try {
-      publishPackage(entry.publishOptions);
+      await publishPackage(entry.publishOptions);
       completed.push(entry.pkg.packageJson.name as string);
     } catch (error) {
       const pending = publishOptionsByPackage
