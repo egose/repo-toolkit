@@ -513,7 +513,7 @@ describe('publishPackages (integration, fake runner)', () => {
 
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
     try {
-      publishPackages({
+      await publishPackages({
         version: '1.2.3',
         cwd: rootDir,
         filters: ['pkg-a'],
@@ -557,14 +557,14 @@ describe('publishPackages (integration, fake runner)', () => {
 
     const runner = createFakePublishRunner(['dist']);
 
-    expect(() =>
+    await expect(
       publishPackages({
         version: '1.2.3',
         cwd: rootDir,
         dryRun: true,
         runner,
       }),
-    ).toThrowError(/Refusing to publish private workspace package/);
+    ).rejects.toThrowError(/Refusing to publish private workspace package/);
     expect(existsSync(join(rootDir, 'packages', 'pkg-a', 'dist', 'package.json'))).toBe(false);
     // Preflight means the runner was never invoked.
     expect(runner.runs).toHaveLength(0);
@@ -596,7 +596,7 @@ describe('publishPackages (integration, fake runner)', () => {
 
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
     try {
-      publishPackages({ version: '1.2.3', cwd: rootDir, dryRun: true, runner });
+      await publishPackages({ version: '1.2.3', cwd: rootDir, dryRun: true, runner });
     } finally {
       logSpy.mockRestore();
     }
@@ -649,7 +649,7 @@ describe('publishPackages (integration, fake runner)', () => {
 
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
     try {
-      expect(() => publishPackages({ version: '1.2.3', cwd: rootDir, dryRun: true, runner })).toThrowError(
+      await expect(publishPackages({ version: '1.2.3', cwd: rootDir, dryRun: true, runner })).rejects.toThrowError(
         /Publish failed after preflight/,
       );
     } finally {
@@ -680,7 +680,7 @@ describe('publishPackages (integration, fake runner)', () => {
     const runner = createFakePublishRunner(['dist']);
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
     try {
-      publishPackages({ version: '1.2.3', cwd: rootDir, dryRun: true, preservePublishDir: false, runner });
+      await publishPackages({ version: '1.2.3', cwd: rootDir, dryRun: true, preservePublishDir: false, runner });
     } finally {
       logSpy.mockRestore();
     }
@@ -738,7 +738,7 @@ describe('publishPackages (integration, fake runner)', () => {
 
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
     try {
-      publishPackages({ version: '1.2.3', cwd: rootDir, dryRun: true, preservePublishDir: true, runner });
+      await publishPackages({ version: '1.2.3', cwd: rootDir, dryRun: true, preservePublishDir: true, runner });
     } finally {
       logSpy.mockRestore();
     }
@@ -781,7 +781,7 @@ describe('publishPackages (integration, fake runner)', () => {
 
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
     try {
-      publishPackages({
+      await publishPackages({
         version: '1.2.3',
         cwd: rootDir,
         dryRun: true,
