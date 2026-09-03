@@ -57,6 +57,18 @@ const toc = [{
   "id": "flags",
   "level": 3
 }, {
+  "value": "Version selection",
+  "id": "version-selection",
+  "level": 3
+}, {
+  "value": "Prepare-only vs npm dry-run",
+  "id": "prepare-only-vs-npm-dry-run",
+  "level": 3
+}, {
+  "value": "Private source templates",
+  "id": "private-source-templates",
+  "level": 3
+}, {
   "value": "Publish layout",
   "id": "publish-layout",
   "level": 3
@@ -64,6 +76,10 @@ const toc = [{
   "value": "Config File",
   "id": "config-file",
   "level": 2
+}, {
+  "value": "Artifact recipes",
+  "id": "artifact-recipes",
+  "level": 3
 }, {
   "value": "JavaScript API",
   "id": "javascript-api",
@@ -81,11 +97,13 @@ function _createMdxContent(props) {
   const _components = {
     a: "a",
     code: "code",
+    em: "em",
     h1: "h1",
     h2: "h2",
     h3: "h3",
     header: "header",
     li: "li",
+    ol: "ol",
     p: "p",
     pre: "pre",
     strong: "strong",
@@ -247,7 +265,9 @@ function _createMdxContent(props) {
           }), (0,jsx_runtime.jsxs)(_components.td, {
             children: ["Target package version. A leading ", (0,jsx_runtime.jsx)(_components.code, {
               children: "v"
-            }), " is stripped."]
+            }), " is stripped. Mutually exclusive with ", (0,jsx_runtime.jsx)(_components.code, {
+              children: "--bump"
+            }), "."]
           }), (0,jsx_runtime.jsx)(_components.td, {
             children: (0,jsx_runtime.jsx)(_components.code, {
               children: "package.json.version"
@@ -262,6 +282,18 @@ function _createMdxContent(props) {
             children: ["Alias for ", (0,jsx_runtime.jsx)(_components.code, {
               children: "--version"
             })]
+          }), (0,jsx_runtime.jsx)(_components.td, {
+            children: "—"
+          })]
+        }), (0,jsx_runtime.jsxs)(_components.tr, {
+          children: [(0,jsx_runtime.jsx)(_components.td, {
+            children: (0,jsx_runtime.jsx)(_components.code, {
+              children: "--bump <major|minor|patch>"
+            })
+          }), (0,jsx_runtime.jsxs)(_components.td, {
+            children: ["Derive the version from the npm registry. Mutually exclusive with ", (0,jsx_runtime.jsx)(_components.code, {
+              children: "--version"
+            }), "."]
           }), (0,jsx_runtime.jsx)(_components.td, {
             children: "—"
           })]
@@ -463,6 +495,50 @@ function _createMdxContent(props) {
               children: "--dry-run"
             }), " to ", (0,jsx_runtime.jsx)(_components.code, {
               children: "npm publish"
+            }), " (npm is still invoked)."]
+          }), (0,jsx_runtime.jsx)(_components.td, {
+            children: (0,jsx_runtime.jsx)(_components.code, {
+              children: "false"
+            })
+          })]
+        }), (0,jsx_runtime.jsxs)(_components.tr, {
+          children: [(0,jsx_runtime.jsx)(_components.td, {
+            children: (0,jsx_runtime.jsx)(_components.code, {
+              children: "--publish-access <level>"
+            })
+          }), (0,jsx_runtime.jsxs)(_components.td, {
+            children: ["Inject ", (0,jsx_runtime.jsx)(_components.code, {
+              children: "publishConfig.access"
+            }), " into generated manifests."]
+          }), (0,jsx_runtime.jsx)(_components.td, {
+            children: "—"
+          })]
+        }), (0,jsx_runtime.jsxs)(_components.tr, {
+          children: [(0,jsx_runtime.jsx)(_components.td, {
+            children: (0,jsx_runtime.jsx)(_components.code, {
+              children: "--prepare-only"
+            })
+          }), (0,jsx_runtime.jsxs)(_components.td, {
+            children: ["Prepare and pack artifacts ", (0,jsx_runtime.jsx)(_components.strong, {
+              children: "without"
+            }), " calling ", (0,jsx_runtime.jsx)(_components.code, {
+              children: "npm publish"
+            }), " at all."]
+          }), (0,jsx_runtime.jsx)(_components.td, {
+            children: (0,jsx_runtime.jsx)(_components.code, {
+              children: "false"
+            })
+          })]
+        }), (0,jsx_runtime.jsxs)(_components.tr, {
+          children: [(0,jsx_runtime.jsx)(_components.td, {
+            children: (0,jsx_runtime.jsx)(_components.code, {
+              children: "--allow-private-template"
+            })
+          }), (0,jsx_runtime.jsxs)(_components.td, {
+            children: ["Explicit opt-in to use a ", (0,jsx_runtime.jsx)(_components.code, {
+              children: "private: true"
+            }), " source manifest as a template. The output never carries ", (0,jsx_runtime.jsx)(_components.code, {
+              children: "private"
             }), "."]
           }), (0,jsx_runtime.jsx)(_components.td, {
             children: (0,jsx_runtime.jsx)(_components.code, {
@@ -481,6 +557,99 @@ function _createMdxContent(props) {
           })]
         })]
       })]
+    }), "\n", (0,jsx_runtime.jsx)(_components.h3, {
+      id: "version-selection",
+      children: "Version selection"
+    }), "\n", (0,jsx_runtime.jsx)(_components.p, {
+      children: "Exactly one of the following decides the release version:"
+    }), "\n", (0,jsx_runtime.jsxs)(_components.ol, {
+      children: ["\n", (0,jsx_runtime.jsxs)(_components.li, {
+        children: [(0,jsx_runtime.jsx)(_components.code, {
+          children: "--version <v>"
+        }), " / config ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "version"
+        }), " — an explicit semver version (one leading ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "v"
+        }), " is stripped). Mutually exclusive with ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "bump"
+        }), ", regardless of whether the values came from the CLI or the config file. CLI values override config values for the same field."]
+      }), "\n", (0,jsx_runtime.jsxs)(_components.li, {
+        children: [(0,jsx_runtime.jsx)(_components.code, {
+          children: "--bump <major|minor|patch>"
+        }), " / config ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "bump"
+        }), " — resolves the prior published version with ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "npm view <name> version --json"
+        }), " (honoring ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "--registry"
+        }), ") and applies the bump. Only a ", (0,jsx_runtime.jsx)(_components.em, {
+          children: "confirmed package-absence"
+        }), " response starts from ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "0.0.0"
+        }), " (so a patch bump yields ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "0.0.1"
+        }), "). Authentication failures, timeouts, network errors, registry 5xx responses, malformed JSON, and invalid registry versions are fatal — they are never treated as \"first release\"."]
+      }), "\n", (0,jsx_runtime.jsxs)(_components.li, {
+        children: ["Neither — ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "package.json.version"
+        }), " (which must not still be the version placeholder)."]
+      }), "\n"]
+    }), "\n", (0,jsx_runtime.jsx)(_components.h3, {
+      id: "prepare-only-vs-npm-dry-run",
+      children: "Prepare-only vs npm dry-run"
+    }), "\n", (0,jsx_runtime.jsxs)(_components.ul, {
+      children: ["\n", (0,jsx_runtime.jsxs)(_components.li, {
+        children: [(0,jsx_runtime.jsx)(_components.code, {
+          children: "--prepare-only"
+        }), " / ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "prepareOnly: true"
+        }), " prepares every artifact (staging, builds, manifest generation, overlays, validation, and packing when required) and then ", (0,jsx_runtime.jsxs)(_components.strong, {
+          children: ["returns without invoking ", (0,jsx_runtime.jsx)(_components.code, {
+            children: "npm publish"
+          }), " at all"]
+        }), ". The prepared stage directories and tarballs are retained so you can inspect them; their locations are returned as ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "PreparedPackageArtifact[]"
+        }), " (", (0,jsx_runtime.jsx)(_components.code, {
+          children: "stageDir"
+        }), ", optional ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "tarballPath"
+        }), ") and default to ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "<publishDir>/.artifacts/<id>/"
+        }), " per recipe."]
+      }), "\n", (0,jsx_runtime.jsxs)(_components.li, {
+        children: [(0,jsx_runtime.jsx)(_components.code, {
+          children: "--dry-run"
+        }), " is different: it forwards ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "--dry-run"
+        }), " to ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "npm publish"
+        }), ", which means npm ", (0,jsx_runtime.jsx)(_components.strong, {
+          children: "is still invoked"
+        }), " (and performs its own dry-run checks)."]
+      }), "\n"]
+    }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
+      children: ["When a publish is requested, ", (0,jsx_runtime.jsxs)(_components.strong, {
+        children: ["every artifact finishes preparation and packing before the first ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "npm publish"
+        }), " runs"]
+      }), " — a build, overlay, validation, or pack failure for any artifact publishes nothing."]
+    }), "\n", (0,jsx_runtime.jsx)(_components.h3, {
+      id: "private-source-templates",
+      children: "Private source templates"
+    }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
+      children: ["By default a source manifest with ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "\"private\": true"
+      }), " is refused. ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "--allow-private-template"
+      }), " / ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "allowPrivateTemplate: true"
+      }), " is an explicit safety opt-in that permits using such a manifest as a non-publishable ", (0,jsx_runtime.jsx)(_components.em, {
+        children: "template"
+      }), ": the generated release manifest ", (0,jsx_runtime.jsx)(_components.strong, {
+        children: "never"
+      }), " carries a ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "private"
+      }), " field, regardless of the opt-in."]
     }), "\n", (0,jsx_runtime.jsx)(_components.h3, {
       id: "publish-layout",
       children: "Publish layout"
@@ -592,6 +761,66 @@ function _createMdxContent(props) {
         className: "language-js",
         children: "/** @type {import('@repo-toolkit/publish-package').PublishPackageOptions} */\nexport default {\n  cwd: process.cwd(),\n  version: '1.2.3',\n  rootFiles: ['LICENSE'],\n  packageFiles: ['README.md', 'CHANGELOG.md'],\n  publishDir: 'dist',\n  preservePublishDir: false,\n  versionPlaceholder: '0.0.0-PLACEHOLDER',\n  buildCommand: 'pnpm build',\n  dryRun: true,\n};\n"
       })
+    }), "\n", (0,jsx_runtime.jsx)(_components.h3, {
+      id: "artifact-recipes",
+      children: "Artifact recipes"
+    }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
+      children: ["Pass ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "artifacts"
+      }), " in a JavaScript config (", (0,jsx_runtime.jsx)(_components.code, {
+        children: ".mjs"
+      }), "/", (0,jsx_runtime.jsx)(_components.code, {
+        children: ".cjs"
+      }), ", default export or a named ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "artifacts"
+      }), " export) or the API to define several independently staged and published packages. Each recipe takes ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "id"
+      }), ", ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "packageName"
+      }), ", an optional isolated ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "stageDir"
+      }), " (default ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "<publishDir>/.artifacts/<id>"
+      }), "), optional ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "build"
+      }), "/", (0,jsx_runtime.jsx)(_components.code, {
+        children: "validate"
+      }), " hooks receiving a constrained context, an optional ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "manifestOverlay"
+      }), " (object or function), ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "requireTarball"
+      }), " (pack via ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "npm pack --json --ignore-scripts"
+      }), " and publish the exact tarball), ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "preserveSourceFiles"
+      }), ", and ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "publishAccess"
+      }), "."]
+    }), "\n", (0,jsx_runtime.jsx)(_components.pre, {
+      children: (0,jsx_runtime.jsx)(_components.code, {
+        className: "language-js",
+        children: "/** @type {import('@repo-toolkit/publish-package').PublishPackageOptions} */\nexport default {\n  version: '1.2.3',\n  artifacts: [\n    {\n      id: 'widget',\n      packageName: '@example/widget',\n      requireTarball: true,\n      build({ stageDir }) {\n        // build the standard widget bundle into stageDir\n      },\n    },\n    {\n      id: 'widget-min',\n      packageName: '@example/widget-min',\n      requireTarball: true,\n      build({ stageDir }) {\n        // build the minified variant into its own isolated stageDir\n      },\n      manifestOverlay({ packageName }) {\n        return { exports: { '.': './index.min.js' }, description: `${packageName} (minified)` };\n      },\n      validate({ stageDir }) {\n        // throw if the staged artifact fails package-specific checks\n      },\n    },\n    {\n      id: 'widget-debug',\n      packageName: '@example/widget-debug',\n      preserveSourceFiles: true,\n      build({ stageDir }) {\n        // build the debug variant\n      },\n    },\n  ],\n};\n"
+      })
+    }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
+      children: ["Manifest overlays follow a protected-field deny-list: ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "private"
+      }), ", ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "scripts"
+      }), ", ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "devDependencies"
+      }), ", and ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "packageManager"
+      }), " are always rejected; ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "version"
+      }), " and ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "name"
+      }), " may not conflict with the release version and recipe package name; ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "exports"
+      }), " must pass the same shape validation as source manifests. After merging, dependency-range rewriting and full manifest validation re-run."]
+    }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
+      children: ["Executable hooks require a JavaScript config. A JSON config may only express the declarative recipe fields (plus a static object ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "manifestOverlay"
+      }), "); a JSON config that names a hook or a non-object overlay fails with an error telling you to use a JavaScript config."]
     }), "\n", (0,jsx_runtime.jsx)(_components.h2, {
       id: "javascript-api",
       children: "JavaScript API"
