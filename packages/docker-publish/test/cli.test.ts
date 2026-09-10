@@ -602,7 +602,7 @@ describe('CLI auth shape validation (REV-09)', () => {
     });
     const result = runCli(buildCli, ['--cwd', cwd, '--config', config, '--dry-run']);
     expect(result.status).toBe(1);
-    expect(result.stderr).toContain('must define exactly usernameEnv and passwordEnv');
+    expect(result.stderr).toContain('must define passwordEnv and exactly one of username or usernameEnv');
     expect(result.stdout).toBe('');
     expect(existsSync(marker.marker)).toBe(false);
   });
@@ -617,11 +617,22 @@ describe('CLI auth shape validation (REV-09)', () => {
       },
       {
         auth: { 'registry.example.com': 'nope' },
-        message: 'auth["registry.example.com"] must be an object with usernameEnv and passwordEnv',
+        message:
+          'auth["registry.example.com"] must be an object with passwordEnv and exactly one of username or usernameEnv',
       },
       {
         auth: { 'registry.example.com': { usernameEnv: 'OK_USER' } },
-        message: 'auth["registry.example.com"] must define exactly usernameEnv and passwordEnv',
+        message: 'auth["registry.example.com"] must define passwordEnv and exactly one of username or usernameEnv',
+      },
+      {
+        auth: {
+          'registry.example.com': { username: 'octocat', usernameEnv: 'OK_USER', passwordEnv: 'OK_PASS' },
+        },
+        message: 'auth["registry.example.com"] must define passwordEnv and exactly one of username or usernameEnv',
+      },
+      {
+        auth: { 'registry.example.com': { username: 'not a user', passwordEnv: 'OK_PASS' } },
+        message: 'auth["registry.example.com"].username must not contain whitespace or control characters',
       },
     ] as const;
     for (const { auth, message } of cases) {
@@ -666,7 +677,7 @@ describe('CLI auth shape validation (REV-09)', () => {
           },
         },
       ),
-    ).rejects.toThrow('must define exactly usernameEnv and passwordEnv');
+    ).rejects.toThrow('must define passwordEnv and exactly one of username or usernameEnv');
     expect(printed).toBe(0);
   });
 });

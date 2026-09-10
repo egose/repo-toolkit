@@ -26,6 +26,7 @@ import {
   CLI_ONLY_KEYS,
 } from './cli-filter';
 import {
+  defaultHostPlatforms,
   KNOWN_ARCH,
   KNOWN_OS,
   MAX_MAP_ENTRIES,
@@ -37,7 +38,7 @@ import {
   type DockerPublishPlan,
   type DockerPublishRegistryOptions,
 } from './plan';
-import { loginRegistries, validateDockerPublishAuthMap } from './publish';
+import { loginRegistries, validateDockerPublishAuthMap, validateDockerPublishUsername } from './publish';
 import type { DockerLoginRunner, DockerPublishRegistryAuth, DockerRegistryCredentials } from './publish';
 
 export interface PrompterTextRequest {
@@ -224,7 +225,7 @@ export async function resolveInteractiveDockerPublishOptions(
   const tags = await promptTags(prompter, readStringListDefault(loaded.tags));
   const platforms = await promptPlatforms(
     prompter,
-    readStringListDefault(loaded.platforms),
+    loaded.platforms === undefined ? defaultHostPlatforms() : readStringListDefault(loaded.platforms),
     readBooleanDefault(loaded.allowCustomPlatforms, false),
   );
   const advanced = await promptAdvanced(prompter, loaded, platforms.allowCustomPlatforms);
@@ -442,7 +443,7 @@ async function promptImageEntries(
     const contextDir = await promptLine(
       prompter,
       `Image ${index + 1} context directory`,
-      fallback?.contextDir,
+      fallback?.contextDir ?? '.',
       validateRelativePathValue(`${label}.contextDir`),
       `${label}.contextDir must be a non-empty string`,
     );
@@ -883,7 +884,7 @@ function validateRelativePathValue(label: string): (value: string) => string | u
       return `${label} must be relative: ${value}`;
     }
     const parts = slashPath.split('/').filter((part) => part !== '' && part !== '.');
-    if (parts.length === 0 || parts.indexOf('..') >= 0) {
+    if (parts.indexOf('..') >= 0) {
       return `${label} must be a non-root path without parent-directory segments: ${value}`;
     }
     return undefined;
@@ -1019,13 +1020,26 @@ export async function promptInteractiveAuth(
     const configured = Object.prototype.hasOwnProperty.call(configuredAuth, hostname)
       ? (configuredAuth[hostname] as DockerPublishRegistryAuth)
       : undefined;
-    const usernameEnv = await promptEnvVarName(
-      prompter,
-      `Registry ${hostname} username env var`,
-      `auth[${JSON.stringify(hostname)}].usernameEnv`,
-      configured?.usernameEnv,
-    );
-    const username = await promptUsernameValue(prompter, hostname, usernameEnv);
+    const configuredUsername = configured?.username;
+    let promptedUsername: string;
+    let promptedUsernameEnv: string | undefined;
+    if (configuredUsername !== undefined) {
+      promptedUsername = await promptLine(
+        prompter,
+        `Username for registry ${hostname}`,
+        configuredUsername,
+        (value: string) => validateDockerPublishUsername(value, `auth[${JSON.stringify(hostname)}].username`),
+        `auth[${JSON.stringify(hostname)}].username must be a non-empty string`,
+      );
+    } else {
+      promptedUsernameEnv = await promptEnvVarName(
+        prompter,
+        `Registry ${hostname} username env var`,
+        `auth[${JSON.stringify(hostname)}].usernameEnv`,
+        configured?.usernameEnv,
+      );
+      promptedUsername = await promptUsernameValue(prompter, hostname, promptedUsernameEnv);
+    }
     const passwordEnv = await promptEnvVarName(
       prompter,
       `Registry ${hostname} password env var`,
@@ -1033,8 +1047,11 @@ export async function promptInteractiveAuth(
       configured?.passwordEnv,
     );
     const password = await promptPasswordValue(prompter, hostname, passwordEnv);
-    auth[hostname] = { usernameEnv, passwordEnv };
-    authValues[hostname] = { username, password };
+    auth[hostname] =
+      promptedUsernameEnv === undefined
+        ? { username: promptedUsername, passwordEnv }
+        : { usernameEnv: promptedUsernameEnv, passwordEnv };
+    authValues[hostname] = { username: promptedUsername, password };
   }
   return { auth, authValues };
 }
@@ -1088,12 +1105,25 @@ function resolveInteractiveCredentials(
     const ephemeral = Object.prototype.hasOwnProperty.call(authValues, hostname)
       ? (authValues[hostname] as InteractiveAuthCredentials)
       : undefined;
-    const envUsername = process.env[spec.usernameEnv];
+    const literal = spec.username;
+    const envName = spec.usernameEnv;
+    const envUsername = envName !== undefined ? process.env[envName] : undefined;
     const envPassword = process.env[spec.passwordEnv];
-    const username = ephemeral !== undefined ? ephemeral.username : typeof envUsername === 'string' ? envUsername : '';
+    const username =
+      ephemeral !== undefined
+        ? ephemeral.username
+        : literal !== undefined
+          ? literal
+          : typeof envUsername === 'string'
+            ? envUsername
+            : '';
     const password = ephemeral !== undefined ? ephemeral.password : typeof envPassword === 'string' ? envPassword : '';
     if (username.length === 0) {
-      throw new Error(`Missing username for registry ${hostname} in environment variable ${spec.usernameEnv}`);
+      throw new Error(
+        envName !== undefined
+          ? `Missing username for registry ${hostname} in environment variable ${envName}`
+          : `Missing username for registry ${hostname}`,
+      );
     }
     if (password.length === 0) {
       throw new Error(`Missing password for registry ${hostname} in environment variable ${spec.passwordEnv}`);

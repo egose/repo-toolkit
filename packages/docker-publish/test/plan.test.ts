@@ -13,7 +13,7 @@ import { tmpdir } from 'node:os';
 import { join, relative, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
-import { resolveDockerPublishPlan, type DockerPublishOptions } from '../src/index';
+import { hostDockerPlatformName, resolveDockerPublishPlan, type DockerPublishOptions } from '../src/index';
 import { assertResolvedImagePaths, formatImageReference } from '../src/plan';
 import { withProject, writeImageContext } from './helpers';
 
@@ -141,6 +141,41 @@ describe('single-image plan', () => {
   });
 });
 
+describe('project-root context', () => {
+  it('resolves contextDir "." to the project root with a root Dockerfile', () => {
+    withProject('docker-publish-plan-', (root) => {
+      writeFileSync(join(root, 'Dockerfile'), 'FROM scratch\n');
+      const plan = resolveDockerPublishPlan({
+        cwd: root,
+        images: [{ name: 'app', contextDir: '.' }],
+        registries: [{ hostname: 'registry.example.com', repositoryPrefix: 'team' }],
+        tags: ['1.2.3'],
+        platforms: ['linux/amd64'],
+      });
+      expect(plan.images[0].contextDir).toBe('.');
+      expect(plan.images[0].resolvedContextDir).toBe(realpathSync(root));
+      expect(plan.images[0].dockerfile).toBe('Dockerfile');
+      expect(plan.images[0].resolvedDockerfile).toBe(join(realpathSync(root), 'Dockerfile'));
+      expect(plan.images[0].references).toEqual(['registry.example.com/team/app:1.2.3']);
+    });
+  });
+
+  it('accepts dot-segment variants such as "./" as the project root', () => {
+    withProject('docker-publish-plan-', (root) => {
+      writeFileSync(join(root, 'Dockerfile'), 'FROM scratch\n');
+      const plan = resolveDockerPublishPlan({
+        cwd: root,
+        images: [{ name: 'app', contextDir: './' }],
+        registries: [{ hostname: 'registry.example.com', repositoryPrefix: 'team' }],
+        tags: ['1.2.3'],
+        platforms: ['linux/amd64'],
+      });
+      expect(plan.images[0].contextDir).toBe('.');
+      expect(plan.images[0].resolvedContextDir).toBe(realpathSync(root));
+    });
+  });
+});
+
 describe('two-image two-registry plan', () => {
   it('resolves distinct tags, build args, and labels across the full reference matrix', () => {
     withProject('docker-publish-plan-', (root) => {
@@ -178,7 +213,7 @@ describe('two-image two-registry plan', () => {
 });
 
 describe('required collections', () => {
-  it('requires images, registries, tags, and platforms', () => {
+  it('requires images, registries, and tags', () => {
     withProject('docker-publish-plan-', (root) => {
       writeImageContext(root, 'services/app');
       const base = singleImageOptions(root);
@@ -196,6 +231,46 @@ describe('required collections', () => {
         'cwd must be an existing directory',
       );
     });
+  });
+});
+
+describe('host platform default', () => {
+  it('defaults omitted platforms to the host platform', () => {
+    withProject('docker-publish-plan-', (root) => {
+      writeImageContext(root, 'services/app');
+      const base = singleImageOptions(root);
+      const { platforms, ...withoutPlatforms } = base;
+      void platforms;
+      const plan = resolveDockerPublishPlan(withoutPlatforms);
+      expect(plan.platforms.map((platform) => platform.name)).toEqual([hostDockerPlatformName()]);
+    });
+  });
+
+  it('rejects non-array platforms', () => {
+    withProject('docker-publish-plan-', (root) => {
+      writeImageContext(root, 'services/app');
+      const base = singleImageOptions(root);
+      expect(() => resolveDockerPublishPlan({ ...base, platforms: 'linux/amd64' })).toThrow(
+        'platforms must be an array of os/arch strings',
+      );
+    });
+  });
+
+  it('maps Node os/arch pairs to Docker platform names', () => {
+    expect(hostDockerPlatformName('linux', 'x64')).toBe('linux/amd64');
+    expect(hostDockerPlatformName('linux', 'arm64')).toBe('linux/arm64');
+    expect(hostDockerPlatformName('darwin', 'arm64')).toBe('darwin/arm64');
+    expect(hostDockerPlatformName('darwin', 'x64')).toBe('darwin/amd64');
+    expect(hostDockerPlatformName('win32', 'x64')).toBe('windows/amd64');
+    expect(hostDockerPlatformName('freebsd', 'x64')).toBe('freebsd/amd64');
+    expect(hostDockerPlatformName('sunos', 'x64')).toBe('solaris/amd64');
+    expect(hostDockerPlatformName('linux', 'ia32')).toBe('linux/386');
+  });
+
+  it('fails closed for unmapped host os/arch pairs', () => {
+    expect(() => hostDockerPlatformName('plan9', 'x64')).toThrow('Cannot detect the host Docker platform');
+    expect(() => hostDockerPlatformName('linux', 'ppc')).toThrow('Cannot detect the host Docker platform');
+    expect(() => hostDockerPlatformName('linux', 'mipsel')).toThrow('set platforms explicitly');
   });
 });
 

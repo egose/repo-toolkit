@@ -1,5 +1,7 @@
 export {
+  defaultHostPlatforms,
   formatImageReference,
+  hostDockerPlatformName,
   resolveDockerPublishPlan,
   type DockerPublishImage,
   type DockerPublishImageOptions,
