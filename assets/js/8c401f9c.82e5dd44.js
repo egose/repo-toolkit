@@ -322,7 +322,13 @@ function _createMdxContent(props) {
               children: "buildArgs"
             }), "/", (0,jsx_runtime.jsx)(_components.code, {
               children: "labels"
-            }), ". Names must be unique."]
+            }), ". Names must be unique. ", (0,jsx_runtime.jsx)(_components.code, {
+              children: "contextDir: \".\""
+            }), " selects the project root itself (with ", (0,jsx_runtime.jsx)(_components.code, {
+              children: "dockerfile"
+            }), " defaulting to ", (0,jsx_runtime.jsx)(_components.code, {
+              children: "./Dockerfile"
+            }), ")."]
           })]
         }), (0,jsx_runtime.jsxs)(_components.tr, {
           children: [(0,jsx_runtime.jsx)(_components.td, {
@@ -363,12 +369,14 @@ function _createMdxContent(props) {
             })
           }), (0,jsx_runtime.jsx)(_components.td, {
             children: "string array"
-          }), (0,jsx_runtime.jsx)(_components.td, {
-            children: "required, at least one"
+          }), (0,jsx_runtime.jsxs)(_components.td, {
+            children: ["host platform (e.g. ", (0,jsx_runtime.jsx)(_components.code, {
+              children: "linux/amd64"
+            }), ")"]
           }), (0,jsx_runtime.jsxs)(_components.td, {
             children: ["Explicit ", (0,jsx_runtime.jsx)(_components.code, {
               children: "os/arch[/variant]"
-            }), " list. A known-OS/arch table covers the common pairs; anything else requires ", (0,jsx_runtime.jsx)(_components.code, {
+            }), " list. Omit it to build for the machine running the CLI (detected from the host OS/arch; exotic hosts fail closed with an error telling you to set it explicitly). A known-OS/arch table covers the common pairs; anything else requires ", (0,jsx_runtime.jsx)(_components.code, {
               children: "allowCustomPlatforms: true"
             }), "."]
           })]
@@ -542,7 +550,13 @@ function _createMdxContent(props) {
               children: "{}"
             })
           }), (0,jsx_runtime.jsxs)(_components.td, {
-            children: ["Registry auth env contract (see below). Passed through by the CLIs; only ", (0,jsx_runtime.jsx)(_components.code, {
+            children: ["Registry auth: per hostname, ", (0,jsx_runtime.jsx)(_components.code, {
+              children: "passwordEnv"
+            }), " plus exactly one of ", (0,jsx_runtime.jsx)(_components.code, {
+              children: "username"
+            }), " (literal string) or ", (0,jsx_runtime.jsx)(_components.code, {
+              children: "usernameEnv"
+            }), " (see below). Passed through by the CLIs; only ", (0,jsx_runtime.jsx)(_components.code, {
               children: "runner"
             }), " is rejected as a CLI config key because custom runners are available solely to library callers."]
           })]
@@ -696,7 +710,9 @@ function _createMdxContent(props) {
     }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
       children: ["The staged flow is: config-file path (offered only when ", (0,jsx_runtime.jsx)(_components.code, {
         children: "--config"
-      }), " is absent; empty input configures without a file), essentials (image entries, registry entries, tags, platforms, each looped with an add-another confirm where applicable), then an advanced group (build args, labels, concurrencies, process limits, Docker executable) behind a customize confirm that defaults to No. Registry hostnames are chosen from a common-registry list (Docker Hub, GHCR, GitLab, GCR, Quay.io, local ", (0,jsx_runtime.jsx)(_components.code, {
+      }), " is absent; empty input configures without a file), essentials (image entries, registry entries, tags, platforms — defaulting to the host platform when the config omits it — each looped with an add-another confirm where applicable), then an advanced group (build args, labels, concurrencies, process limits, Docker executable) behind a customize confirm that defaults to No. An empty context-directory answer means the project root (", (0,jsx_runtime.jsx)(_components.code, {
+        children: "."
+      }), "). Registry hostnames are chosen from a common-registry list (Docker Hub, GHCR, GitLab, GCR, Quay.io, local ", (0,jsx_runtime.jsx)(_components.code, {
         children: "localhost:5000"
       }), ") with a custom-hostname entry last; the configured hostname preselects the matching entry, or the custom entry when it is not listed. Every prompt defaults to the loaded config value when one exists, so accepting all defaults reproduces the equivalent config file."]
     }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
@@ -720,11 +736,13 @@ function _createMdxContent(props) {
         children: "--config"
       }), " or run in a TTY. CI never hangs on stdin."]
     }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
-      children: ["Auth is ephemeral-only: per registry the CLI prompts the ", (0,jsx_runtime.jsx)(_components.code, {
+      children: ["Auth is ephemeral-only: per registry the CLI prompts the username (defaulting to the configured literal ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "username"
+      }), " when one exists, otherwise to the ", (0,jsx_runtime.jsx)(_components.code, {
         children: "usernameEnv"
-      }), " / ", (0,jsx_runtime.jsx)(_components.code, {
+      }), " value from the environment) and the ", (0,jsx_runtime.jsx)(_components.code, {
         children: "passwordEnv"
-      }), " names, then — when the named password variable is set and non-empty — offers a choice between using the environment value (default, recommended) and entering a new masked password; otherwise it goes straight to masked entry. Entered passwords live in memory for this run's ", (0,jsx_runtime.jsx)(_components.code, {
+      }), " name, then — when the named password variable is set and non-empty — offers a choice between using the environment value (default, recommended) and entering a new masked password; otherwise it goes straight to masked entry. Entered passwords live in memory for this run's ", (0,jsx_runtime.jsx)(_components.code, {
         children: "--password-stdin"
       }), " login only. Nothing is written to disk, ", (0,jsx_runtime.jsx)(_components.code, {
         children: "process.env"
@@ -782,7 +800,9 @@ function _createMdxContent(props) {
         children: "digest: sha256:..."
       }), ") and cross-checked against a ", (0,jsx_runtime.jsx)(_components.code, {
         children: "docker buildx imagetools inspect --format {{json .Manifest}}"
-      }), " follow-up: when both are present they must agree, the inspect digest is the fallback when push output carries none, and absence of both fails closed. Malformed or ambiguous digests fail closed."]
+      }), " follow-up: the top-level ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "digest"
+      }), " of the returned manifest document is authoritative (for a multi-platform index this is the index digest, not the per-platform manifest digests), and when both sources are present they must agree; the inspect digest is the fallback when push output carries none, and absence of both fails closed. Malformed or ambiguous digests fail closed."]
     }), "\n", (0,jsx_runtime.jsx)(_components.h2, {
       id: "push-boundaries",
       children: "Push Boundaries"
@@ -817,28 +837,32 @@ function _createMdxContent(props) {
       id: "registry-auth-contract",
       children: "Registry Auth Contract"
     }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
-      children: ["Credentials are sourced from environment variables named by the config ", (0,jsx_runtime.jsx)(_components.code, {
+      children: ["The password always comes from an environment variable named by the config ", (0,jsx_runtime.jsx)(_components.code, {
         children: "auth"
-      }), " map and travel to ", (0,jsx_runtime.jsx)(_components.code, {
+      }), " map and travels to ", (0,jsx_runtime.jsx)(_components.code, {
         children: "docker login"
       }), " via ", (0,jsx_runtime.jsx)(_components.code, {
         children: "--password-stdin"
-      }), " only:"]
+      }), " only. The username is either a plain string in the config (", (0,jsx_runtime.jsx)(_components.code, {
+        children: "username"
+      }), ") or an environment variable (", (0,jsx_runtime.jsx)(_components.code, {
+        children: "usernameEnv"
+      }), ") — exactly one of the two per registry:"]
     }), "\n", (0,jsx_runtime.jsx)(_components.pre, {
       children: (0,jsx_runtime.jsx)(_components.code, {
         className: "language-json",
-        children: "{\n  \"auth\": {\n    \"registry.example.com\": {\n      \"usernameEnv\": \"REGISTRY_EXAMPLE_COM_USER\",\n      \"passwordEnv\": \"REGISTRY_EXAMPLE_COM_PASS\"\n    }\n  }\n}\n"
+        children: "{\n  \"auth\": {\n    \"registry.example.com\": {\n      \"username\": \"example-user\",\n      \"passwordEnv\": \"REGISTRY_EXAMPLE_COM_PASS\"\n    }\n  }\n}\n"
       })
     }), "\n", (0,jsx_runtime.jsx)(_components.pre, {
       children: (0,jsx_runtime.jsx)(_components.code, {
         className: "language-sh",
-        children: "export REGISTRY_EXAMPLE_COM_USER=\"example-user\"\nexport REGISTRY_EXAMPLE_COM_PASS=\"example-pass\"\nrepo-toolkit-publish-docker-publish --config docker-publish.json\n"
+        children: "export REGISTRY_EXAMPLE_COM_PASS=\"example-pass\"\nrepo-toolkit-publish-docker-publish --config docker-publish.json\n"
       })
     }), "\n", (0,jsx_runtime.jsxs)(_components.ul, {
       children: ["\n", (0,jsx_runtime.jsxs)(_components.li, {
         children: ["Env names must match ", (0,jsx_runtime.jsx)(_components.code, {
           children: "/^[A-Za-z_][A-Za-z0-9_]*$/"
-        }), ". Missing or empty env credentials fail closed before any push."]
+        }), ". Literal usernames must be 1-256 characters with no whitespace or control characters. Missing or empty env credentials fail closed before any push."]
       }), "\n", (0,jsx_runtime.jsxs)(_components.li, {
         children: ["Plaintext passwords never appear in config files, argv (there is no ", (0,jsx_runtime.jsx)(_components.code, {
           children: "--password"
