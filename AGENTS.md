@@ -11,6 +11,7 @@ This is a pnpm workspace monorepo for the `@repo-toolkit/*` packages.
 - `packages/publish-packages` — monorepo publish pipeline and `repo-toolkit-publish-packages` CLI. Depends on `@repo-toolkit/publish-package`.
 - `packages/release-artifact` — release artifact builder/verifier and `repo-toolkit-build-artifact` / `repo-toolkit-verify-artifact` CLIs. Depends on `@repo-toolkit/publish-package`.
 - `packages/go-release` — deterministic Go matrix builder/verifier and `repo-toolkit-build-go-release` / `repo-toolkit-verify-go-release` CLIs. Depends on `@repo-toolkit/publish-package` and invokes configured Go and GNU-compatible tar executables.
+- `packages/docker-publish` — Docker/OCI image plan/build/publish/verify pipeline and `repo-toolkit-docker-publish` / `repo-toolkit-build-docker-publish` / `repo-toolkit-publish-docker-publish` CLIs. Depends on `@repo-toolkit/publish-package` and invokes the configured Docker executable with `buildx`. Readability (thin CLIs, one module per stage), accuracy (single `formatImageReference` helper, digest pinning), security (allowlisted registries, env-only auth with redaction), performance (bounded build/publish concurrency, manifest-only verify), testability (injectable fake runners, no daemon or network required).
 - `bin/` — asdf plugin scripts (`download`, `install`, `list-all`, `lib/repo-toolkit.sh`) that consume the tarball produced by `release-artifact`.
 - `website/` — standalone Docusaurus docs site (separate pnpm project; do not run its install from the workspace root).
 - `scripts/` — none. Repository-level scripts live inside the packages.
@@ -37,12 +38,15 @@ pnpm build-artifact -- --version v1.2.3
 pnpm verify-artifact -- --version v1.2.3
 pnpm build-go-release -- --config go-release.json --version 1.2.3
 pnpm verify-go-release -- --config go-release.json --version 1.2.3
+pnpm build-docker-publish -- --config docker-publish.json --dry-run
+pnpm publish-docker-publish -- --config docker-publish.json --skip-build
+pnpm docker-publish -- --config docker-publish.json --build --push
 pnpm release             # release-it (uses .release-it.json)
 ```
 
 Always run **both** `pnpm lint` and `pnpm typecheck` after code changes, and `pnpm test` for anything that touches `src/` or `test/`. The `typecheck` script catches issues the build pipeline does not (e.g. lib-target mismatches such as `Array.prototype.at` under the packages' ES2018 target).
 
-For `go-release` changes, run `pnpm --filter @repo-toolkit/go-release test`. Its unit tests use controlled runners and do not require host Go; CLI/example integration tests do require GNU-compatible `tar`. Run `pnpm --filter @repo-toolkit/publish-packages test` after package metadata or documentation membership changes.
+For `go-release` changes, run `pnpm --filter @repo-toolkit/go-release test`. Its unit tests use controlled runners and do not require host Go; CLI/example integration tests do require GNU-compatible `tar`. For `docker-publish` changes, run `pnpm --filter @repo-toolkit/docker-publish test`. Its unit, CLI, and example tests use injected fake runners and a fake Docker executable and do not require a daemon or network access. Run `pnpm --filter @repo-toolkit/publish-packages test` after package metadata or documentation membership changes.
 
 ## Conventions
 

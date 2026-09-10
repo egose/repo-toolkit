@@ -11,6 +11,7 @@ Shared monorepo for repository tooling packages.
 - `@repo-toolkit/compose-sandbox`: run a repository-defined Docker Compose test sandbox through a deterministic lifecycle
 - `@repo-toolkit/confluence`: sync a folder of markdown docs to Confluence pages and attachments (GitHub Action compatible)
 - `@repo-toolkit/go-release`: build and verify deterministic cross-platform Go binary releases
+- `@repo-toolkit/docker-publish`: plan, build, publish, and verify Docker/OCI container images to target registries
 
 ## Workspace Layout
 
@@ -21,6 +22,7 @@ Shared monorepo for repository tooling packages.
 - `packages/compose-sandbox`: Docker Compose sandbox runner and `repo-toolkit-compose-sandbox` CLI
 - `packages/confluence`: docs-as-code sync to Confluence and `repo-toolkit-confluence` CLI
 - `packages/go-release`: Go release builder/verifier and `repo-toolkit-go-release` / `repo-toolkit-build-go-release` / `repo-toolkit-verify-go-release` CLIs
+- `packages/docker-publish`: Docker image publisher and `repo-toolkit-docker-publish` / `repo-toolkit-build-docker-publish` / `repo-toolkit-publish-docker-publish` CLIs
 - `website/`: standalone Docusaurus docs site for the workspace packages
 
 ## Development
@@ -52,6 +54,9 @@ Useful root scripts:
 - `pnpm verify-go-release -- --config go-release.json --version 1.2.3`
 - `pnpm go-release -- build --config go-release.json --version 1.2.3`
 - `pnpm go-release -- verify --config go-release.json --version 1.2.3 --reproducibility`
+- `pnpm build-docker-publish -- --config docker-publish.json`
+- `pnpm publish-docker-publish -- --config docker-publish.json`
+- `pnpm docker-publish -- --config docker-publish.json --build --push`
 - `pnpm confluence -- --folder docs --space-key ENG --parent-page-id 123456789`
 - `pnpm release`
 
@@ -80,6 +85,9 @@ Available commands after install:
 - `repo-toolkit-go-release` (`build`/`verify` subcommands, aliases `repo-toolkit-build-go-release` / `repo-toolkit-verify-go-release` remain available)
 - `repo-toolkit-build-go-release`
 - `repo-toolkit-verify-go-release`
+- `repo-toolkit-docker-publish` (`build`/`publish` subcommands, aliases `repo-toolkit-build-docker-publish` / `repo-toolkit-publish-docker-publish` remain available)
+- `repo-toolkit-build-docker-publish`
+- `repo-toolkit-publish-docker-publish`
 
 Useful asdf commands:
 

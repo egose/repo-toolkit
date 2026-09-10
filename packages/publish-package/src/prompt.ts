@@ -1,7 +1,12 @@
 import { isAbsolute, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { readFile } from 'node:fs/promises';
-import { text as clackText, isCancel as clackIsCancel } from '@clack/prompts';
+import {
+  text as clackText,
+  password as clackPassword,
+  select as clackSelect,
+  isCancel as clackIsCancel,
+} from '@clack/prompts';
 
 import { isPlainObject } from './helpers';
 import type { FlagSpec, ParseFlagsResult } from './flags';
@@ -52,6 +57,23 @@ export interface PromptTextOptions {
   validate?: (value: string) => string | undefined;
 }
 
+export interface PromptPasswordOptions {
+  message: string;
+  validate?: (value: string) => string | undefined;
+  mask?: string;
+}
+
+export interface PromptSelectOption<T> {
+  value: T;
+  label: string;
+}
+
+export interface PromptSelectOptions<T> {
+  message: string;
+  options: Array<PromptSelectOption<T>>;
+  initialValue?: T;
+}
+
 export interface ResolveCliOptionsArgs<T extends { cwd?: string }> {
   result: ParseFlagsResult;
   cwd?: string;
@@ -79,6 +101,39 @@ export async function promptText(opts: PromptTextOptions): Promise<string> {
   }
 
   return value as string;
+}
+
+export async function promptPassword(opts: PromptPasswordOptions): Promise<string> {
+  const value = await clackPassword({
+    message: opts.message,
+    mask: opts.mask,
+    validate: opts.validate ? (v) => opts.validate!(v ?? '') : undefined,
+  });
+
+  if (clackIsCancel(value)) {
+    throw new Error('Operation cancelled.');
+  }
+
+  return value as string;
+}
+
+export async function promptSelect<T>(opts: PromptSelectOptions<T>): Promise<T> {
+  const select = clackSelect as <V>(args: {
+    message: string;
+    options: Array<{ value: V; label: string }>;
+    initialValue?: V;
+  }) => Promise<V | symbol>;
+  const value = await select<T>({
+    message: opts.message,
+    options: opts.options,
+    initialValue: opts.initialValue,
+  });
+
+  if (clackIsCancel(value)) {
+    throw new Error('Operation cancelled.');
+  }
+
+  return value;
 }
 
 export async function resolveCliOptions<T extends { cwd?: string }>(args: ResolveCliOptionsArgs<T>): Promise<T> {

@@ -1,0 +1,47 @@
+{
+  "name": "@repo-toolkit/docker-publish",
+  "description": "Plan, build, publish, and verify Docker/OCI container images to target registries",
+  "version": "0.0.0-PLACEHOLDER",
+  "license": "PLACEHOLDER",
+  "repository": "PLACEHOLDER",
+  "type": "module",
+  "sideEffects": false,
+  "keywords": [
+    "docker",
+    "oci",
+    "publish",
+    "registry",
+    "tooling"
+  ],
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "bin": {
+    "repo-toolkit-docker-publish": "dist/cli.js",
+    "repo-toolkit-build-docker-publish": "dist/cli-build.js",
+    "repo-toolkit-publish-docker-publish": "dist/cli-publish.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsup --config tsup.config.ts",
+    "test": "pnpm --filter @repo-toolkit/docker-publish... build && vitest run --config vitest.config.ts",
+    "build-docker-publish": "node dist/cli-build.js",
+    "publish-docker-publish": "node dist/cli-publish.js",
+    "docker-publish": "node dist/cli.js"
+  },
+  "dependencies": {
+    "@repo-toolkit/publish-package": "workspace:*"
+  },
+  "files": [
+    "README.md",
+    "dist"
+  ],
+  "engines": {
+    "node": ">=20"
+  }
+}

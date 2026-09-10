@@ -3,7 +3,8 @@
 // The implementation lives in focused internal modules:
 //   - `./flags`    : CLI flag parser (`parseFlags`, `FlagSpec`, ...)
 //   - `./prompt`   : interactive prompts + config-file loader (`promptText`,
-//                    `promptForRequiredValue`, `loadConfigFile`, `resolveCliOptions`, ...)
+//                    `promptPassword`, `promptSelect`, `promptForRequiredValue`,
+//                    `loadConfigFile`, `resolveCliOptions`, ...)
 //   - `./runner`   : injectable subprocess runner (`ProcessRunner`,
 //                    `CapturingProcessRunner`, `defaultProcessRunner`, ...)
 //   - `./version`  : strict semver validation and registry-derived version
@@ -35,9 +36,14 @@ export {
   INTERACTIVE_FLAG,
   canPrompt,
   promptText,
+  promptPassword,
+  promptSelect,
   resolveCliOptions,
   promptForRequiredValue,
   type PromptTextOptions,
+  type PromptPasswordOptions,
+  type PromptSelectOption,
+  type PromptSelectOptions,
   type ResolveCliOptionsArgs,
   type PromptForRequiredValueOptions,
 } from './prompt';
