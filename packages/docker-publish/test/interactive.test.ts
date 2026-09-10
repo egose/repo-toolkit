@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { redactSensitiveValues, type ParseFlagsResult } from '@repo-toolkit/publish-package';
 
 import { planSummary, resolveDockerPublishCliOptions } from '../src/cli-options';
+import { hostDockerPlatformName } from '../src/index';
 import {
   collectInteractiveSecrets,
   confirmInteractiveProceed,
@@ -560,6 +561,51 @@ describe('resolveInteractiveDockerPublishOptions', () => {
     expect(prompter.calls.filter((call) => call.message === 'Registry 1 custom hostname')).toHaveLength(2);
   });
 
+  it('uses the project root as the context when the context answer is empty', async () => {
+    const root = project();
+    writeFileSync(join(root, 'Dockerfile'), 'FROM scratch\n');
+
+    const prompter = createScriptedPrompter([
+      '',
+      'app',
+      '',
+      '',
+      '',
+      false,
+      undefined,
+      '',
+      false,
+      '1.2.3',
+      'linux/amd64',
+      false,
+    ]);
+    const actual = await resolveInteractiveDockerPublishOptions(
+      flags({ cwd: root }),
+      {},
+      { interactive: true, prompter, canPromptNow: true },
+    );
+    expect(actual.plan.images[0].contextDir).toBe('.');
+    expect(actual.plan.images[0].resolvedContextDir).toBe(realpathSync(root));
+    expect(actual.plan.images[0].dockerfile).toBe('Dockerfile');
+    expect(actual.plan.registries).toEqual([{ hostname: 'docker.io', repositoryPrefix: '' }]);
+  });
+
+  it('defaults platforms to the host platform when the config omits them', async () => {
+    const root = project();
+    seedBaseProject(root);
+    const { platforms, ...rest } = baseConfig(root);
+    void platforms;
+    const configPath = writeConfig(root, 'docker-publish.json', rest);
+
+    const prompter = createScriptedPrompter(['', '', '', '', false, undefined, '', '', false, '', '', false]);
+    const actual = await resolveInteractiveDockerPublishOptions(
+      flags({ config: configPath }),
+      {},
+      { interactive: true, prompter, canPromptNow: true },
+    );
+    expect(actual.plan.platforms.map((platform) => platform.name)).toEqual([hostDockerPlatformName()]);
+  });
+
   it('preselects the configured known hostname as the select default', async () => {
     const root = project();
     seedBaseProject(root);
@@ -931,6 +977,32 @@ describe('interactive confirm-before-push', () => {
     await expect(confirmInteractiveProceed(createScriptedPrompter([false]), { requiresPush: false })).rejects.toThrow(
       'Operation cancelled.',
     );
+  });
+
+  it('uses a configured literal username as the prompt default and stores it back', async () => {
+    const root = project();
+    seedBaseProject(root);
+    const configPath = writeConfig(root, 'docker-publish.json', baseConfig(root));
+    const { plan } = await resolveDockerPublishCliOptions(flags({ config: configPath }), {});
+    const restores = [setTestEnv(INT03_PASS_ENV, INT03_PASS_VALUE)];
+    try {
+      const configured = { [INT03_HOST]: { username: 'octocat', passwordEnv: INT03_PASS_ENV } };
+      const prompter = createScriptedPrompter(['', '', 'use-env']);
+      const resolved = await promptInteractiveAuth(prompter, plan.registries, configured);
+      expect(resolved.auth).toEqual({ [INT03_HOST]: { username: 'octocat', passwordEnv: INT03_PASS_ENV } });
+      expect(resolved.authValues[INT03_HOST]).toEqual({ username: 'octocat', password: INT03_PASS_VALUE });
+
+      const login = createLoginRunner();
+      const secrets = collectInteractiveSecrets(plan, resolved.auth, resolved.authValues);
+      await loginWithInteractiveAuth(login.runner, plan, resolved.auth, resolved.authValues, secrets);
+      expect(login.calls).toHaveLength(1);
+      expect(login.calls[0].args).toEqual(['login', '--username', 'octocat', '--password-stdin', INT03_HOST]);
+      expect(login.calls[0].options.stdin).toBe(INT03_PASS_VALUE);
+    } finally {
+      for (const restore of restores.reverse()) {
+        restore();
+      }
+    }
   });
 
   it('never invokes the runner when the push confirm is declined', async () => {

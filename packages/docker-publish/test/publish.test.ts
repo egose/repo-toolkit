@@ -212,6 +212,42 @@ describe('publish login, push, and inspect argv', () => {
       expect(result.publishes[0].digest).toBe(DIGEST_A);
     });
   });
+
+  it('accepts a literal username without a username env var', async () => {
+    await withProject('docker-publish-publish-', async (root) => {
+      writeImageContext(root, 'services/app');
+      const previousUser = process.env[USER_ENV];
+      const previousPass = process.env[PASS_ENV];
+      delete process.env[USER_ENV];
+      process.env[PASS_ENV] = TEST_PASS;
+      try {
+        const base = planBase(root);
+        const { calls, runner } = createRecordingRunner();
+        const result = await publishDockerImages({
+          ...base,
+          auth: { 'registry.example.com': { username: 'octocat', passwordEnv: PASS_ENV } },
+          runner,
+        });
+        const logins = argvOf(calls, 'run', 'login');
+        expect(logins.length).toBe(1);
+        expect(logins[0].args).toEqual(['login', '--username', 'octocat', '--password-stdin', 'registry.example.com']);
+        expect(logins[0].options.stdin).toBe(TEST_PASS);
+        expect(result.publishes.length).toBe(1);
+        expect(result.publishes[0].digest).toBe(DIGEST_A);
+      } finally {
+        if (previousUser === undefined) {
+          delete process.env[USER_ENV];
+        } else {
+          process.env[USER_ENV] = previousUser;
+        }
+        if (previousPass === undefined) {
+          delete process.env[PASS_ENV];
+        } else {
+          process.env[PASS_ENV] = previousPass;
+        }
+      }
+    });
+  });
 });
 
 describe('off-plan and allowlist refusal', () => {
@@ -319,6 +355,47 @@ describe('digest capture fails closed', () => {
       });
       const result = await publishDockerImages({ ...base, runner });
       expect(result.publishes[0].digest).toBe(DIGEST_B);
+    });
+  });
+
+  it('uses the top-level digest for multi-platform index inspect output', async () => {
+    await withProject('docker-publish-publish-', async (root) => {
+      writeImageContext(root, 'services/app');
+      const base = planBase(root);
+      const indexDigest = `sha256:${'8'.repeat(64)}`;
+      const platformA = `sha256:${'5'.repeat(64)}`;
+      const platformB = `sha256:${'9'.repeat(64)}`;
+      const { runner } = createRecordingRunner({
+        pushStdout: () => pushStdoutFor(indexDigest),
+        inspectStdout: () =>
+          `${JSON.stringify({
+            mediaType: 'application/vnd.oci.image.index.v1+json',
+            digest: indexDigest,
+            manifests: [
+              { mediaType: 'application/vnd.oci.image.manifest.v1+json', digest: platformA },
+              { mediaType: 'application/vnd.oci.image.manifest.v1+json', digest: platformB },
+            ],
+          })}\n`,
+      });
+      const result = await publishDockerImages({ ...base, runner });
+      expect(result.publishes[0].digest).toBe(indexDigest);
+    });
+  });
+
+  it('still rejects a push digest that disagrees with the top-level inspect digest', async () => {
+    await withProject('docker-publish-publish-', async (root) => {
+      writeImageContext(root, 'services/app');
+      const base = planBase(root);
+      const { runner } = createRecordingRunner({
+        pushStdout: () => pushStdoutFor(DIGEST_A),
+        inspectStdout: () =>
+          `${JSON.stringify({
+            mediaType: 'application/vnd.oci.image.index.v1+json',
+            digest: DIGEST_B,
+            manifests: [{ mediaType: 'application/vnd.oci.image.manifest.v1+json', digest: DIGEST_A }],
+          })}\n`,
+      });
+      await expect(publishDockerImages({ ...base, runner })).rejects.toThrow('does not match inspect digest');
     });
   });
 });

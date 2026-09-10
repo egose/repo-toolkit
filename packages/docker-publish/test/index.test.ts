@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
-import { defaultDockerRunner, formatImageReference, validateDockerRunner } from '../src/index';
+import { defaultDockerRunner, formatImageReference, hostDockerPlatformName, validateDockerRunner } from '../src/index';
 
 const packageRoot = resolve(import.meta.dirname, '..');
 
@@ -18,7 +18,9 @@ describe('@repo-toolkit/docker-publish package scaffold', () => {
     expect(exportedNames.split(',')).toEqual([
       'buildDockerImages',
       'defaultDockerRunner',
+      'defaultHostPlatforms',
       'formatImageReference',
+      'hostDockerPlatformName',
       'publishDockerImages',
       'resolveDockerPublishPlan',
       'validateDockerRunner',
@@ -57,6 +59,7 @@ describe('@repo-toolkit/docker-publish package scaffold', () => {
       'registry.example.com/team/app:1.2.3',
     );
     expect(formatImageReference('registry.example.com', '', 'app', '1.2.3')).toBe('registry.example.com/app:1.2.3');
+    expect(hostDockerPlatformName('linux', 'x64')).toBe('linux/amd64');
     expect(typeof defaultDockerRunner.run).toBe('function');
     expect(typeof defaultDockerRunner.capture).toBe('function');
     expect(() => validateDockerRunner(defaultDockerRunner)).not.toThrow();

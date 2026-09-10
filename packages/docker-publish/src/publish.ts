@@ -32,8 +32,21 @@ export type DockerPublishRunner = DockerRunner;
  * in `auth` is pushed without a login step (public or pre-authenticated).
  */
 export interface DockerPublishRegistryAuth {
-  readonly usernameEnv: string;
+  readonly username?: string;
+  readonly usernameEnv?: string;
   readonly passwordEnv: string;
+}
+
+const USERNAME_MAX_LENGTH = 256;
+
+export function validateDockerPublishUsername(value: string, label: string): string | undefined {
+  if (value.length === 0 || value.length > USERNAME_MAX_LENGTH) {
+    return `${label} must be 1-${USERNAME_MAX_LENGTH} characters long`;
+  }
+  if (/[\0-\x20\x7f]/u.test(value)) {
+    return `${label} must not contain whitespace or control characters`;
+  }
+  return undefined;
 }
 
 export interface DockerPublishImagesOptions extends DockerPublishOptions {
@@ -221,20 +234,39 @@ export function validateDockerPublishAuthMap(value: unknown): Readonly<Record<st
   for (const hostname of Object.keys(value)) {
     const entry = (value as Record<string, unknown>)[hostname];
     if (!isPlainObject(entry)) {
-      throw new Error(`auth[${JSON.stringify(hostname)}] must be an object with usernameEnv and passwordEnv`);
+      throw new Error(
+        `auth[${JSON.stringify(hostname)}] must be an object with passwordEnv and exactly one of username or usernameEnv`,
+      );
     }
     const record = entry as Record<string, unknown>;
     const keys = Object.keys(record);
-    if (keys.length !== 2 || keys.indexOf('usernameEnv') < 0 || keys.indexOf('passwordEnv') < 0) {
-      throw new Error(`auth[${JSON.stringify(hostname)}] must define exactly usernameEnv and passwordEnv`);
+    const hasUsername = keys.indexOf('username') >= 0;
+    const hasUsernameEnv = keys.indexOf('usernameEnv') >= 0;
+    const hasPasswordEnv = keys.indexOf('passwordEnv') >= 0;
+    if (keys.length !== 2 || !hasPasswordEnv || hasUsername === hasUsernameEnv) {
+      throw new Error(
+        `auth[${JSON.stringify(hostname)}] must define passwordEnv and exactly one of username or usernameEnv`,
+      );
     }
-    const usernameEnv = record['usernameEnv'];
     const passwordEnv = record['passwordEnv'];
-    if (typeof usernameEnv !== 'string' || !ENV_NAME_PATTERN.test(usernameEnv)) {
-      throw new Error(`auth[${JSON.stringify(hostname)}].usernameEnv must be a valid environment variable name`);
-    }
     if (typeof passwordEnv !== 'string' || !ENV_NAME_PATTERN.test(passwordEnv)) {
       throw new Error(`auth[${JSON.stringify(hostname)}].passwordEnv must be a valid environment variable name`);
+    }
+    if (hasUsername) {
+      const username = record['username'];
+      const problem =
+        typeof username === 'string'
+          ? validateDockerPublishUsername(username, `auth[${JSON.stringify(hostname)}].username`)
+          : `auth[${JSON.stringify(hostname)}].username must be a non-empty string`;
+      if (problem !== undefined) {
+        throw new Error(problem);
+      }
+      result[hostname] = { username: username as string, passwordEnv };
+      continue;
+    }
+    const usernameEnv = record['usernameEnv'];
+    if (typeof usernameEnv !== 'string' || !ENV_NAME_PATTERN.test(usernameEnv)) {
+      throw new Error(`auth[${JSON.stringify(hostname)}].usernameEnv must be a valid environment variable name`);
     }
     result[hostname] = { usernameEnv, passwordEnv };
   }
@@ -264,13 +296,17 @@ function readCredentials(
   const credentials: DockerRegistryCredentials[] = [];
   for (const hostname of needed) {
     const spec = auth[hostname];
-    const username = process.env[spec.usernameEnv];
     const password = process.env[spec.passwordEnv];
-    if (typeof username !== 'string' || username.length === 0) {
-      throw new Error(`Missing username for registry ${hostname} in environment variable ${spec.usernameEnv}`);
-    }
     if (typeof password !== 'string' || password.length === 0) {
       throw new Error(`Missing password for registry ${hostname} in environment variable ${spec.passwordEnv}`);
+    }
+    if (spec.username !== undefined) {
+      credentials.push({ hostname, username: spec.username, password });
+      continue;
+    }
+    const username = spec.usernameEnv === undefined ? undefined : process.env[spec.usernameEnv];
+    if (typeof username !== 'string' || username.length === 0) {
+      throw new Error(`Missing username for registry ${hostname} in environment variable ${spec.usernameEnv}`);
     }
     credentials.push({ hostname, username, password });
   }
@@ -439,6 +475,18 @@ function parsePushDigests(reference: string, output: string, secrets: ReadonlyAr
 }
 
 function parseInspectDigest(reference: string, output: string, secrets: ReadonlyArray<string>): string | undefined {
+  const topLevel = topLevelManifestDigest(output);
+  if (topLevel !== undefined) {
+    if (!STRICT_DIGEST_PATTERN.test(topLevel)) {
+      throw new Error(
+        redactSensitiveValues(
+          `Failed to publish Docker reference "${reference}": malformed content digest in inspect output: ${truncateTail(topLevel)}`,
+          secrets,
+        ),
+      );
+    }
+    return topLevel;
+  }
   const found: string[] = [];
   const pattern = /"digest"\s*:\s*"([^"]+)"/g;
   let match: RegExpExecArray | null;
@@ -468,6 +516,20 @@ function parseInspectDigest(reference: string, output: string, secrets: Readonly
     );
   }
   return found[0];
+}
+
+function topLevelManifestDigest(output: string): string | undefined {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(output);
+  } catch {
+    return undefined;
+  }
+  if (!isPlainObject(parsed)) {
+    return undefined;
+  }
+  const digest = (parsed as Record<string, unknown>)['digest'];
+  return typeof digest === 'string' ? digest : undefined;
 }
 
 function resolveManifestPath(options: DockerPublishImagesOptions, plan: DockerPublishPlan): string | undefined {

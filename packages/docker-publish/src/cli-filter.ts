@@ -102,7 +102,9 @@ export function applyCliFilters(
     'image',
   );
   const platforms = selectNamed(
-    Array.isArray(raw.platforms) ? (raw.platforms as ReadonlyArray<string>) : [],
+    Array.isArray(raw.platforms)
+      ? (raw.platforms as ReadonlyArray<string>)
+      : plan.platforms.map((platform) => platform.name),
     plan.platforms.map((platform) => platform.name),
     filters.platforms,
     'platform',

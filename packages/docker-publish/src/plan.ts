@@ -49,6 +49,43 @@ export const KNOWN_ARCH = new Set([
   'wasm',
 ]);
 
+const HOST_OS_MAP: Record<string, string | undefined> = {
+  aix: 'aix',
+  darwin: 'darwin',
+  freebsd: 'freebsd',
+  linux: 'linux',
+  openbsd: 'openbsd',
+  sunos: 'solaris',
+  win32: 'windows',
+};
+
+const HOST_ARCH_MAP: Record<string, string | undefined> = {
+  arm: 'arm',
+  arm64: 'arm64',
+  ia32: '386',
+  ppc64: 'ppc64',
+  s390x: 's390x',
+  x64: 'amd64',
+};
+
+export function hostDockerPlatformName(
+  nodePlatform: string = process.platform,
+  nodeArch: string = process.arch,
+): string {
+  const os = HOST_OS_MAP[nodePlatform];
+  const arch = HOST_ARCH_MAP[nodeArch];
+  if (os === undefined || arch === undefined) {
+    throw new Error(
+      `Cannot detect the host Docker platform (os "${nodePlatform}", arch "${nodeArch}"); set platforms explicitly, e.g. ["linux/amd64"]`,
+    );
+  }
+  return `${os}/${arch}`;
+}
+
+export function defaultHostPlatforms(): string[] {
+  return [hostDockerPlatformName()];
+}
+
 export interface DockerPublishImageOptions {
   readonly name: string;
   readonly contextDir: string;
@@ -78,7 +115,7 @@ export interface DockerPublishOptions {
   readonly images: ReadonlyArray<DockerPublishImageOptions>;
   readonly registries: ReadonlyArray<DockerPublishRegistryOptions>;
   readonly tags: ReadonlyArray<string>;
-  readonly platforms: ReadonlyArray<string>;
+  readonly platforms?: ReadonlyArray<string>;
   readonly buildArgs?: Readonly<Record<string, string>>;
   readonly labels?: Readonly<Record<string, string>>;
   readonly buildConcurrency?: number;
@@ -262,7 +299,9 @@ function validateOptions(value: unknown): DockerPublishOptions {
   validateRequiredArray(options.images, 'images');
   validateRequiredArray(options.registries, 'registries');
   validateRequiredArray(options.tags, 'tags');
-  validateRequiredArray(options.platforms, 'platforms');
+  if (options.platforms !== undefined && !Array.isArray(options.platforms)) {
+    throw new Error('platforms must be an array of os/arch strings');
+  }
   if (options.buildArgs !== undefined) {
     requireObject(options.buildArgs, 'buildArgs');
   }
@@ -405,12 +444,16 @@ function resolveTags(value: ReadonlyArray<string>): ReadonlyArray<string> {
   });
 }
 
-function resolvePlatforms(value: ReadonlyArray<string>, allowCustom: boolean): ReadonlyArray<DockerPublishPlatform> {
-  if (value.length === 0) {
+function resolvePlatforms(
+  value: ReadonlyArray<string> | undefined,
+  allowCustom: boolean,
+): ReadonlyArray<DockerPublishPlatform> {
+  const entries = value ?? defaultHostPlatforms();
+  if (entries.length === 0) {
     throw new Error('platforms must contain at least one entry');
   }
   const seen = new Set<string>();
-  return value.map((raw, index) => {
+  return entries.map((raw, index) => {
     const label = `platforms[${index}]`;
     if (typeof raw !== 'string' || raw.length === 0) {
       throw new Error(`${label} must be a non-empty string`);
@@ -646,8 +689,11 @@ function normalizeRelativePath(value: unknown, label: string): string {
     throw new Error(`${label} must be relative: ${input}`);
   }
   const parts = slashPath.split('/').filter((part) => part !== '' && part !== '.');
-  if (parts.length === 0 || parts.indexOf('..') >= 0) {
+  if (parts.indexOf('..') >= 0) {
     throw new Error(`${label} must be a non-root path without parent-directory segments: ${input}`);
+  }
+  if (parts.length === 0) {
+    return '.';
   }
   return parts.join('/');
 }

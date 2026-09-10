@@ -94,7 +94,11 @@ export function collectCliSecrets(
   }
   for (const hostname of Object.keys(auth)) {
     const entry = auth[hostname];
-    consider(process.env[entry.usernameEnv]);
+    if (entry.username !== undefined) {
+      consider(entry.username);
+    } else if (entry.usernameEnv !== undefined) {
+      consider(process.env[entry.usernameEnv]);
+    }
     consider(process.env[entry.passwordEnv]);
   }
   return secrets;
