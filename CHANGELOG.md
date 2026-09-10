@@ -1,3 +1,9 @@
+## [0.26.0](https://github.com/egose/repo-toolkit/compare/v0.25.0...v0.26.0) (2026-09-10)
+
+### Features
+
+* add docker publish pipeline and interactive prompts ([b4ac8e5](https://github.com/egose/repo-toolkit/commit/b4ac8e5d9dd979b1b20516a10df67094eeb4e829))
+
 ## [0.25.0](https://github.com/egose/repo-toolkit/compare/v0.24.0...v0.25.0) (2026-09-03)
 
 ### Features
