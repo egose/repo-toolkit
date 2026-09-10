@@ -34,6 +34,9 @@
     "build-go-release": "pnpm --filter @repo-toolkit/go-release... build && node packages/go-release/dist/cli-build.js",
     "verify-go-release": "pnpm --filter @repo-toolkit/go-release... build && node packages/go-release/dist/cli-verify.js",
     "go-release": "pnpm --filter @repo-toolkit/go-release... build && node packages/go-release/dist/cli.js",
+    "build-docker-publish": "pnpm --filter @repo-toolkit/docker-publish... build && node packages/docker-publish/dist/cli-build.js",
+    "publish-docker-publish": "pnpm --filter @repo-toolkit/docker-publish... build && node packages/docker-publish/dist/cli-publish.js",
+    "docker-publish": "pnpm --filter @repo-toolkit/docker-publish... build && node packages/docker-publish/dist/cli.js",
     "release": "release-it",
     "test": "pnpm -r --workspace-concurrency=1 --if-present test"
   },

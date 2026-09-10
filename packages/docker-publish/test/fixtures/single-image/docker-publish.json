@@ -1,0 +1,16 @@
+{
+  "images": [
+    {
+      "name": "app",
+      "contextDir": "services/app"
+    }
+  ],
+  "registries": [
+    {
+      "hostname": "registry.example.com",
+      "repositoryPrefix": "team"
+    }
+  ],
+  "tags": ["1.2.3"],
+  "platforms": ["linux/amd64", "linux/arm64"]
+}

@@ -4,7 +4,7 @@ Created: 2026-09-02 10:22:51
 
 ## Objective
 
-Extend `@repo-toolkit/publish-package` so it can replace the release orchestration in `/home/jahn/projects/shadcn-theme/scripts/publish.mjs` without adding React- or Angular-specific branches to the toolkit. The public contract must support private source manifests used as non-publishable templates, explicit or registry-derived versions, one or more independently prepared artifacts, generated manifest overlays, post-staging validation, exact tarball packing, prepare-only operation, and an all-artifacts-before-publish boundary.
+Extend `@repo-toolkit/publish-package` so it can replace the release orchestration in `projects/shadcn-theme/scripts/publish.mjs` without adding React- or Angular-specific branches to the toolkit. The public contract must support private source manifests used as non-publishable templates, explicit or registry-derived versions, one or more independently prepared artifacts, generated manifest overlays, post-staging validation, exact tarball packing, prepare-only operation, and an all-artifacts-before-publish boundary.
 
 The intended consumer integration is a JavaScript/ESM config or a thin repository adapter. It may supply package-specific artifact recipes for the React and Angular contexts while the toolkit owns release safety, metadata generation, packing, result reporting, and npm publication.
 
@@ -17,7 +17,7 @@ The intended consumer integration is a JavaScript/ESM config or a thin repositor
 - Keep structured executable/argument invocation shell-free for new lifecycle hooks. Do not put OTP values in argv or logs; retain the existing `npm_config_otp` behavior.
 - Keep staging and copied files confined by realpath checks. Generated stage directories and tarballs must never escape configured roots.
 - Do not require `shadcn-theme` to become a root pnpm workspace. Its root, React package, and Angular package have separate install/workspace boundaries.
-- Do not modify `/home/jahn/projects/shadcn-theme` as part of this toolkit task. Use controlled local fixtures that reproduce its release contract.
+- Do not modify `projects/shadcn-theme` as part of this toolkit task. Use controlled local fixtures that reproduce its release contract.
 - Do not commit generated `dist/` output or modify unrelated concurrent worktree changes.
 
 ## Non-Goals
@@ -33,14 +33,14 @@ The intended consumer integration is a JavaScript/ESM config or a thin repositor
 
 - `publishPackage` currently resolves one plan, runs one shell build, stages one output location, and immediately invokes npm for each package name (`packages/publish-package/src/publish.ts:30-118`). It cannot prepare all independent variants before publication.
 - The current runner exposes inherited-stdio `run` and `runShell` methods returning `void`; it cannot capture and parse `npm view --json` or `npm pack --json` output (`packages/publish-package/src/runner.ts:3-48`).
-- Planning rejects every private source manifest (`packages/publish-package/src/plan.ts:103-118`). Workspace discovery rejects private manifests before filtering (`packages/publish-packages/src/index.ts:276-300`). Both shadcn source manifests are private templates (`/home/jahn/projects/shadcn-theme/packages/react/package.json:2-8`, `/home/jahn/projects/shadcn-theme/packages/angular/package.json:2-11`).
+- Planning rejects every private source manifest (`packages/publish-package/src/plan.ts:103-118`). Workspace discovery rejects private manifests before filtering (`packages/publish-packages/src/index.ts:276-300`). Both shadcn source manifests are private templates (`projects/shadcn-theme/packages/react/package.json:2-8`, `projects/shadcn-theme/packages/angular/package.json:2-11`).
 - Explicit versions only have one leading `v` removed and are not semver-validated; placeholder manifests require an explicit version (`packages/publish-package/src/plan.ts:201-219`, `packages/publish-package/src/helpers.ts:35-41`).
 - Manifest generation already rewrites version placeholders and dependency ranges, omits release-unsafe fields, rewrites entry paths, and inherits root metadata (`packages/publish-package/src/manifest.ts:5-25`, `packages/publish-package/src/manifest.ts:49-130`, `packages/publish-package/src/manifest.ts:291-416`). It does not replace an `author` value equal to `PLACEHOLDER`, preserve a source `files` allow-list, add `publishConfig`, or accept a generated exports overlay.
 - Existing file staging has containment, regular-file, collision, and escaping-symlink controls that the new lifecycle must preserve (`packages/publish-package/src/publish.ts:173-225`, `packages/publish-package/src/publish.ts:232-279`).
 - npm publication supports access, dist-tag, registry, OTP through environment, provenance, and npm dry-run (`packages/publish-package/src/publish.ts:126-170`). npm dry-run is not prepare-only because it still calls `npm publish`.
-- Angular currently builds isolated `plain` and `tw` stages, consumes a generated exports map, validates and packs both, then publishes exact tarballs (`/home/jahn/projects/shadcn-theme/scripts/publish.mjs:151-210`, `/home/jahn/projects/shadcn-theme/scripts/publish.mjs:231-259`). Its release tests prove second-variant failure prevents all publication and prepare-only retains two inspectable tarballs (`/home/jahn/projects/shadcn-theme/packages/angular/test/release.test.mjs:109-139`).
-- React currently builds and publishes one flattened `dist` directory with source-manifest exports (`/home/jahn/projects/shadcn-theme/scripts/publish.mjs:213-228`). Its source `files` allow-list and generated `publishConfig.access` are validated as package metadata (`/home/jahn/projects/shadcn-theme/packages/react/package.json:27-161`, `/home/jahn/projects/shadcn-theme/packages/react/scripts/validate-package.mjs`).
-- Target version lookup defaults to a patch bump, starts at `0.0.0` only for confirmed package absence, and treats authentication, network, timeout, registry, malformed JSON, and invalid versions as failures (`/home/jahn/projects/shadcn-theme/scripts/publish.mjs:53-108`, `/home/jahn/projects/shadcn-theme/packages/angular/test/release.test.mjs:69-107`).
+- Angular currently builds isolated `plain` and `tw` stages, consumes a generated exports map, validates and packs both, then publishes exact tarballs (`projects/shadcn-theme/scripts/publish.mjs:151-210`, `projects/shadcn-theme/scripts/publish.mjs:231-259`). Its release tests prove second-variant failure prevents all publication and prepare-only retains two inspectable tarballs (`projects/shadcn-theme/packages/angular/test/release.test.mjs:109-139`).
+- React currently builds and publishes one flattened `dist` directory with source-manifest exports (`projects/shadcn-theme/scripts/publish.mjs:213-228`). Its source `files` allow-list and generated `publishConfig.access` are validated as package metadata (`projects/shadcn-theme/packages/react/package.json:27-161`, `projects/shadcn-theme/packages/react/scripts/validate-package.mjs`).
+- Target version lookup defaults to a patch bump, starts at `0.0.0` only for confirmed package absence, and treats authentication, network, timeout, registry, malformed JSON, and invalid versions as failures (`projects/shadcn-theme/scripts/publish.mjs:53-108`, `projects/shadcn-theme/packages/angular/test/release.test.mjs:69-107`).
 - The worktree was clean when this task was created (`git status --short` produced no output).
 - No tests were run while preparing this task document. Findings are based on source, test, manifest, and documentation inspection.
 
@@ -77,7 +77,7 @@ References:
 - `packages/publish-package/src/plan.ts:22-101`
 - `packages/publish-package/src/publish.ts:30-118`
 - `packages/publish-package/src/index.ts:65-73`
-- `/home/jahn/projects/shadcn-theme/scripts/publish.mjs:172-228`
+- `projects/shadcn-theme/scripts/publish.mjs:172-228`
 
 Implementation requirements:
 
@@ -132,8 +132,8 @@ References:
 - `packages/publish-package/src/plan.ts:201-219`
 - `packages/publish-package/src/helpers.ts:35-41`
 - `packages/publish-package/src/runner.ts:19-48`
-- `/home/jahn/projects/shadcn-theme/scripts/publish.mjs:53-108`
-- `/home/jahn/projects/shadcn-theme/packages/angular/test/release.test.mjs:69-107`
+- `projects/shadcn-theme/scripts/publish.mjs:53-108`
+- `projects/shadcn-theme/packages/angular/test/release.test.mjs:69-107`
 
 Implementation requirements:
 
@@ -189,7 +189,7 @@ References:
 
 - `packages/publish-package/src/publish.ts:30-118`
 - `packages/publish-package/src/publish.ts:126-151`
-- `/home/jahn/projects/shadcn-theme/packages/angular/test/release.test.mjs:109-139`
+- `projects/shadcn-theme/packages/angular/test/release.test.mjs:109-139`
 
 Implementation requirements:
 
@@ -246,9 +246,9 @@ References:
 
 - `packages/publish-package/src/manifest.ts:7-25`
 - `packages/publish-package/src/manifest.ts:49-130`
-- `/home/jahn/projects/shadcn-theme/scripts/publish.mjs:13-32`
-- `/home/jahn/projects/shadcn-theme/scripts/publish.mjs:110-149`
-- `/home/jahn/projects/shadcn-theme/scripts/publish.mjs:189-193`
+- `projects/shadcn-theme/scripts/publish.mjs:13-32`
+- `projects/shadcn-theme/scripts/publish.mjs:110-149`
+- `projects/shadcn-theme/scripts/publish.mjs:189-193`
 
 Implementation requirements:
 
@@ -357,15 +357,15 @@ Generic unit tests can pass while failing the actual consumer contract: private 
 
 References:
 
-- `/home/jahn/projects/shadcn-theme/scripts/publish.mjs:74-259`
-- `/home/jahn/projects/shadcn-theme/packages/react/package.json:2-161`
-- `/home/jahn/projects/shadcn-theme/packages/angular/package.json:2-90`
-- `/home/jahn/projects/shadcn-theme/packages/angular/test/release.test.mjs:69-172`
+- `projects/shadcn-theme/scripts/publish.mjs:74-259`
+- `projects/shadcn-theme/packages/react/package.json:2-161`
+- `projects/shadcn-theme/packages/angular/package.json:2-90`
+- `projects/shadcn-theme/packages/angular/test/release.test.mjs:69-172`
 - `packages/publish-package/test/artifact-layout.test.ts`
 
 Implementation requirements:
 
-1. Add self-contained fixtures that model the current shadcn metadata and lifecycle without importing or mutating `/home/jahn/projects/shadcn-theme`.
+1. Add self-contained fixtures that model the current shadcn metadata and lifecycle without importing or mutating `projects/shadcn-theme`.
 2. Cover a React-like private template producing one flattened package with inherited author/license, preserved source files allow-list and exports, public publish config, package README/root LICENSE/optional llms file, and no release-only source fields.
 3. Cover an Angular-like private template producing deterministic plain and `tw` package names from repository-supplied recipes, distinct stages and generated exports, per-stage validation, and exact retained tarballs.
 4. Assert the second Angular-like validation failure prevents every publish. Assert success packs both before publication and publishes the exact tarballs.
@@ -420,7 +420,7 @@ References:
 
 Implementation requirements:
 
-1. Independently verify every prior acceptance criterion and compare the resulting fixture behavior with `/home/jahn/projects/shadcn-theme/scripts/publish.mjs` and its release tests.
+1. Independently verify every prior acceptance criterion and compare the resulting fixture behavior with `projects/shadcn-theme/scripts/publish.mjs` and its release tests.
 2. Confirm no framework-specific names or behavior entered toolkit source and that a repository adapter/config can express both consumer contexts.
 3. Confirm current callers retain default privacy refusal, one-artifact behavior, layouts, additional names, npm controls, and runner compatibility.
 4. Inspect packed artifacts and extracted consumers to ensure public manifests, entry paths, tar contents, and executable modes agree and no internal data crosses the package boundary.

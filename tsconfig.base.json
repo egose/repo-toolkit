@@ -15,7 +15,9 @@
       "@repo-toolkit/confluence": ["packages/confluence/src/index.ts"],
       "@repo-toolkit/confluence/*": ["packages/confluence/src/*"],
       "@repo-toolkit/go-release": ["packages/go-release/src/index.ts"],
-      "@repo-toolkit/go-release/*": ["packages/go-release/src/*"]
+      "@repo-toolkit/go-release/*": ["packages/go-release/src/*"],
+      "@repo-toolkit/docker-publish": ["packages/docker-publish/src/index.ts"],
+      "@repo-toolkit/docker-publish/*": ["packages/docker-publish/src/*"]
     }
   }
 }
