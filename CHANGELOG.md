@@ -1,3 +1,13 @@
+## [0.27.0](https://github.com/egose/repo-toolkit/compare/v0.26.0...v0.27.0) (2026-09-10)
+
+### Features
+
+* add interactive registry selection and shared test helpers ([cc13234](https://github.com/egose/repo-toolkit/commit/cc1323452d1e3b908cca0e5a850dbb5be6b0de99))
+
+### Documentation
+
+* mark docker publish review remediation tasks completed ([bba5cf6](https://github.com/egose/repo-toolkit/commit/bba5cf67f8b6af7c6739e307291df6433daae55b))
+
 ## [0.26.0](https://github.com/egose/repo-toolkit/compare/v0.25.0...v0.26.0) (2026-09-10)
 
 ### Features
