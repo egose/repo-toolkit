@@ -1,18 +1,13 @@
-import { mkdirSync, mkdtempSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { readdirSync, realpathSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 
-import {
-  verifyDockerPublish,
-  type DockerRunOptions,
-  type DockerVerifyOptions,
-  type DockerVerifyRunner,
-} from '../src/index';
+import { verifyDockerPublish, type DockerVerifyOptions, type DockerVerifyRunner } from '../src/index';
 import { resolveDockerPublishCliOptions } from '../src/cli-options';
 import { createScriptedPrompter, resolveInteractiveDockerPublishOptions } from '../src/interactive';
 import { resolveDockerPublishPlan } from '../src/plan';
 import { DEFAULT_VERIFY_CONCURRENCY } from '../src/verify';
+import { createRecordedRunner, DIGEST_A, DIGEST_B, withProject, writeImageContext, type RecordedCall } from './helpers';
 
 const planResolutionCalls = vi.hoisted(() => ({ count: 0 }));
 
@@ -29,40 +24,6 @@ vi.mock('../src/plan', async (importOriginal) => {
 
 const REFERENCE = 'registry.example.com/team/app:1.2.3';
 const EXTRA_REFERENCE = 'registry.example.com/team/app:9.9.9';
-
-const DIGEST_A = `sha256:${'a'.repeat(64)}`;
-const DIGEST_B = `sha256:${'b'.repeat(64)}`;
-
-interface RecordedCall {
-  readonly kind: 'run' | 'capture';
-  readonly executable: string;
-  readonly args: string[];
-  readonly options: DockerRunOptions;
-}
-
-function withProject(run: (root: string) => void | Promise<void>): Promise<void> {
-  const root = mkdtempSync(join(tmpdir(), 'docker-publish-verify-'));
-  const done = ((): void | Promise<void> => {
-    try {
-      return run(root);
-    } catch (error) {
-      rmSync(root, { recursive: true, force: true });
-      throw error;
-    }
-  })();
-  if (done instanceof Promise) {
-    return done.finally(() => {
-      rmSync(root, { recursive: true, force: true });
-    });
-  }
-  rmSync(root, { recursive: true, force: true });
-  return Promise.resolve();
-}
-
-function writeImageContext(root: string, dir: string): void {
-  mkdirSync(join(root, dir), { recursive: true });
-  writeFileSync(join(root, dir, 'Dockerfile'), 'FROM scratch\n');
-}
 
 function listVerificationDirs(root: string): string[] {
   return readdirSync(realpathSync(root)).filter((name) => name.startsWith('.docker-publish-verify-'));
@@ -115,14 +76,11 @@ function createVerifyRunner(
     readonly failFor?: ReadonlySet<string>;
   } = {},
 ): { readonly calls: RecordedCall[]; readonly runner: DockerVerifyRunner } {
-  const calls: RecordedCall[] = [];
-  const runner: DockerVerifyRunner = {
-    run(executable, args, options) {
-      calls.push({ kind: 'run', executable, args: [...args], options });
+  return createRecordedRunner({
+    onRun: (executable, args) => {
       throw new Error(`unexpected run invocation: ${executable} ${args.join(' ')}`);
     },
-    capture(executable, args, options) {
-      calls.push({ kind: 'capture', executable, args: [...args], options });
+    onCapture: (_executable, args) => {
       const reference = args[args.length - 1];
       if (hooks.failFor !== undefined && hooks.failFor.has(reference)) {
         throw new Error('Executable "docker" exited with status 1 (duration 3ms): no such manifest');
@@ -133,8 +91,7 @@ function createVerifyRunner(
           : hooks.manifestFor(reference);
       return { stdout, stderr: '', durationMs: 3, outputBytes: Buffer.byteLength(stdout, 'utf8') };
     },
-  };
-  return { calls, runner };
+  });
 }
 
 function assertManifestOnly(calls: ReadonlyArray<RecordedCall>): void {
@@ -149,7 +106,7 @@ function assertManifestOnly(calls: ReadonlyArray<RecordedCall>): void {
 
 describe('verifyDockerPublish', () => {
   it('verifies an exact match and returns structured evidence', () =>
-    withProject(async (root) => {
+    withProject('docker-publish-verify-', async (root) => {
       writeImageContext(root, 'services/app');
       const { calls, runner } = createVerifyRunner();
       const result = await verifyDockerPublish({ ...baseOptions(root, ['linux/amd64', 'linux/arm64']), runner });
@@ -172,7 +129,7 @@ describe('verifyDockerPublish', () => {
     }));
 
   it('verifies a single-image config manifest', () =>
-    withProject(async (root) => {
+    withProject('docker-publish-verify-', async (root) => {
       writeImageContext(root, 'services/app');
       const { calls, runner } = createVerifyRunner({
         manifestFor: () => singleManifest(DIGEST_A, 'linux/amd64'),
@@ -186,7 +143,7 @@ describe('verifyDockerPublish', () => {
     }));
 
   it('fails closed on digest mismatch and case-sensitive differences', () =>
-    withProject(async (root) => {
+    withProject('docker-publish-verify-', async (root) => {
       writeImageContext(root, 'services/app');
       const mismatched = createVerifyRunner({
         manifestFor: () => indexManifest(DIGEST_B, ['linux/amd64', 'linux/arm64']),
@@ -206,7 +163,7 @@ describe('verifyDockerPublish', () => {
     }));
 
   it('fails closed when a reference cannot be inspected', () =>
-    withProject(async (root) => {
+    withProject('docker-publish-verify-', async (root) => {
       writeImageContext(root, 'services/app');
       const { calls, runner } = createVerifyRunner({ failFor: new Set([REFERENCE]) });
       await expect(
@@ -217,7 +174,7 @@ describe('verifyDockerPublish', () => {
     }));
 
   it('rejects an additional reference before any runner call', () =>
-    withProject(async (root) => {
+    withProject('docker-publish-verify-', async (root) => {
       writeImageContext(root, 'services/app');
       const { calls, runner } = createVerifyRunner();
       await expect(
@@ -232,7 +189,7 @@ describe('verifyDockerPublish', () => {
     }));
 
   it('rejects missing references and mismatched digest maps', () =>
-    withProject(async (root) => {
+    withProject('docker-publish-verify-', async (root) => {
       writeImageContext(root, 'services/app');
       const { calls, runner } = createVerifyRunner();
       const options = baseOptions(root, ['linux/amd64', 'linux/arm64']);
@@ -260,7 +217,7 @@ describe('verifyDockerPublish', () => {
     }));
 
   it('fails closed on a platform subset', () =>
-    withProject(async (root) => {
+    withProject('docker-publish-verify-', async (root) => {
       writeImageContext(root, 'services/app');
       const { runner } = createVerifyRunner({
         manifestFor: () => indexManifest(DIGEST_A, ['linux/amd64']),
@@ -272,7 +229,7 @@ describe('verifyDockerPublish', () => {
     }));
 
   it('fails closed on a platform superset', () =>
-    withProject(async (root) => {
+    withProject('docker-publish-verify-', async (root) => {
       writeImageContext(root, 'services/app');
       const { runner } = createVerifyRunner({
         manifestFor: () => indexManifest(DIGEST_A, ['linux/amd64', 'linux/arm64', 'linux/s390x']),
@@ -284,7 +241,7 @@ describe('verifyDockerPublish', () => {
     }));
 
   it('fails closed on malformed JSON', () =>
-    withProject(async (root) => {
+    withProject('docker-publish-verify-', async (root) => {
       writeImageContext(root, 'services/app');
       const { runner } = createVerifyRunner({ manifestFor: () => 'not json {' });
       await expect(
@@ -294,7 +251,7 @@ describe('verifyDockerPublish', () => {
     }));
 
   it('fails closed on manifests missing required fields', () =>
-    withProject(async (root) => {
+    withProject('docker-publish-verify-', async (root) => {
       writeImageContext(root, 'services/app');
       const platforms = ['linux/amd64', 'linux/arm64'];
       const payloads: ReadonlyArray<string> = [
@@ -326,7 +283,7 @@ describe('verifyDockerPublish', () => {
     }));
 
   it('fails closed on oversized manifests', () =>
-    withProject(async (root) => {
+    withProject('docker-publish-verify-', async (root) => {
       writeImageContext(root, 'services/app');
       const { calls, runner } = createVerifyRunner();
       await expect(
@@ -341,7 +298,7 @@ describe('verifyDockerPublish', () => {
     }));
 
   it('rejects pull requests and performs zero pushes or pulls by default', () =>
-    withProject(async (root) => {
+    withProject('docker-publish-verify-', async (root) => {
       writeImageContext(root, 'services/app');
       const { calls, runner } = createVerifyRunner();
       await expect(
@@ -354,7 +311,7 @@ describe('verifyDockerPublish', () => {
     }));
 
   it('refuses to verify when the plan disables verification', () =>
-    withProject(async (root) => {
+    withProject('docker-publish-verify-', async (root) => {
       writeImageContext(root, 'services/app');
       const { calls, runner } = createVerifyRunner();
       await expect(
@@ -389,7 +346,7 @@ describe('plan-once CLI resolution (REV-10)', () => {
   }
 
   it('resolves the non-interactive plan with a single plan resolution pass', () =>
-    withProject(async (root) => {
+    withProject('docker-publish-verify-', async (root) => {
       const config = writeCliConfig(root, [
         { name: 'app', contextDir: 'services/app' },
         { name: 'worker', contextDir: 'services/worker' },
@@ -406,10 +363,10 @@ describe('plan-once CLI resolution (REV-10)', () => {
     }));
 
   it('resolves the interactive plan with a single plan resolution pass', () =>
-    withProject(async (root) => {
+    withProject('docker-publish-verify-', async (root) => {
       const config = writeCliConfig(root, [{ name: 'app', contextDir: 'services/app' }]);
       const expected = await resolveDockerPublishCliOptions({ values: { config }, repeat: {}, unknown: [] }, {});
-      const prompter = createScriptedPrompter(['', '', '', '', false, '', '', false, '', '', false]);
+      const prompter = createScriptedPrompter(['', '', '', '', false, undefined, '', '', false, '', '', false]);
       planResolutionCalls.count = 0;
       const resolved = await resolveInteractiveDockerPublishOptions(
         { values: { config }, repeat: {}, unknown: [] },
@@ -474,7 +431,7 @@ describe('bounded parallel verification (REV-10)', () => {
   }
 
   it('verifies multiple references with bounded parallelism and byte-identical evidence', () =>
-    withProject(async (root) => {
+    withProject('docker-publish-verify-', async (root) => {
       writeImageContext(root, 'services/app');
       writeImageContext(root, 'services/worker');
       const calls: RecordedCall[] = [];
@@ -502,7 +459,7 @@ describe('bounded parallel verification (REV-10)', () => {
     }));
 
   it('keeps peak concurrency within the documented bound at scale', () =>
-    withProject(async (root) => {
+    withProject('docker-publish-verify-', async (root) => {
       writeImageContext(root, 'services/app');
       writeImageContext(root, 'services/worker');
       const refs: string[] = [];

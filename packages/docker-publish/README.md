@@ -80,7 +80,7 @@ Unified options:
 
 Configuration supplies defaults; explicitly supplied CLI flags override the corresponding values. Without an operation flag, the unified CLI runs build followed by push. `--verify` after a push reuses the returned digests; `--verify` without `--push` uses `expectedDigests` from configuration. The publish CLI builds first unless `--skip-build` is given. CLI configuration cannot inject a library `runner`. Registry credentials come from environment variables named by the config `auth` map and travel to `docker login` via `--password-stdin` only; `--dry-run` resolves and prints the plan without invoking Docker or requiring daemon access.
 
-Pass `-i` / `--interactive` to answer staged prompts on a TTY instead of writing a config file: config values (when `--config` is given) become prompt defaults, explicit CLI flags still win, and `--dry-run` shapes the plan without auth prompts or confirmation. Without a TTY, `-i` fails closed before any Docker invocation. Prompted registry passwords are masked, held in memory for this run's login only, and never saved to disk.
+Pass `-i` / `--interactive` to answer staged prompts on a TTY instead of writing a config file: config values (when `--config` is given) become prompt defaults, explicit CLI flags still win, and `--dry-run` shapes the plan without auth prompts or confirmation. Registry hostnames are picked from a common-registry list with a custom-hostname entry last. Without a TTY, `-i` fails closed before any Docker invocation. Prompted registry passwords are masked, held in memory for this run's login only, and never saved to disk.
 
 ## Library
 

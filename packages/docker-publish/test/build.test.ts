@@ -1,6 +1,5 @@
 import {
   lstatSync,
-  mkdirSync,
   mkdtempSync,
   readFileSync,
   readdirSync,
@@ -20,41 +19,10 @@ import {
   resolveDockerPublishPlan,
   type DockerBuildRunner,
   type DockerPublishOptions,
-  type DockerRunOptions,
 } from '../src/index';
+import { createRecordedRunner, withProject, writeImageContext, type RecordedCall } from './helpers';
 
 const packageRoot = resolve(import.meta.dirname, '..');
-
-interface RecordedCall {
-  readonly kind: 'run' | 'capture';
-  readonly executable: string;
-  readonly args: string[];
-  readonly options: DockerRunOptions;
-}
-
-function withProject(run: (root: string) => void | Promise<void>): Promise<void> {
-  const root = mkdtempSync(join(tmpdir(), 'docker-publish-build-'));
-  const done = ((): void | Promise<void> => {
-    try {
-      return run(root);
-    } catch (error) {
-      rmSync(root, { recursive: true, force: true });
-      throw error;
-    }
-  })();
-  if (done instanceof Promise) {
-    return done.finally(() => {
-      rmSync(root, { recursive: true, force: true });
-    });
-  }
-  rmSync(root, { recursive: true, force: true });
-  return Promise.resolve();
-}
-
-function writeImageContext(root: string, dir: string, dockerfileName = 'Dockerfile'): void {
-  mkdirSync(join(root, dir), { recursive: true });
-  writeFileSync(join(root, dir, dockerfileName), 'FROM scratch\n');
-}
 
 function snapshotTree(root: string): Map<string, string> {
   const entries = new Map<string, string>();
@@ -88,10 +56,8 @@ function createSyncRunner(
     readonly captureStdout?: (references: ReadonlyArray<string>) => string;
   } = {},
 ): { readonly calls: RecordedCall[]; readonly runner: DockerBuildRunner } {
-  const calls: RecordedCall[] = [];
-  const runner: DockerBuildRunner = {
-    run(executable, args, options) {
-      calls.push({ kind: 'run', executable, args: [...args], options });
+  return createRecordedRunner({
+    onRun: (_executable, args) => {
       if (args[0] === 'rmi') {
         return { durationMs: 0 };
       }
@@ -103,15 +69,13 @@ function createSyncRunner(
       }
       return { durationMs: 5 };
     },
-    capture(executable, args, options) {
-      calls.push({ kind: 'capture', executable, args: [...args], options });
+    onCapture: (_executable, args) => {
       const references = args.slice(4);
       const stdout =
         hooks.captureStdout === undefined ? defaultImagesStdout(references) : hooks.captureStdout(references);
       return { stdout, stderr: '', durationMs: 3, outputBytes: Buffer.byteLength(stdout, 'utf8') };
     },
-  };
-  return { calls, runner };
+  });
 }
 
 function singleImageOptions(root: string): DockerPublishOptions {
@@ -126,7 +90,7 @@ function singleImageOptions(root: string): DockerPublishOptions {
 
 describe('buildDockerImages single-platform', () => {
   it('builds with --load, verifies local IDs, and leaves fixtures unchanged', async () => {
-    await withProject(async (root) => {
+    await withProject('docker-publish-build-', async (root) => {
       writeImageContext(root, 'services/app');
       const base = singleImageOptions(root);
       const plan = resolveDockerPublishPlan(base);
@@ -184,7 +148,7 @@ describe('buildDockerImages single-platform', () => {
 
 describe('buildDockerImages multi-image multi-platform', () => {
   it('joins platforms, tags every reference, and skips --load without verification', async () => {
-    await withProject(async (root) => {
+    await withProject('docker-publish-build-', async (root) => {
       writeImageContext(root, 'services/api');
       writeImageContext(root, 'services/worker', 'Dockerfile.prod');
       const base: DockerPublishOptions = {
@@ -301,7 +265,7 @@ describe('buildDockerImages multi-image multi-platform', () => {
 
 describe('build path never publishes', () => {
   it('contains no --push in any recorded argv or in the build module source', async () => {
-    await withProject(async (root) => {
+    await withProject('docker-publish-build-', async (root) => {
       writeImageContext(root, 'services/app');
       writeImageContext(root, 'services/other');
       const { calls, runner } = createSyncRunner();
@@ -331,7 +295,7 @@ describe('build path never publishes', () => {
 
 describe('build failure handling', () => {
   it('stops scheduling, untags the failed image, and surfaces image identity', async () => {
-    await withProject(async (root) => {
+    await withProject('docker-publish-build-', async (root) => {
       writeImageContext(root, 'services/api');
       writeImageContext(root, 'services/worker');
       const base: DockerPublishOptions = {
@@ -372,7 +336,7 @@ describe('build failure handling', () => {
   });
 
   it('rejects invalid options before invoking any process', async () => {
-    await withProject(async (root) => {
+    await withProject('docker-publish-build-', async (root) => {
       writeImageContext(root, 'services/app');
       const { calls, runner } = createSyncRunner();
       await expect(
@@ -398,7 +362,7 @@ describe('local image verification', () => {
   }
 
   it('rejects empty verification output and untags', async () => {
-    await withProject(async (root) => {
+    await withProject('docker-publish-build-', async (root) => {
       const { error, untags } = await verifyWithStdout(root, '');
       expect(error.message).toContain('"app"');
       expect(error.message).toContain('missing local image for reference');
@@ -407,7 +371,7 @@ describe('local image verification', () => {
   });
 
   it('rejects a missing reference among several tags and untags', async () => {
-    await withProject(async (root) => {
+    await withProject('docker-publish-build-', async (root) => {
       writeImageContext(root, 'services/app');
       const base: DockerPublishOptions = {
         cwd: root,
@@ -431,7 +395,7 @@ describe('local image verification', () => {
   });
 
   it('rejects unexpected local tags and untags', async () => {
-    await withProject(async (root) => {
+    await withProject('docker-publish-build-', async (root) => {
       const { error, untags } = await verifyWithStdout(
         root,
         'registry.example.com/team/app:1.2.3 sha256:fake-image-id-0\nregistry.example.com/team/other:9.9.9 sha256:zzz\n',
@@ -442,7 +406,7 @@ describe('local image verification', () => {
   });
 
   it('rejects malformed verification lines and untags', async () => {
-    await withProject(async (root) => {
+    await withProject('docker-publish-build-', async (root) => {
       const { error, untags } = await verifyWithStdout(root, 'not-a-verification-line\n');
       expect(error.message).toContain('unexpected local tag entry');
       expect(untags.length).toBe(1);
@@ -450,7 +414,7 @@ describe('local image verification', () => {
   });
 
   it('rejects conflicting image IDs for the same reference and untags', async () => {
-    await withProject(async (root) => {
+    await withProject('docker-publish-build-', async (root) => {
       const { error, untags } = await verifyWithStdout(
         root,
         'registry.example.com/team/app:1.2.3 sha256:aaa\nregistry.example.com/team/app:1.2.3 sha256:bbb\n',
@@ -463,7 +427,7 @@ describe('local image verification', () => {
 
 describe('argv preservation', () => {
   it('keeps spaces and special characters as exact argv entries', async () => {
-    await withProject(async (root) => {
+    await withProject('docker-publish-build-', async (root) => {
       writeImageContext(root, 'services/my app');
       const base: DockerPublishOptions = {
         cwd: root,
@@ -598,7 +562,7 @@ describe('bounded concurrency', () => {
   }
 
   it('never exceeds the configured bound across four images', async () => {
-    await withProject(async (root) => {
+    await withProject('docker-publish-build-', async (root) => {
       const base = multiImageBase(root, 4);
       const plan = resolveDockerPublishPlan(base);
       const contexts = plan.images.map((image) => image.resolvedContextDir);
@@ -627,7 +591,7 @@ describe('bounded concurrency', () => {
   });
 
   it('starts no new build after a known failure', async () => {
-    await withProject(async (root) => {
+    await withProject('docker-publish-build-', async (root) => {
       const base = multiImageBase(root, 3);
       const plan = resolveDockerPublishPlan(base);
       const contexts = plan.images.map((image) => image.resolvedContextDir);
@@ -671,7 +635,7 @@ describe('bounded concurrency', () => {
 
 describe('context trust re-validation', () => {
   it('fails closed when a context is swapped for a symlink between resolution and spawn', async () => {
-    await withProject(async (root) => {
+    await withProject('docker-publish-build-', async (root) => {
       writeImageContext(root, 'services/img0');
       writeImageContext(root, 'services/img1');
       const outside = mkdtempSync(join(tmpdir(), 'docker-publish-outside-'));
@@ -755,7 +719,7 @@ describe('secret build-arg and label redaction', () => {
   }
 
   it('passes merged secret values as runner secrets and redacts the build failure', async () => {
-    await withProject(async (root) => {
+    await withProject('docker-publish-build-', async (root) => {
       writeImageContext(root, 'services/app');
       const base = secretBase(root);
       const globalSecret = base.buildArgs?.['GLOBAL_SECRET'] as string;
@@ -800,7 +764,7 @@ describe('secret build-arg and label redaction', () => {
   });
 
   it('passes secrets to capture options and redacts verification failures', async () => {
-    await withProject(async (root) => {
+    await withProject('docker-publish-build-', async (root) => {
       writeImageContext(root, 'services/app');
       const base = secretBase(root);
       const calls: RecordedCall[] = [];
@@ -828,7 +792,7 @@ describe('secret build-arg and label redaction', () => {
   });
 
   it('keeps non-secret failure messages in the exact prior shape', async () => {
-    await withProject(async (root) => {
+    await withProject('docker-publish-build-', async (root) => {
       writeImageContext(root, 'services/app');
       const base: DockerPublishOptions = {
         cwd: root,
