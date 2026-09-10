@@ -696,7 +696,9 @@ function _createMdxContent(props) {
     }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
       children: ["The staged flow is: config-file path (offered only when ", (0,jsx_runtime.jsx)(_components.code, {
         children: "--config"
-      }), " is absent; empty input configures without a file), essentials (image entries, registry entries, tags, platforms, each looped with an add-another confirm where applicable), then an advanced group (build args, labels, concurrencies, process limits, Docker executable) behind a customize confirm that defaults to No. Every prompt defaults to the loaded config value when one exists, so accepting all defaults reproduces the equivalent config file."]
+      }), " is absent; empty input configures without a file), essentials (image entries, registry entries, tags, platforms, each looped with an add-another confirm where applicable), then an advanced group (build args, labels, concurrencies, process limits, Docker executable) behind a customize confirm that defaults to No. Registry hostnames are chosen from a common-registry list (Docker Hub, GHCR, GitLab, GCR, Quay.io, local ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "localhost:5000"
+      }), ") with a custom-hostname entry last; the configured hostname preselects the matching entry, or the custom entry when it is not listed. Every prompt defaults to the loaded config value when one exists, so accepting all defaults reproduces the equivalent config file."]
     }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
       children: ["Precedence is CLI flag > prompt answer > config default: explicit flags such as ", (0,jsx_runtime.jsx)(_components.code, {
         children: "--cwd"
