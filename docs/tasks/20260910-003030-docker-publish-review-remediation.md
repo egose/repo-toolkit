@@ -2,7 +2,7 @@
 
 Created: 2026-09-10 00:30:30
 
-Status: pending
+Status: completed
 
 ## Objective And Scope
 
@@ -560,7 +560,15 @@ Acceptance criteria:
 
 ### Task REV-11: Export The Formatter And Runner Values From The Package Index
 
-Status: pending
+Status: completed
+
+Completion evidence:
+
+- Changed files: `packages/docker-publish/src/index.ts`, `packages/docker-publish/test/index.test.ts`, `packages/docker-publish/README.md` only (plus this task-file status/evidence update; `CHANGELOG.md` untouched).
+- `src/index.ts`: added `formatImageReference` (value) to the `./plan` re-export; changed the `./runner` re-export from `export type` to `export` carrying `defaultDockerRunner` + `validateDockerRunner` (values) alongside the existing `DockerCaptureResult`/`DockerRunner`/`DockerRunOptions`/`DockerRunResult` types. No other export surface changed.
+- `test/index.test.ts`: smoke test now asserts the seven runtime exports (`buildDockerImages`, `defaultDockerRunner`, `formatImageReference`, `publishDockerImages`, `resolveDockerPublishPlan`, `validateDockerRunner`, `verifyDockerPublish`) from built `dist/index.js` plus a runtime `typeof` check (`function,object,function`) and a `formatImageReference` call result; new test asserts the source-level values are callable (`formatImageReference` with/without repository prefix, `defaultDockerRunner.run`/`capture` functions, `validateDockerRunner` accept/reject).
+- `README.md` (Library section): import example extended with the three new values; new sentence documents `formatImageReference` as the single reference builder, `defaultDockerRunner`, and `validateDockerRunner`. Additive contract change only.
+- Verification: `pnpm --filter @repo-toolkit/docker-publish test` → 9 files, 172 tests passed (171 pre-existing + 1 new); `pnpm lint` → pass; `pnpm typecheck` → pass; `git diff --check` → clean. Runtime acceptance: `import { formatImageReference, defaultDockerRunner, validateDockerRunner } from './packages/docker-publish/dist/index.js'` yields `function object function`, `formatImageReference('registry.example.com','team','app','1.2.3')` returns `registry.example.com/team/app:1.2.3`, and `validateDockerRunner(defaultDockerRunner)` does not throw.
 
 Priority: P2
 
@@ -598,7 +606,15 @@ Acceptance criteria:
 
 ### Task REV-12: Share One Test Fixture Helper Across The Suite
 
-Status: pending
+Status: completed
+
+Completion evidence:
+
+- Changed files: `packages/docker-publish/test/helpers.ts` (new), `packages/docker-publish/test/build.test.ts`, `packages/docker-publish/test/publish.test.ts`, `packages/docker-publish/test/verify.test.ts`, `packages/docker-publish/test/cli.test.ts`, `packages/docker-publish/test/plan.test.ts` only (plus this task-file status/evidence update; `CHANGELOG.md` untouched; no production-code changes).
+- `test/helpers.ts`: single owner of `RecordedCall`, `withProject(prefix, run)` (prefix-first so the 79 existing one-line call sites keep their exact temp prefixes with no body re-indentation; sync/async callback handling and `rmSync` cleanup copied verbatim), `writeImageContext(root, dir, dockerfileName = 'Dockerfile')` (`FROM scratch\n`, covers the 2-arg and 3-arg call shapes), generic `createRecordedRunner({ onRun, onCapture })` (records `{ kind, executable, args, options }` before delegating, matching the old push-first order), and `DIGEST_A`/`DIGEST_B`. File-specific items stay local: `fixture()` (cli deferred-cleanup discipline), `REFERENCE`/`EXTRA_REFERENCE`, auth env consts, `snapshotTree`, `packageRoot`, `trackingRunner`/inline peak runners.
+- Migration: all five files import the canonical helpers; the three specialized factories (`createSyncRunner`, `createRecordingRunner`, `createVerifyRunner`) are now thin wrappers over `createRecordedRunner` with byte-identical behavior branches; now-unused `DockerRunOptions`/`mkdirSync`/`mkdtempSync`/`rmSync`/`tmpdir` imports pruned (lint-clean).
+- Grep single-definition proof: `function withProject|function writeImageContext|interface RecordedCall|const DIGEST_A|const DIGEST_B` → zero matches in the five migrated files, one definition each in `helpers.ts` (`examples.test.ts` keeps its own out-of-scope `RecordedCall`).
+- Verification: `pnpm --filter @repo-toolkit/docker-publish test` → 9 files, 172 tests passed (identical to the pre-change baseline count recorded before this task); `pnpm lint` → pass; `pnpm typecheck` → pass; `git diff --check` → clean. Extra strict test-inclusive `tsc` probe (not part of repo verification, which covers `src/` only) reports the same 5 pre-existing body errors before and after (async fakes, cli auth shape; confirmed identical on the stashed pristine tree) — `helpers.ts` and the wrappers add zero new type errors.
 
 Priority: P2
 
@@ -641,7 +657,25 @@ Acceptance criteria:
 
 ### Task REV-13: Perform Independent Final Integration Review
 
-Status: pending
+Status: completed
+
+Completion evidence:
+
+- Changed files: this task file only (status/evidence update). No `src/` or `test/` corrections were needed: every runtime probe passed on the as-found tree, so there was no P0/P1 regression to fix within `packages/docker-publish` (or `prompt.ts`). `CHANGELOG.md` untouched.
+- Worktree note: the REV-01..REV-12 `src/` work is already contained in commit `b4ac8e5`; the worktree adds only the REV-11/REV-12 evidence text, the five test-file helper migrations, and untracked `packages/docker-publish/test/helpers.ts`. An unrelated `.tool-versions` drift (`docker-compose 5.5.0` -> `5.5.1`) appeared during the review session; it was not made by this task and was left untouched per working rules.
+- REV-01 (runtime probe `/tmp/opencode/rev13-probe.mjs` vs built `dist/index.js`): failing build with `NPM_TOKEN` + secret-label canaries threw; `options.secrets` carried the canary; the thrown message contained no canary; argv scrubbed with the passed secrets contained no canary; non-secret failure message kept the exact prior shape (`Failed to build Docker image "app" ... plain daemon tail`, no `[REDACTED]`). Targeted suite `test/build.test.ts -t "secret"` 3 passed. PASS.
+- REV-02: `test/interactive.test.ts -t "preserves"` 2 passed (per-image maps round-trip `toEqual` non-interactive plan; declined advanced customize preserves globals). PASS.
+- REV-03/REV-04 greps: one `DockerRunner` interface plus the intentional narrow `DockerLoginRunner` run-only subset introduced by REV-06 (not a duplicate runner); one `runWithConcurrency` def (`runner.ts:118`); `nextImage|nextReference` zero matches; `process.exit` zero matches (only `exitCode`); no post-ES2018 `.at(` in `src/`. PASS.
+- REV-05/REV-06 greps: `selectNamed`/`selectRegistries` one def each (`cli-filter.ts`); `SECRET_KEY_PATTERN`/`KNOWN_OS`/`KNOWN_ARCH`/`MAX_MAP_*` defined once (`plan.ts`), imported elsewhere; `CLI_ONLY_KEYS` defined once (`cli-filter.ts`, re-exported); `--password-stdin` argv builder once (`publish.ts:316` + doc comment); `skipPublishLogin` zero matches in `src/`. PASS.
+- REV-07 (runtime probe): pre-planted symlink at legacy `${manifestPath}.tmp-${process.pid}` pointing at an outside canary file was never followed — outside bytes `OUTSIDE-CANARY` intact, legacy path still a symlink, manifest written via the exclusive random-suffix temp. Targeted suite `test/publish.test.ts -t "symlink"` 2 passed. PASS.
+- REV-08: TOCTOU/context-trust tests pass inside the full suite (7 new tests from REV-08 included in the 172); `prompt.ts` re-checked — it only re-exports the clack password prompt, no secret handling, no action. Residual risk stays as documented (in-tree symlinks followed by Docker by design). PASS.
+- REV-09 (independent subprocess vs built `dist/cli.js`): config with `auth: { "registry.example.com": { "usernameEnv": "A-BAD" } }` + `--dry-run` exited 1 with `must define exactly usernameEnv and passwordEnv` on stderr, empty stdout, marker docker executable never invoked. Targeted suite `test/cli.test.ts -t "auth shape"` 4 passed. PASS.
+- REV-10: `test/verify.test.ts -t "single plan resolution"` 2 passed (one `resolveDockerPublishPlan` call per CLI/interactive run); `-t "bounded parallelism"` and `-t "documented bound"` passed (peak `<= DEFAULT_VERIFY_CONCURRENCY`, `> 1` at scale, byte-identical sorted evidence); no `.docker-publish-verify-*` litter in project root after the runs (`ls` confirms absent). PASS.
+- REV-11/packed artifact: `npm pack` tarball `/tmp/opencode/rev13-pack/repo-toolkit-docker-publish-0.0.0-PLACEHOLDER.tgz`, SHA256 `5fde5bfe9d8132cf362322ce4864aa43ae9a02ff57f23bc413411fd26a4e5bac`, unpacked to `/tmp/opencode/rev13-unpack` (workspace `publish-package` linked for resolution); `dist/cli.js`, `dist/cli-build.js`, `dist/cli-publish.js --help` each exit 0 with correct usage banners; runtime import from packed `dist/index.js` yields `function object function`, `formatImageReference('registry.example.com','team','app','1.2.3')` returns `registry.example.com/team/app:1.2.3`, `validateDockerRunner(defaultDockerRunner)` does not throw. PASS.
+- Non-interactive byte-identity: full package suite passes with no message/argv/summary updates (172/172), plus the probe-3 exact-shape check above; only declared delta is the REV-11 additive export surface. PASS.
+- Serial root verification: `pnpm lint` pass (exit 0); `pnpm typecheck` pass (exit 0); `pnpm build` pass (exit 0); `pnpm test` pass — 8 packages, 0 failures: 215 + 81 + 225 + 343 + 172 (docker-publish, 9 files) + 105 + 85 + 100 = 1326 tests. `git diff --check` clean.
+- File-integrity: `CHANGELOG.md` and `docs/tasks/20260902-102251-configurable-package-artifact-publishing.md` unmodified (no status/diff entries).
+- Residual risks (all deferred, none blocking): the five plan-level deferred items stand (lowercase-only tag charset, Windows path semantics, `maxManifestBytes` ordering, `go-release` concurrency sharing, real-daemon e2e); `DockerLoginRunner` intentionally coexists with `DockerRunner` as a run-only subset (REV-06); in-tree context symlinks remain trusted-by-contract per REV-08; `.tool-versions` docker-compose drift is environment-owned, not this plan's.
 
 Priority: P0
 
