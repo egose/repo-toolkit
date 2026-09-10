@@ -119,6 +119,13 @@ function _createMdxContent(props) {
             children: "@repo-toolkit/go-release"
           })
         }), ": build and verify deterministic cross-platform Go binary releases."]
+      }), "\n", (0,jsx_runtime.jsxs)(_components.li, {
+        children: [(0,jsx_runtime.jsx)(_components.a, {
+          href: "./docker-publish",
+          children: (0,jsx_runtime.jsx)(_components.code, {
+            children: "@repo-toolkit/docker-publish"
+          })
+        }), ": plan, build, publish, and verify Docker/OCI container images to target registries."]
       }), "\n"]
     }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
       children: ["Package-local ", (0,jsx_runtime.jsx)(_components.code, {
