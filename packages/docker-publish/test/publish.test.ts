@@ -18,8 +18,8 @@ import {
   resolveDockerPublishPlan,
   type DockerPublishImagesOptions,
   type DockerPublishRunner,
-  type DockerRunOptions,
 } from '../src/index';
+import { createRecordedRunner, DIGEST_A, DIGEST_B, withProject, writeImageContext, type RecordedCall } from './helpers';
 
 const packageRoot = resolve(import.meta.dirname, '..');
 
@@ -27,40 +27,6 @@ const USER_ENV = 'DOCKER_PUBLISH_TEST_USER';
 const PASS_ENV = 'DOCKER_PUBLISH_TEST_PASS';
 const TEST_USER = 'test-publish-user';
 const TEST_PASS = 'test-publish-pass-7f3a-secret';
-
-const DIGEST_A = `sha256:${'a'.repeat(64)}`;
-const DIGEST_B = `sha256:${'b'.repeat(64)}`;
-
-interface RecordedCall {
-  readonly kind: 'run' | 'capture';
-  readonly executable: string;
-  readonly args: string[];
-  readonly options: DockerRunOptions;
-}
-
-function withProject(run: (root: string) => void | Promise<void>): Promise<void> {
-  const root = mkdtempSync(join(tmpdir(), 'docker-publish-publish-'));
-  const done = ((): void | Promise<void> => {
-    try {
-      return run(root);
-    } catch (error) {
-      rmSync(root, { recursive: true, force: true });
-      throw error;
-    }
-  })();
-  if (done instanceof Promise) {
-    return done.finally(() => {
-      rmSync(root, { recursive: true, force: true });
-    });
-  }
-  rmSync(root, { recursive: true, force: true });
-  return Promise.resolve();
-}
-
-function writeImageContext(root: string, dir: string): void {
-  mkdirSync(join(root, dir), { recursive: true });
-  writeFileSync(join(root, dir, 'Dockerfile'), 'FROM scratch\n');
-}
 
 function withAuthEnv(): () => void {
   const previousUser = process.env[USER_ENV];
@@ -110,17 +76,14 @@ function createRecordingRunner(
     readonly failLogin?: boolean;
   } = {},
 ): { readonly calls: RecordedCall[]; readonly runner: DockerPublishRunner } {
-  const calls: RecordedCall[] = [];
-  const runner: DockerPublishRunner = {
-    run(executable, args, options) {
-      calls.push({ kind: 'run', executable, args: [...args], options });
+  return createRecordedRunner({
+    onRun: () => {
       if (hooks.failLogin === true) {
         throw new Error('login output tail marker');
       }
       return { durationMs: 1 };
     },
-    capture(executable, args, options) {
-      calls.push({ kind: 'capture', executable, args: [...args], options });
+    onCapture: (_executable, args) => {
       let stdout: string;
       if (args[0] === 'push') {
         stdout = hooks.pushStdout === undefined ? pushStdoutFor(DIGEST_A) : hooks.pushStdout(args[1]);
@@ -130,8 +93,7 @@ function createRecordingRunner(
       }
       return { stdout, stderr: '', durationMs: 2, outputBytes: Buffer.byteLength(stdout, 'utf8') };
     },
-  };
-  return { calls, runner };
+  });
 }
 
 function argvOf(calls: ReadonlyArray<RecordedCall>, kind: 'run' | 'capture', first: string): RecordedCall[] {
@@ -146,7 +108,7 @@ function tick(): Promise<void> {
 
 describe('publish login, push, and inspect argv', () => {
   it('authenticates via --password-stdin and captures digests per reference', async () => {
-    await withProject(async (root) => {
+    await withProject('docker-publish-publish-', async (root) => {
       writeImageContext(root, 'services/app');
       const restore = withAuthEnv();
       try {
@@ -209,7 +171,7 @@ describe('publish login, push, and inspect argv', () => {
   });
 
   it('logs in once per registry and pushes references in plan order', async () => {
-    await withProject(async (root) => {
+    await withProject('docker-publish-publish-', async (root) => {
       writeImageContext(root, 'services/app');
       const restore = withAuthEnv();
       try {
@@ -240,7 +202,7 @@ describe('publish login, push, and inspect argv', () => {
   });
 
   it('skips login for registries without an auth entry', async () => {
-    await withProject(async (root) => {
+    await withProject('docker-publish-publish-', async (root) => {
       writeImageContext(root, 'services/app');
       const base = planBase(root);
       const { calls, runner } = createRecordingRunner();
@@ -254,7 +216,7 @@ describe('publish login, push, and inspect argv', () => {
 
 describe('off-plan and allowlist refusal', () => {
   it('refuses an off-plan reference before any runner call', async () => {
-    await withProject(async (root) => {
+    await withProject('docker-publish-publish-', async (root) => {
       writeImageContext(root, 'services/app');
       const base = planBase(root);
       const { calls, runner } = createRecordingRunner();
@@ -270,7 +232,7 @@ describe('off-plan and allowlist refusal', () => {
   });
 
   it('refuses an unlisted registry before any runner call', async () => {
-    await withProject(async (root) => {
+    await withProject('docker-publish-publish-', async (root) => {
       writeImageContext(root, 'services/app');
       const base = planBase(root);
       const { calls, runner } = createRecordingRunner();
@@ -282,7 +244,7 @@ describe('off-plan and allowlist refusal', () => {
   });
 
   it('refuses duplicate requested references before any runner call', async () => {
-    await withProject(async (root) => {
+    await withProject('docker-publish-publish-', async (root) => {
       writeImageContext(root, 'services/app');
       const base = planBase(root);
       const { calls, runner } = createRecordingRunner();
@@ -300,7 +262,7 @@ describe('off-plan and allowlist refusal', () => {
 
 describe('digest capture fails closed', () => {
   it('fails when push and inspect outputs carry no digest', async () => {
-    await withProject(async (root) => {
+    await withProject('docker-publish-publish-', async (root) => {
       writeImageContext(root, 'services/app');
       const base = planBase(root);
       const { calls, runner } = createRecordingRunner({
@@ -313,7 +275,7 @@ describe('digest capture fails closed', () => {
   });
 
   it('fails on malformed push digests', async () => {
-    await withProject(async (root) => {
+    await withProject('docker-publish-publish-', async (root) => {
       writeImageContext(root, 'services/app');
       const base = planBase(root);
       const { runner } = createRecordingRunner({
@@ -324,7 +286,7 @@ describe('digest capture fails closed', () => {
   });
 
   it('fails on malformed inspect digests', async () => {
-    await withProject(async (root) => {
+    await withProject('docker-publish-publish-', async (root) => {
       writeImageContext(root, 'services/app');
       const base = planBase(root);
       const { runner } = createRecordingRunner({
@@ -336,7 +298,7 @@ describe('digest capture fails closed', () => {
   });
 
   it('fails when push and inspect digests disagree', async () => {
-    await withProject(async (root) => {
+    await withProject('docker-publish-publish-', async (root) => {
       writeImageContext(root, 'services/app');
       const base = planBase(root);
       const { runner } = createRecordingRunner({
@@ -348,7 +310,7 @@ describe('digest capture fails closed', () => {
   });
 
   it('falls back to the inspect digest when push output carries none', async () => {
-    await withProject(async (root) => {
+    await withProject('docker-publish-publish-', async (root) => {
       writeImageContext(root, 'services/app');
       const base = planBase(root);
       const { runner } = createRecordingRunner({
@@ -363,7 +325,7 @@ describe('digest capture fails closed', () => {
 
 describe('secret redaction', () => {
   it('redacts credentials from failures and keeps passwords out of argv', async () => {
-    await withProject(async (root) => {
+    await withProject('docker-publish-publish-', async (root) => {
       writeImageContext(root, 'services/app');
       const restore = withAuthEnv();
       try {
@@ -398,7 +360,7 @@ describe('secret redaction', () => {
   });
 
   it('redacts credentials from login failures and names the registry', async () => {
-    await withProject(async (root) => {
+    await withProject('docker-publish-publish-', async (root) => {
       writeImageContext(root, 'services/app');
       const restore = withAuthEnv();
       try {
@@ -440,7 +402,7 @@ describe('secret redaction', () => {
 
 describe('dry-run short-circuit', () => {
   it('resolves the plan without runner calls, credentials, or manifest writes', async () => {
-    await withProject(async (root) => {
+    await withProject('docker-publish-publish-', async (root) => {
       writeImageContext(root, 'services/app');
       const base = planBase(root);
       const { calls, runner } = createRecordingRunner();
@@ -460,7 +422,7 @@ describe('dry-run short-circuit', () => {
 
 describe('digest manifest', () => {
   it('writes an atomic manifest sorted by reference', async () => {
-    await withProject(async (root) => {
+    await withProject('docker-publish-publish-', async (root) => {
       writeImageContext(root, 'services/app');
       const base: DockerPublishImagesOptions = {
         ...planBase(root),
@@ -501,7 +463,7 @@ describe('digest manifest', () => {
   });
 
   it('rejects manifest paths escaping the project root before any runner call', async () => {
-    await withProject(async (root) => {
+    await withProject('docker-publish-publish-', async (root) => {
       writeImageContext(root, 'services/app');
       const base = planBase(root);
       const { calls, runner } = createRecordingRunner();
@@ -515,7 +477,7 @@ describe('digest manifest', () => {
   it('rejects manifest paths that escape the project root through symlinked directories', async () => {
     const outside = mkdtempSync(join(tmpdir(), 'docker-publish-publish-outside-'));
     try {
-      await withProject(async (root) => {
+      await withProject('docker-publish-publish-', async (root) => {
         writeImageContext(root, 'services/app');
         symlinkSync(outside, join(root, 'linkdir'), 'dir');
         const base = planBase(root);
@@ -534,7 +496,7 @@ describe('digest manifest', () => {
   it('never follows a pre-planted symlink at the legacy predictable temp path', async () => {
     const outside = mkdtempSync(join(tmpdir(), 'docker-publish-manifest-outside-'));
     try {
-      await withProject(async (root) => {
+      await withProject('docker-publish-publish-', async (root) => {
         writeImageContext(root, 'services/app');
         const base = planBase(root);
         const { runner } = createRecordingRunner();
@@ -566,7 +528,7 @@ describe('digest manifest', () => {
   });
 
   it('writes byte-identical manifest content for the success path', async () => {
-    await withProject(async (root) => {
+    await withProject('docker-publish-publish-', async (root) => {
       writeImageContext(root, 'services/app');
       const base = planBase(root);
       const { runner } = createRecordingRunner();
@@ -653,7 +615,7 @@ describe('publish concurrency', () => {
   }
 
   it('pushes serially by default', async () => {
-    await withProject(async (root) => {
+    await withProject('docker-publish-publish-', async (root) => {
       writeImageContext(root, 'services/app');
       const { base, refs } = twoTagBase(root);
       const digests = new Map<string, string>([
@@ -686,7 +648,7 @@ describe('publish concurrency', () => {
   });
 
   it('honours an explicit publishConcurrency bound', async () => {
-    await withProject(async (root) => {
+    await withProject('docker-publish-publish-', async (root) => {
       writeImageContext(root, 'services/app');
       const { base, refs } = twoTagBase(root);
       const digests = new Map<string, string>([
@@ -747,7 +709,7 @@ describe('publish concurrency', () => {
 
 describe('publish option validation', () => {
   it('rejects invalid publish options before any runner call', async () => {
-    await withProject(async (root) => {
+    await withProject('docker-publish-publish-', async (root) => {
       writeImageContext(root, 'services/app');
       const base = planBase(root);
       const { calls, runner } = createRecordingRunner();
@@ -759,7 +721,7 @@ describe('publish option validation', () => {
   });
 
   it('fails closed when registry credentials are missing from the environment', async () => {
-    await withProject(async (root) => {
+    await withProject('docker-publish-publish-', async (root) => {
       writeImageContext(root, 'services/app');
       const restore = withAuthEnv();
       delete process.env[PASS_ENV];

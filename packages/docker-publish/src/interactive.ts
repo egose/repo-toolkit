@@ -288,6 +288,17 @@ interface RegistryDefault {
   readonly repositoryPrefix?: string;
 }
 
+export const CUSTOM_REGISTRY_HOSTNAME = '__custom__';
+
+const KNOWN_REGISTRIES: ReadonlyArray<{ readonly hostname: string; readonly label: string }> = [
+  { hostname: 'docker.io', label: 'Docker Hub (docker.io)' },
+  { hostname: 'ghcr.io', label: 'GitHub Container Registry (ghcr.io)' },
+  { hostname: 'registry.gitlab.com', label: 'GitLab Container Registry (registry.gitlab.com)' },
+  { hostname: 'gcr.io', label: 'Google Container Registry (gcr.io)' },
+  { hostname: 'quay.io', label: 'Quay.io (quay.io)' },
+  { hostname: 'localhost:5000', label: 'Local registry (localhost:5000)' },
+];
+
 function readImageDefaults(loaded: Record<string, unknown>): ImageDefault[] {
   if (!Array.isArray(loaded.images)) {
     return [];
@@ -470,17 +481,34 @@ async function promptRegistryEntries(
   defaults: ReadonlyArray<RegistryDefault>,
 ): Promise<DockerPublishRegistryOptions[]> {
   const entries: DockerPublishRegistryOptions[] = [];
+  const knownHostnames = KNOWN_REGISTRIES.map((entry) => entry.hostname);
   let index = 0;
   for (;;) {
     const fallback = index < defaults.length ? (defaults[index] as RegistryDefault) : undefined;
     const label = `registries[${index}]`;
-    const hostname = await promptLine(
-      prompter,
-      `Registry ${index + 1} hostname`,
-      fallback?.hostname,
-      validateRegistryHostnameValue(`${label}.hostname`),
-      `${label}.hostname must be a non-empty string`,
-    );
+    const fallbackHostname = fallback?.hostname;
+    const fallbackKnown = fallbackHostname !== undefined && knownHostnames.indexOf(fallbackHostname) >= 0;
+    const choice = await prompter.select({
+      message: `Registry ${index + 1} hostname`,
+      options: [
+        ...KNOWN_REGISTRIES.map((entry) => ({ value: entry.hostname, label: entry.label })),
+        { value: CUSTOM_REGISTRY_HOSTNAME, label: 'Custom hostname…' },
+      ],
+      initialValue:
+        fallbackHostname === undefined ? 'docker.io' : fallbackKnown ? fallbackHostname : CUSTOM_REGISTRY_HOSTNAME,
+    });
+    let hostname: string;
+    if (choice === CUSTOM_REGISTRY_HOSTNAME) {
+      hostname = await promptLine(
+        prompter,
+        `Registry ${index + 1} custom hostname`,
+        fallbackKnown ? undefined : fallbackHostname,
+        validateRegistryHostnameValue(`${label}.hostname`),
+        `${label}.hostname must be a non-empty string`,
+      );
+    } else {
+      hostname = choice;
+    }
     const repositoryPrefix = await promptOptionalLine(
       prompter,
       `Registry ${index + 1} repository prefix (optional)`,

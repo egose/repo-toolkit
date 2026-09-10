@@ -15,22 +15,9 @@ import { describe, expect, it } from 'vitest';
 
 import { resolveDockerPublishPlan, type DockerPublishOptions } from '../src/index';
 import { assertResolvedImagePaths, formatImageReference } from '../src/plan';
+import { withProject, writeImageContext } from './helpers';
 
 const packageRoot = resolve(import.meta.dirname, '..');
-
-function withProject(run: (root: string) => void): void {
-  const root = mkdtempSync(join(tmpdir(), 'docker-publish-plan-'));
-  try {
-    run(root);
-  } finally {
-    rmSync(root, { recursive: true, force: true });
-  }
-}
-
-function writeImageContext(root: string, dir: string, dockerfileName = 'Dockerfile'): void {
-  mkdirSync(join(root, dir), { recursive: true });
-  writeFileSync(join(root, dir, dockerfileName), 'FROM scratch\n');
-}
 
 function singleImageOptions(root: string): DockerPublishOptions {
   return {
@@ -121,7 +108,7 @@ describe('formatImageReference', () => {
 
 describe('single-image plan', () => {
   it('resolves one image, one registry, two platforms, and a version tag', () => {
-    withProject((root) => {
+    withProject('docker-publish-plan-', (root) => {
       writeImageContext(root, 'services/app');
       const plan = resolveDockerPublishPlan(singleImageOptions(root));
       expect(plan).not.toBeInstanceOf(Promise);
@@ -156,7 +143,7 @@ describe('single-image plan', () => {
 
 describe('two-image two-registry plan', () => {
   it('resolves distinct tags, build args, and labels across the full reference matrix', () => {
-    withProject((root) => {
+    withProject('docker-publish-plan-', (root) => {
       writeImageContext(root, 'services/api');
       writeImageContext(root, 'services/worker', 'Dockerfile.prod');
       const plan = resolveDockerPublishPlan(twoImageOptions(root));
@@ -192,7 +179,7 @@ describe('two-image two-registry plan', () => {
 
 describe('required collections', () => {
   it('requires images, registries, tags, and platforms', () => {
-    withProject((root) => {
+    withProject('docker-publish-plan-', (root) => {
       writeImageContext(root, 'services/app');
       const base = singleImageOptions(root);
       expect(() => resolveDockerPublishPlan({})).toThrow('images must be an array');
@@ -214,7 +201,7 @@ describe('required collections', () => {
 
 describe('unknown keys', () => {
   it('rejects unknown keys at every level', () => {
-    withProject((root) => {
+    withProject('docker-publish-plan-', (root) => {
       writeImageContext(root, 'services/app');
       const base = singleImageOptions(root);
       expect(() => resolveDockerPublishPlan({ ...base, extra: true })).toThrow('Unknown docker-publish option: extra');
@@ -239,7 +226,7 @@ describe('unknown keys', () => {
 
 describe('path containment', () => {
   it('rejects invalid contexts', () => {
-    withProject((root) => {
+    withProject('docker-publish-plan-', (root) => {
       writeImageContext(root, 'services/app');
       const base = singleImageOptions(root);
       expect(() =>
@@ -261,7 +248,7 @@ describe('path containment', () => {
   });
 
   it('rejects Dockerfile escapes and missing Dockerfiles', () => {
-    withProject((root) => {
+    withProject('docker-publish-plan-', (root) => {
       writeImageContext(root, 'services/app');
       writeImageContext(root, 'other');
       const base = singleImageOptions(root);
@@ -287,7 +274,7 @@ describe('path containment', () => {
   });
 
   it('rejects Dockerfiles that escape their image context through symlinks', () => {
-    withProject((root) => {
+    withProject('docker-publish-plan-', (root) => {
       writeImageContext(root, 'services/app');
       writeImageContext(root, 'services/other');
       symlinkSync(join(root, 'services/other'), join(root, 'services/app', 'link'), 'dir');
@@ -302,7 +289,7 @@ describe('path containment', () => {
   });
 
   it('rejects invalid image names and targets', () => {
-    withProject((root) => {
+    withProject('docker-publish-plan-', (root) => {
       writeImageContext(root, 'services/app');
       const base = singleImageOptions(root);
       expect(() =>
@@ -323,7 +310,7 @@ describe('path containment', () => {
 
 describe('duplicates', () => {
   it('rejects duplicate names, registries, tags, platforms, and references', () => {
-    withProject((root) => {
+    withProject('docker-publish-plan-', (root) => {
       writeImageContext(root, 'services/app');
       writeImageContext(root, 'services/other');
       writeImageContext(root, 'c1');
@@ -372,7 +359,7 @@ describe('duplicates', () => {
 
 describe('registry validation', () => {
   it('rejects malformed registry hostnames', () => {
-    withProject((root) => {
+    withProject('docker-publish-plan-', (root) => {
       writeImageContext(root, 'services/app');
       const base = singleImageOptions(root);
       const cases: ReadonlyArray<readonly [string, unknown]> = [
@@ -409,7 +396,7 @@ describe('registry validation', () => {
 
 describe('tag validation', () => {
   it('rejects illegal tags', () => {
-    withProject((root) => {
+    withProject('docker-publish-plan-', (root) => {
       writeImageContext(root, 'services/app');
       const base = singleImageOptions(root);
       const cases: ReadonlyArray<unknown> = ['Latest', 'v1:0', 'a/b', '', '-bad', '.bad', 'has space', 'x'.repeat(129)];
@@ -425,7 +412,7 @@ describe('tag validation', () => {
 
 describe('platform validation', () => {
   it('rejects malformed and unknown platforms without the escape hatch', () => {
-    withProject((root) => {
+    withProject('docker-publish-plan-', (root) => {
       writeImageContext(root, 'services/app');
       const base = singleImageOptions(root);
       expect(() => resolveDockerPublishPlan({ ...base, platforms: ['linux'] })).toThrow(
@@ -445,7 +432,7 @@ describe('platform validation', () => {
   });
 
   it('accepts custom platforms and variants through the documented escape hatch', () => {
-    withProject((root) => {
+    withProject('docker-publish-plan-', (root) => {
       writeImageContext(root, 'services/app');
       const base = singleImageOptions(root);
       const plan = resolveDockerPublishPlan({
@@ -467,7 +454,7 @@ describe('platform validation', () => {
 
 describe('build argument and label maps', () => {
   it('rejects oversized and malformed maps', () => {
-    withProject((root) => {
+    withProject('docker-publish-plan-', (root) => {
       writeImageContext(root, 'services/app');
       const base = singleImageOptions(root);
       const tooMany: Record<string, string> = {};
@@ -499,7 +486,7 @@ describe('build argument and label maps', () => {
   });
 
   it('rejects secret-like keys unless explicitly allowed', () => {
-    withProject((root) => {
+    withProject('docker-publish-plan-', (root) => {
       writeImageContext(root, 'services/app');
       const base = singleImageOptions(root);
       expect(() => resolveDockerPublishPlan({ ...base, buildArgs: { NPM_TOKEN: 'x' } })).toThrow('looks like a secret');
@@ -523,7 +510,7 @@ describe('build argument and label maps', () => {
 
 describe('scalar options', () => {
   it('rejects wrong types and out-of-range limits', () => {
-    withProject((root) => {
+    withProject('docker-publish-plan-', (root) => {
       writeImageContext(root, 'services/app');
       const base = singleImageOptions(root);
       expect(() => resolveDockerPublishPlan({ ...base, images: 'app' })).toThrow('images must be an array');
@@ -568,7 +555,7 @@ describe('scalar options', () => {
 
 describe('resolved path re-validation', () => {
   it('passes on an unchanged plan', () => {
-    withProject((root) => {
+    withProject('docker-publish-plan-', (root) => {
       writeImageContext(root, 'services/app');
       const plan = resolveDockerPublishPlan(singleImageOptions(root));
       expect(() => assertResolvedImagePaths(plan, plan.images[0])).not.toThrow();
@@ -576,7 +563,7 @@ describe('resolved path re-validation', () => {
   });
 
   it('fails closed when the context dir is swapped for a symlink after resolution', () => {
-    withProject((root) => {
+    withProject('docker-publish-plan-', (root) => {
       writeImageContext(root, 'services/app');
       const plan = resolveDockerPublishPlan(singleImageOptions(root));
       const outside = mkdtempSync(join(tmpdir(), 'docker-publish-outside-'));
@@ -594,7 +581,7 @@ describe('resolved path re-validation', () => {
   });
 
   it('fails closed when a parent component is swapped for a symlink after resolution', () => {
-    withProject((root) => {
+    withProject('docker-publish-plan-', (root) => {
       writeImageContext(root, 'services/app');
       const plan = resolveDockerPublishPlan(singleImageOptions(root));
       const outside = mkdtempSync(join(tmpdir(), 'docker-publish-outside-'));
@@ -613,7 +600,7 @@ describe('resolved path re-validation', () => {
   });
 
   it('fails closed when the Dockerfile is replaced after resolution', () => {
-    withProject((root) => {
+    withProject('docker-publish-plan-', (root) => {
       writeImageContext(root, 'services/app');
       writeImageContext(root, 'services/other');
       const plan = resolveDockerPublishPlan(singleImageOptions(root));
@@ -624,7 +611,7 @@ describe('resolved path re-validation', () => {
   });
 
   it('leaves symlinks inside the context tree to the documented trust contract', () => {
-    withProject((root) => {
+    withProject('docker-publish-plan-', (root) => {
       writeImageContext(root, 'services/app');
       writeFileSync(join(root, 'secret.txt'), 'top-secret\n');
       symlinkSync(join(root, 'secret.txt'), join(root, 'services/app', 'data'));
@@ -649,7 +636,7 @@ describe('context trust contract', () => {
 
 describe('plan purity', () => {
   it('leaves fixtures byte-for-byte unchanged and invokes zero processes', () => {
-    withProject((root) => {
+    withProject('docker-publish-plan-', (root) => {
       writeImageContext(root, 'services/app');
       writeImageContext(root, 'services/api');
       writeImageContext(root, 'services/worker', 'Dockerfile.prod');

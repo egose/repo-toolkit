@@ -21,6 +21,7 @@ import {
   promptInteractiveAuth,
   resolveInteractiveAuthAndConfirm,
 } from '../src/interactive';
+import { DIGEST_A, writeImageContext } from './helpers';
 
 const packageRoot = resolve(import.meta.dirname, '..');
 const buildCli = join(packageRoot, 'dist', 'cli-build.js');
@@ -28,7 +29,6 @@ const publishCli = join(packageRoot, 'dist', 'cli-publish.js');
 const unifiedCli = join(packageRoot, 'dist', 'cli.js');
 const tempPaths: string[] = [];
 
-const DIGEST_A = `sha256:${'a'.repeat(64)}`;
 const SECRET_BUILD_ARG = 'cli-test-build-arg-secret-9f2c';
 const AUTH_USER_ENV = 'DOCKER_PUBLISH_CLI_TEST_USER';
 const AUTH_PASS_ENV = 'DOCKER_PUBLISH_CLI_TEST_PASS';
@@ -65,11 +65,6 @@ function runCli(
     env: { ...process.env, ...env },
   });
   return { status: result.status, stdout: result.stdout, stderr: result.stderr };
-}
-
-function writeImageContext(root: string, dir: string): void {
-  mkdirSync(join(root, dir), { recursive: true });
-  writeFileSync(join(root, dir, 'Dockerfile'), 'FROM scratch\n');
 }
 
 function writeConfig(root: string, overrides: Readonly<Record<string, unknown>> = {}): string {

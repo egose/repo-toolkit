@@ -10,6 +10,7 @@ import {
   collectInteractiveSecrets,
   confirmInteractiveProceed,
   createScriptedPrompter,
+  CUSTOM_REGISTRY_HOSTNAME,
   loginWithInteractiveAuth,
   promptInteractiveAuth,
   resolveInteractiveAuthAndConfirm,
@@ -112,6 +113,7 @@ describe('resolveInteractiveDockerPublishOptions', () => {
       'services/app/Dockerfile.prod',
       '',
       false,
+      CUSTOM_REGISTRY_HOSTNAME,
       'registry.example.com',
       'team',
       false,
@@ -133,7 +135,7 @@ describe('resolveInteractiveDockerPublishOptions', () => {
     const configPath = writeConfig(root, 'docker-publish.json', baseConfig(root));
     const expected = await resolveDockerPublishCliOptions(flags({ config: configPath }), {});
 
-    const prompter = createScriptedPrompter(['', '', '', '', false, '', '', false, '', '', false]);
+    const prompter = createScriptedPrompter(['', '', '', '', false, undefined, '', '', false, '', '', false]);
     const actual = await resolveInteractiveDockerPublishOptions(
       flags({ config: configPath }),
       {},
@@ -161,7 +163,7 @@ describe('resolveInteractiveDockerPublishOptions', () => {
     const configPath = writeConfig(root, 'docker-publish.json', config);
     const expected = await resolveDockerPublishCliOptions(flags({ config: configPath }), {});
 
-    const prompter = createScriptedPrompter(['', '', '', '', false, '', '', false, '', '', false]);
+    const prompter = createScriptedPrompter(['', '', '', '', false, undefined, '', '', false, '', '', false]);
     const actual = await resolveInteractiveDockerPublishOptions(
       flags({ config: configPath }),
       {},
@@ -183,7 +185,7 @@ describe('resolveInteractiveDockerPublishOptions', () => {
     const configPath = writeConfig(root, 'docker-publish.json', config);
     const expected = await resolveDockerPublishCliOptions(flags({ config: configPath }), {});
 
-    const prompter = createScriptedPrompter(['', '', '', '', false, '', '', false, '', '', false]);
+    const prompter = createScriptedPrompter(['', '', '', '', false, undefined, '', '', false, '', '', false]);
     const actual = await resolveInteractiveDockerPublishOptions(
       flags({ config: configPath }),
       {},
@@ -199,7 +201,21 @@ describe('resolveInteractiveDockerPublishOptions', () => {
     seedBaseProject(root);
     const configPath = writeConfig(root, 'docker-publish.json', baseConfig(root));
 
-    const prompter = createScriptedPrompter(['', '', '', '', false, '', '', false, 'BAD TAG!!', '1.2.3', '', false]);
+    const prompter = createScriptedPrompter([
+      '',
+      '',
+      '',
+      '',
+      false,
+      undefined,
+      '',
+      '',
+      false,
+      'BAD TAG!!',
+      '1.2.3',
+      '',
+      false,
+    ]);
     const actual = await resolveInteractiveDockerPublishOptions(
       flags({ config: configPath }),
       {},
@@ -214,7 +230,7 @@ describe('resolveInteractiveDockerPublishOptions', () => {
     seedBaseProject(root);
     const configPath = writeConfig(root, 'docker-publish.json', baseConfig(root));
 
-    const prompter = createScriptedPrompter(['APP', 'app', '', '', '', false, '', '', false, '', '', false]);
+    const prompter = createScriptedPrompter(['APP', 'app', '', '', '', false, undefined, '', '', false, '', '', false]);
     const actual = await resolveInteractiveDockerPublishOptions(
       flags({ config: configPath }),
       {},
@@ -263,7 +279,7 @@ describe('resolveInteractiveDockerPublishOptions', () => {
     const root = project();
     seedBaseProject(root);
     const configPath = writeConfig(root, 'docker-publish.json', baseConfig(root));
-    const prompter = createScriptedPrompter(['', '', '', '', false, '', '', false, SCRIPTED_CANCEL]);
+    const prompter = createScriptedPrompter(['', '', '', '', false, undefined, '', '', false, SCRIPTED_CANCEL]);
     await expect(
       resolveInteractiveDockerPublishOptions(
         flags({ config: configPath }),
@@ -277,7 +293,7 @@ describe('resolveInteractiveDockerPublishOptions', () => {
     const root = project();
     seedBaseProject(root);
     const configPath = writeConfig(root, 'docker-publish.json', baseConfig(root));
-    const prompter = createScriptedPrompter(['', '', '', '', false, '', '', false, '', SCRIPTED_CANCEL]);
+    const prompter = createScriptedPrompter(['', '', '', '', false, undefined, '', '', false, '', SCRIPTED_CANCEL]);
     await expect(
       resolveInteractiveDockerPublishOptions(
         flags({ config: configPath }),
@@ -291,7 +307,7 @@ describe('resolveInteractiveDockerPublishOptions', () => {
     const root = project();
     seedBaseProject(root);
     const configPath = writeConfig(root, 'docker-publish.json', baseConfig(root));
-    const prompter = createScriptedPrompter(['', '', '', '', false, '', '', false, '', '', SCRIPTED_CANCEL]);
+    const prompter = createScriptedPrompter(['', '', '', '', false, undefined, '', '', false, '', '', SCRIPTED_CANCEL]);
     await expect(
       resolveInteractiveDockerPublishOptions(
         flags({ config: configPath }),
@@ -306,7 +322,21 @@ describe('resolveInteractiveDockerPublishOptions', () => {
     seedBaseProject(root);
     const configPath = writeConfig(root, 'docker-publish.json', baseConfig(root));
 
-    const prompter = createScriptedPrompter(['', '', '', '', false, '', '', false, '', 'mars/amd64', true, false]);
+    const prompter = createScriptedPrompter([
+      '',
+      '',
+      '',
+      '',
+      false,
+      undefined,
+      '',
+      '',
+      false,
+      '',
+      'mars/amd64',
+      true,
+      false,
+    ]);
     const actual = await resolveInteractiveDockerPublishOptions(
       flags({ config: configPath }),
       {},
@@ -327,6 +357,7 @@ describe('resolveInteractiveDockerPublishOptions', () => {
       '',
       '',
       false,
+      undefined,
       '',
       '',
       false,
@@ -356,6 +387,7 @@ describe('resolveInteractiveDockerPublishOptions', () => {
       '',
       '',
       false,
+      undefined,
       '',
       '',
       false,
@@ -393,6 +425,7 @@ describe('resolveInteractiveDockerPublishOptions', () => {
       '',
       '',
       false,
+      undefined,
       '',
       '',
       false,
@@ -434,6 +467,7 @@ describe('resolveInteractiveDockerPublishOptions', () => {
       'services/worker/Dockerfile',
       '',
       false,
+      undefined,
       '',
       '',
       false,
@@ -460,6 +494,7 @@ describe('resolveInteractiveDockerPublishOptions', () => {
       '',
       '',
       false,
+      undefined,
       '',
       '',
       true,
@@ -481,13 +516,91 @@ describe('resolveInteractiveDockerPublishOptions', () => {
     ]);
   });
 
+  it('selects a known registry without asking for a custom hostname', async () => {
+    const root = project();
+    seedBaseProject(root);
+    const configPath = writeConfig(root, 'docker-publish.json', baseConfig(root));
+
+    const prompter = createScriptedPrompter(['', '', '', '', false, 'ghcr.io', 'octo', false, '', '', false]);
+    const actual = await resolveInteractiveDockerPublishOptions(
+      flags({ config: configPath }),
+      {},
+      { interactive: true, prompter, canPromptNow: true },
+    );
+    expect(actual.plan.registries).toEqual([{ hostname: 'ghcr.io', repositoryPrefix: 'octo' }]);
+    expect(prompter.calls.filter((call) => call.message === 'Registry 1 custom hostname')).toHaveLength(0);
+  });
+
+  it('re-prompts an invalid custom hostname with the plan error message', async () => {
+    const root = project();
+    seedBaseProject(root);
+    const configPath = writeConfig(root, 'docker-publish.json', baseConfig(root));
+
+    const prompter = createScriptedPrompter([
+      '',
+      '',
+      '',
+      '',
+      false,
+      CUSTOM_REGISTRY_HOSTNAME,
+      'NOT A HOST!!',
+      'quay.example.com',
+      '',
+      false,
+      '',
+      '',
+      false,
+    ]);
+    const actual = await resolveInteractiveDockerPublishOptions(
+      flags({ config: configPath }),
+      {},
+      { interactive: true, prompter, canPromptNow: true },
+    );
+    expect(actual.plan.registries.map((registry) => registry.hostname)).toEqual(['quay.example.com']);
+    expect(prompter.calls.filter((call) => call.message === 'Registry 1 custom hostname')).toHaveLength(2);
+  });
+
+  it('preselects the configured known hostname as the select default', async () => {
+    const root = project();
+    seedBaseProject(root);
+    const config = {
+      ...baseConfig(root),
+      registries: [{ hostname: 'ghcr.io', repositoryPrefix: 'team' }],
+    };
+    const configPath = writeConfig(root, 'docker-publish.json', config);
+    const expected = await resolveDockerPublishCliOptions(flags({ config: configPath }), {});
+
+    const prompter = createScriptedPrompter(['', '', '', '', false, undefined, '', false, '', '', false]);
+    const actual = await resolveInteractiveDockerPublishOptions(
+      flags({ config: configPath }),
+      {},
+      { interactive: true, prompter, canPromptNow: true },
+    );
+    expect(actual).toEqual(expected);
+    expect(prompter.calls.filter((call) => call.message === 'Registry 1 custom hostname')).toHaveLength(0);
+  });
+
   it('prompts for the config path when --config is absent', async () => {
     const root = project();
     seedBaseProject(root);
     const configPath = writeConfig(root, 'docker-publish.json', baseConfig(root));
     const expected = await resolveDockerPublishCliOptions(flags({ config: configPath }), {});
 
-    const prompter = createScriptedPrompter([configPath, '', '', '', '', false, '', '', false, '', '', false]);
+    const prompter = createScriptedPrompter([
+      configPath,
+      '',
+      '',
+      '',
+      '',
+      false,
+      undefined,
+      '',
+      '',
+      false,
+      '',
+      '',
+      false,
+    ]);
     const actual = await resolveInteractiveDockerPublishOptions(
       flags({}),
       {},
@@ -510,6 +623,7 @@ describe('resolveInteractiveDockerPublishOptions', () => {
       '',
       '',
       false,
+      undefined,
       '',
       '',
       false,
