@@ -13,6 +13,8 @@ const DEFAULT_DOCKER_EXECUTABLE = 'docker';
 export const MAX_MAP_ENTRIES = 64;
 export const MAX_MAP_KEY_LENGTH = 128;
 export const MAX_MAP_VALUE_LENGTH = 4096;
+export const MAX_CACHE_SPECS = 16;
+export const MAX_CACHE_SPEC_LENGTH = 4096;
 export const SECRET_KEY_PATTERN = /TOKEN|SECRET|PASSWORD/u;
 
 export const KNOWN_OS = new Set([
@@ -93,6 +95,7 @@ export interface DockerPublishImageOptions {
   readonly target?: string;
   readonly buildArgs?: Readonly<Record<string, string>>;
   readonly labels?: Readonly<Record<string, string>>;
+  readonly annotations?: Readonly<Record<string, string>>;
 }
 
 export interface DockerPublishRegistryOptions {
@@ -118,6 +121,10 @@ export interface DockerPublishOptions {
   readonly platforms?: ReadonlyArray<string>;
   readonly buildArgs?: Readonly<Record<string, string>>;
   readonly labels?: Readonly<Record<string, string>>;
+  readonly annotations?: Readonly<Record<string, string>>;
+  readonly cacheFrom?: ReadonlyArray<string>;
+  readonly cacheTo?: ReadonlyArray<string>;
+  readonly ociExportDir?: string;
   readonly buildConcurrency?: number;
   readonly processLimits?: DockerPublishProcessLimitsOptions;
   readonly dockerExecutable?: string;
@@ -135,6 +142,7 @@ export interface DockerPublishImage {
   readonly target?: string;
   readonly buildArgs: Readonly<Record<string, string>>;
   readonly labels: Readonly<Record<string, string>>;
+  readonly annotations: Readonly<Record<string, string>>;
   readonly references: ReadonlyArray<string>;
 }
 
@@ -168,6 +176,10 @@ export interface DockerPublishPlan {
   readonly platforms: ReadonlyArray<DockerPublishPlatform>;
   readonly buildArgs: Readonly<Record<string, string>>;
   readonly labels: Readonly<Record<string, string>>;
+  readonly annotations: Readonly<Record<string, string>>;
+  readonly cacheFrom: ReadonlyArray<string>;
+  readonly cacheTo: ReadonlyArray<string>;
+  readonly ociExportDir?: string;
   readonly buildConcurrency: number;
   readonly processLimits: DockerPublishProcessLimits;
   readonly dockerExecutable: string;
@@ -185,6 +197,10 @@ const OPTION_KEYS = new Set([
   'platforms',
   'buildArgs',
   'labels',
+  'annotations',
+  'cacheFrom',
+  'cacheTo',
+  'ociExportDir',
   'buildConcurrency',
   'processLimits',
   'dockerExecutable',
@@ -193,7 +209,7 @@ const OPTION_KEYS = new Set([
   'verification',
 ]);
 
-const IMAGE_KEYS = new Set(['name', 'contextDir', 'dockerfile', 'target', 'buildArgs', 'labels']);
+const IMAGE_KEYS = new Set(['name', 'contextDir', 'dockerfile', 'target', 'buildArgs', 'labels', 'annotations']);
 const REGISTRY_KEYS = new Set(['hostname', 'repositoryPrefix']);
 const PROCESS_LIMIT_KEYS = new Set(['timeoutMs', 'maxOutputBytes']);
 const VERIFICATION_KEYS = new Set(['enabled', 'requireDigestMatch']);
@@ -237,6 +253,10 @@ export function resolveDockerPublishPlan(options: unknown): DockerPublishPlan {
   const allowCustomPlatforms = input.allowCustomPlatforms ?? false;
   const buildArgs = validateStringMap(input.buildArgs, 'buildArgs', allowSecrets);
   const labels = validateStringMap(input.labels, 'labels', allowSecrets);
+  const annotations = validateStringMap(input.annotations, 'annotations', allowSecrets);
+  const cacheFrom = validateCacheSpecs(input.cacheFrom, 'cacheFrom');
+  const cacheTo = validateCacheSpecs(input.cacheTo, 'cacheTo');
+  const ociExportDir = resolveOciExportDir(input.ociExportDir, cwd);
   const registries = resolveRegistries(input.registries);
   const tags = resolveTags(input.tags);
   const platforms = resolvePlatforms(input.platforms, allowCustomPlatforms);
@@ -257,6 +277,10 @@ export function resolveDockerPublishPlan(options: unknown): DockerPublishPlan {
     platforms,
     buildArgs,
     labels,
+    annotations,
+    cacheFrom,
+    cacheTo,
+    ...(ociExportDir === undefined ? {} : { ociExportDir }),
     buildConcurrency: resolveBuildConcurrency(input.buildConcurrency),
     processLimits: resolveProcessLimits(input.processLimits),
     dockerExecutable: validateNonEmptyString(input.dockerExecutable ?? DEFAULT_DOCKER_EXECUTABLE, 'dockerExecutable'),
@@ -308,6 +332,16 @@ function validateOptions(value: unknown): DockerPublishOptions {
   if (options.labels !== undefined) {
     requireObject(options.labels, 'labels');
   }
+  if (options.annotations !== undefined) {
+    requireObject(options.annotations, 'annotations');
+  }
+  if (options.cacheFrom !== undefined && !Array.isArray(options.cacheFrom)) {
+    throw new Error('cacheFrom must be an array of cache spec strings');
+  }
+  if (options.cacheTo !== undefined && !Array.isArray(options.cacheTo)) {
+    throw new Error('cacheTo must be an array of cache spec strings');
+  }
+  validateOptionalString(options.ociExportDir, 'ociExportDir');
   validateOptionalNumber(options.buildConcurrency, 'buildConcurrency');
   if (options.processLimits !== undefined) {
     requireObject(options.processLimits, 'processLimits');
@@ -378,6 +412,7 @@ function resolveImages(
     const target = entry.target === undefined ? undefined : validateTargetName(entry.target, `${label}.target`);
     const buildArgs = validateStringMap(entry.buildArgs, `${label}.buildArgs`, allowSecrets);
     const labels = validateStringMap(entry.labels, `${label}.labels`, allowSecrets);
+    const annotations = validateStringMap(entry.annotations, `${label}.annotations`, allowSecrets);
 
     const references: string[] = [];
     for (const registry of registries) {
@@ -400,6 +435,7 @@ function resolveImages(
       ...(target === undefined ? {} : { target }),
       buildArgs,
       labels,
+      annotations,
       references,
     };
   });
@@ -576,6 +612,63 @@ function validateStringMap(value: unknown, label: string, allowSecrets: boolean)
     result[key] = mapValue;
   }
   return result;
+}
+
+function validateCacheSpecs(value: unknown, label: string): ReadonlyArray<string> {
+  if (value === undefined) {
+    return [];
+  }
+  if (!Array.isArray(value)) {
+    throw new Error(`${label} must be an array of cache spec strings`);
+  }
+  if (value.length > MAX_CACHE_SPECS) {
+    throw new Error(`${label} must not contain more than ${MAX_CACHE_SPECS} entries`);
+  }
+  return value.map((entry, index) => {
+    const entryLabel = `${label}[${index}]`;
+    if (typeof entry !== 'string' || entry.length === 0) {
+      throw new Error(`${entryLabel} must be a non-empty string`);
+    }
+    if (entry.includes('\0')) {
+      throw new Error(`${entryLabel} must not contain NUL bytes`);
+    }
+    if (entry.length > MAX_CACHE_SPEC_LENGTH) {
+      throw new Error(`${entryLabel} must not exceed ${MAX_CACHE_SPEC_LENGTH} characters`);
+    }
+    return entry;
+  });
+}
+
+function resolveOciExportDir(value: string | undefined, cwd: string): string | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (typeof value !== 'string' || value.length === 0) {
+    throw new Error('ociExportDir must be a non-empty string');
+  }
+  if (value.includes('\0')) {
+    throw new Error('ociExportDir must not contain NUL bytes');
+  }
+  if (isAbsolute(value)) {
+    throw new Error(`ociExportDir must be relative: ${value}`);
+  }
+  const parts = value
+    .replace(/\\/gu, '/')
+    .split('/')
+    .filter((part) => part !== '' && part !== '.');
+  if (parts.indexOf('..') >= 0) {
+    throw new Error(`ociExportDir must be a non-root path without parent-directory segments: ${value}`);
+  }
+  if (parts.length === 0) {
+    return cwd;
+  }
+  const resolved = resolve(cwd, parts.join('/'));
+  const path = relative(cwd, resolved);
+  if (path === '' || path.slice(0, 2) === '..' || isAbsolute(path)) {
+    throw new Error(`ociExportDir escapes the project root: ${value}`);
+  }
+  ensureContainedPath(cwd, resolved, 'ociExportDir');
+  return resolved;
 }
 
 function containsControlCharacter(text: string): boolean {

@@ -84,12 +84,18 @@ export function collectCliSecrets(
   for (const key of Object.keys(plan.labels)) {
     consider(plan.labels[key]);
   }
+  for (const key of Object.keys(plan.annotations)) {
+    consider(plan.annotations[key]);
+  }
   for (const image of plan.images) {
     for (const key of Object.keys(image.buildArgs)) {
       consider(image.buildArgs[key]);
     }
     for (const key of Object.keys(image.labels)) {
       consider(image.labels[key]);
+    }
+    for (const key of Object.keys(image.annotations)) {
+      consider(image.annotations[key]);
     }
   }
   for (const hostname of Object.keys(auth)) {

@@ -29,6 +29,8 @@ import {
   defaultHostPlatforms,
   KNOWN_ARCH,
   KNOWN_OS,
+  MAX_CACHE_SPEC_LENGTH,
+  MAX_CACHE_SPECS,
   MAX_MAP_ENTRIES,
   MAX_MAP_KEY_LENGTH,
   MAX_MAP_VALUE_LENGTH,
@@ -193,6 +195,10 @@ export interface InteractiveResolverDeps {
 const ADVANCED_KEYS = new Set([
   'buildArgs',
   'labels',
+  'annotations',
+  'cacheFrom',
+  'cacheTo',
+  'ociExportDir',
   'buildConcurrency',
   'processLimits',
   'dockerExecutable',
@@ -282,6 +288,7 @@ interface ImageDefault {
   readonly target?: string;
   readonly buildArgs?: Record<string, string>;
   readonly labels?: Record<string, string>;
+  readonly annotations?: Record<string, string>;
 }
 
 interface RegistryDefault {
@@ -316,6 +323,7 @@ function readImageDefaults(loaded: Record<string, unknown>): ImageDefault[] {
       ...(typeof record.target === 'string' ? { target: record.target } : {}),
       ...(isPlainObject(record.buildArgs) ? { buildArgs: readStringMapDefault(record.buildArgs) } : {}),
       ...(isPlainObject(record.labels) ? { labels: readStringMapDefault(record.labels) } : {}),
+      ...(isPlainObject(record.annotations) ? { annotations: readStringMapDefault(record.annotations) } : {}),
     };
   });
 }
@@ -468,6 +476,7 @@ async function promptImageEntries(
       ...(target.length === 0 ? {} : { target }),
       ...(fallback?.buildArgs === undefined ? {} : { buildArgs: { ...fallback.buildArgs } }),
       ...(fallback?.labels === undefined ? {} : { labels: { ...fallback.labels } }),
+      ...(fallback?.annotations === undefined ? {} : { annotations: { ...fallback.annotations } }),
     });
     index += 1;
     if (!(await prompter.confirm({ message: 'Add another image?', initialValue: false }))) {
@@ -668,7 +677,8 @@ async function promptAdvanced(
   allowCustomPlatforms: boolean,
 ): Promise<AdvancedAnswers> {
   const customize = await prompter.confirm({
-    message: 'Customize advanced settings (build args, labels, concurrency, executable)?',
+    message:
+      'Customize advanced settings (build args, labels, annotations, cache, concurrency, executable, OCI export)?',
     initialValue: false,
   });
   if (!customize) {
@@ -698,6 +708,25 @@ async function promptAdvanced(
     readStringMapDefault(loaded.labels),
     allowSecrets,
   );
+  const annotations = await promptKeyValueMap(
+    prompter,
+    'Global annotations (comma-separated KEY=VALUE, empty for none)',
+    'annotations',
+    readStringMapDefault(loaded.annotations),
+    allowSecrets,
+  );
+  const cacheFrom = await promptCacheSpecs(
+    prompter,
+    'Global cache-from specs (one spec per line, empty for none)',
+    'cacheFrom',
+    readStringListDefault(loaded.cacheFrom),
+  );
+  const cacheTo = await promptCacheSpecs(
+    prompter,
+    'Global cache-to specs (one spec per line, empty for none)',
+    'cacheTo',
+    readStringListDefault(loaded.cacheTo),
+  );
   const buildConcurrency = await promptPositiveInteger(
     prompter,
     'Build concurrency',
@@ -724,13 +753,23 @@ async function promptAdvanced(
     validateDockerExecutableValue,
     'dockerExecutable must be a non-empty string',
   );
+  const ociExportDir = await promptOptionalLine(
+    prompter,
+    'OCI export directory (project-root-relative, empty for none)',
+    readStringDefault(loaded.ociExportDir),
+    validateOciExportDirValue,
+  );
   return {
     values: {
       buildArgs,
       labels,
+      annotations,
+      cacheFrom,
+      cacheTo,
       buildConcurrency,
       processLimits: { timeoutMs, maxOutputBytes },
       dockerExecutable,
+      ...(ociExportDir.length === 0 ? {} : { ociExportDir }),
       allowSecretsInBuildArgs: allowSecrets,
     },
     allowCustomPlatforms,
@@ -822,6 +861,68 @@ function parseKeyValueText(text: string): Record<string, string> {
     result[line.slice(0, separator).trim()] = line.slice(separator + 1).trim();
   }
   return result;
+}
+
+async function promptCacheSpecs(
+  prompter: Prompter,
+  message: string,
+  label: string,
+  defaults: ReadonlyArray<string>,
+): Promise<string[]> {
+  const fallback = defaults.length > 0 ? defaults.join('\n') : undefined;
+  const raw = await prompter.text({
+    message,
+    ...(fallback === undefined ? {} : { placeholder: fallback }),
+    validate: (value: string) => {
+      if (value.trim().length === 0) {
+        return undefined;
+      }
+      return validateCacheSpecLines(value, label);
+    },
+  });
+  if (raw.trim().length === 0) {
+    return fallback === undefined ? [] : [...defaults];
+  }
+  return splitCacheSpecLines(raw);
+}
+
+function splitCacheSpecLines(text: string): string[] {
+  return text
+    .split('\n')
+    .map((part) => part.trim())
+    .filter((part) => part.length > 0);
+}
+
+function validateCacheSpecLines(text: string, label: string): string | undefined {
+  const lines = splitCacheSpecLines(text);
+  if (lines.length > MAX_CACHE_SPECS) {
+    return `${label} must not contain more than ${MAX_CACHE_SPECS} entries`;
+  }
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index] as string;
+    if (line.includes('\0')) {
+      return `${label}[${index}] must not contain NUL bytes`;
+    }
+    if (line.length > MAX_CACHE_SPEC_LENGTH) {
+      return `${label}[${index}] must not exceed ${MAX_CACHE_SPEC_LENGTH} characters`;
+    }
+  }
+  return undefined;
+}
+
+function validateOciExportDirValue(value: string): string | undefined {
+  if (value.includes('\0')) {
+    return 'ociExportDir must not contain NUL bytes';
+  }
+  const slashPath = value.replace(/\\/gu, '/');
+  if (isAbsolute(value) || slashPath.startsWith('/') || /^[A-Za-z]:\//u.test(slashPath)) {
+    return `ociExportDir must be relative: ${value}`;
+  }
+  const parts = slashPath.split('/').filter((part) => part !== '' && part !== '.');
+  if (parts.indexOf('..') >= 0) {
+    return `ociExportDir must be a non-root path without parent-directory segments: ${value}`;
+  }
+  return undefined;
 }
 
 async function promptPositiveInteger(

@@ -12,7 +12,7 @@ pnpm add -D @repo-toolkit/docker-publish
 
 ## Configuration
 
-Configuration is a JSON, `.mjs`, or `.cjs` file with `images`, `registries`, and `tags` (all required, at least one entry each) plus optional `platforms` (defaults to the host platform, e.g. `linux/amd64` on GitHub-hosted runners). Configuration supplies defaults and explicit CLI flags override them: `--cwd`, `--docker-executable`, `--concurrency` (builds), `--publish-concurrency` (pushes), and `--digest-manifest` map onto their config keys, while `--image`, `--platform`, and `--registry` narrow the resolved plan. Unknown config keys fail validation. Defaults: `buildConcurrency` 2 (max 64), `publishConcurrency` 1 (max 64), `processLimits` 600s timeout with a 1MiB output cap, `dockerExecutable` set to `docker`, and verification enabled with digest matching required. The full option table, tag and digest contracts, and platform rules live in `website/docs/packages/docker-publish.md`.
+Configuration is a JSON, `.mjs`, or `.cjs` file with `images`, `registries`, and `tags` (all required, at least one entry each) plus optional `platforms` (defaults to the host platform, e.g. `linux/amd64` on GitHub-hosted runners). Configuration supplies defaults and explicit CLI flags override them: `--cwd`, `--docker-executable`, `--concurrency` (builds), `--publish-concurrency` (pushes), `--digest-manifest`, and `--oci-export-dir` (builds) map onto their config keys, while `--image`, `--platform`, and `--registry` narrow the resolved plan. `annotations`, `cacheFrom`, and `cacheTo` stay config-file-only like `buildArgs`/`labels`. Unknown config keys fail validation. Defaults: `buildConcurrency` 2 (max 64), `publishConcurrency` 1 (max 64), `processLimits` 600s timeout with a 1MiB output cap, `dockerExecutable` set to `docker`, and verification enabled with digest matching required. The full option table, tag and digest contracts, and platform rules live in `website/docs/packages/docker-publish.md`.
 
 ## CLI
 
@@ -36,6 +36,7 @@ Build options:
 | `--registry <host>[,...]`    | Build only references for named registries; repeatable.       |
 | `--concurrency <count>`      | Override `buildConcurrency`.                                  |
 | `--docker-executable <path>` | Override `dockerExecutable`.                                  |
+| `--oci-export-dir <path>`    | Override `ociExportDir`; write per-image OCI layouts.         |
 | `--dry-run`                  | Validate and print the resolved plan without invoking Docker. |
 | `--interactive`              | Prompt for missing required values interactively.             |
 | `--help`                     | Show CLI help.                                                |
@@ -71,6 +72,7 @@ Unified options:
 | `--publish-concurrency <count>` | Override `publishConcurrency` for pushes.                     |
 | `--docker-executable <path>`    | Override `dockerExecutable`.                                  |
 | `--digest-manifest <path>`      | Override `digestManifestPath`.                                |
+| `--oci-export-dir <path>`       | Override `ociExportDir`; write per-image OCI layouts.         |
 | `--build`                       | Build images without pushing.                                 |
 | `--push`                        | Push resolved references to target registries.                |
 | `--verify`                      | Verify published manifests against expected digests.          |
@@ -119,7 +121,7 @@ Build contexts are trusted, immutable snapshots: plan resolution pins each conte
 
 ## Examples
 
-Tested `single-image` and `multi-image-multi-registry` configurations live in `test/fixtures/` and are mirrored byte-for-byte as parsed objects in `website/docs/packages/docker-publish.md`. `test/examples.test.ts` drives both through plan resolution, CLI dry-run, build, publish, and verify with injected fake runners.
+Tested `single-image`, `multi-image-multi-registry`, and `annotations-cache-export` configurations live in `test/fixtures/` and are mirrored byte-for-byte as parsed objects in `website/docs/packages/docker-publish.md`. `test/examples.test.ts` drives all three through plan resolution, CLI dry-run, build, publish, and verify with injected fake runners, plus OCI-layout export with emulated buildx layout output.
 
 ## Non-Goals
 

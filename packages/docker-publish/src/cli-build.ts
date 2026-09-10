@@ -18,6 +18,7 @@ const SPECS: FlagSpec[] = [
   { name: 'registry', list: true },
   { name: 'concurrency' },
   { name: 'docker-executable' },
+  { name: 'oci-export-dir' },
   { name: 'dry-run', boolean: true },
   INTERACTIVE_FLAG,
 ];
@@ -36,6 +37,7 @@ Options:
   --registry <host>[,...]   Build only references for named registries (repeatable)
   --concurrency <count>     Maximum concurrent image builds; overrides config buildConcurrency
   --docker-executable <path> Docker executable; overrides config dockerExecutable
+  --oci-export-dir <path>   Write per-image OCI layouts; overrides config ociExportDir
   --dry-run                 Resolve and print the plan without invoking Docker
   -i, --interactive         Prompt for missing required values interactively
   -h, --help                Show this help message

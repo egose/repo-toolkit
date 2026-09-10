@@ -1,4 +1,5 @@
 import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -19,7 +20,7 @@ import {
 const packageRoot = resolve(import.meta.dirname, '..');
 const repositoryRoot = resolve(packageRoot, '../..');
 const buildCli = join(packageRoot, 'dist', 'cli-build.js');
-const examples = ['single-image', 'multi-image-multi-registry'] as const;
+const examples = ['single-image', 'multi-image-multi-registry', 'annotations-cache-export'] as const;
 
 const DIGEST = `sha256:${'d'.repeat(64)}`;
 const STRICT_DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/;
@@ -133,7 +134,7 @@ describe('documented Docker publish examples', () => {
     const plan = resolveDockerPublishPlan(options);
     const expectedReferences = name === 'single-image' ? ['registry.example.com/team/app:1.2.3'] : plan.references;
     expect([...plan.references]).toEqual(expectedReferences);
-    expect(plan.references.length).toBe(name === 'single-image' ? 1 : 8);
+    expect(plan.references.length).toBe(name === 'multi-image-multi-registry' ? 8 : 1);
 
     const neverInvoked = join(project.cwd, 'never-invoked-docker');
     const dryRun = spawnSync(
@@ -190,5 +191,102 @@ describe('documented Docker publish examples', () => {
       expect([...entry.platforms].sort()).toEqual([...platformNames].sort());
     }
     expect(readdirSync(project.cwd).filter((entry) => entry.indexOf('.docker-publish-verify-') === 0)).toEqual([]);
+  });
+
+  it('passes the annotations-cache-export annotations and cache specs as structured argv', async () => {
+    const project = exampleProject('annotations-cache-export');
+    const config = readFixture('annotations-cache-export');
+    const options = { ...(config as unknown as DockerPublishOptions), cwd: project.cwd };
+
+    const plan = resolveDockerPublishPlan(options);
+    expect(plan.annotations).toEqual({
+      'org.opencontainers.image.title': 'app',
+      'org.opencontainers.image.revision': 'abc123',
+    });
+    expect(plan.cacheFrom).toEqual(['type=registry,ref=registry.example.com/team/app:cache']);
+    expect(plan.cacheTo).toEqual(['type=inline']);
+
+    const fake = createFakeRunner(['linux/amd64']);
+    await buildDockerImages({ ...options, runner: fake.runner });
+    const build = fake.calls.find((call) => call.args[0] === 'buildx' && call.args[1] === 'build');
+    expect(build).toBeDefined();
+    const argv = build?.args ?? [];
+    expect(argv).not.toContain('--push');
+    const valuesAfter = (flag: string): string[] => {
+      const values: string[] = [];
+      for (let index = 0; index < argv.length; index += 1) {
+        if (argv[index] === flag && index + 1 < argv.length) {
+          values.push(argv[index + 1] as string);
+        }
+      }
+      return values;
+    };
+    expect(valuesAfter('--annotation')).toEqual([
+      'org.opencontainers.image.revision=abc123',
+      'org.opencontainers.image.title=app',
+    ]);
+    expect(valuesAfter('--cache-from')).toEqual(['type=registry,ref=registry.example.com/team/app:cache']);
+    expect(valuesAfter('--cache-to')).toEqual(['type=inline']);
+    const lastAnnotation = argv.lastIndexOf('org.opencontainers.image.title=app');
+    expect(lastAnnotation).toBeLessThan(argv.indexOf('--cache-from'));
+    expect(argv.indexOf('--cache-to')).toBeLessThan(argv.indexOf('--load'));
+  });
+
+  it('exports OCI layouts for the annotations-cache-export example with emulated buildx output', async () => {
+    const project = exampleProject('annotations-cache-export');
+    const config = readFixture('annotations-cache-export');
+    const options = { ...(config as unknown as DockerPublishOptions), cwd: project.cwd, ociExportDir: 'oci-layouts' };
+    const indexJson = JSON.stringify({
+      schemaVersion: 2,
+      manifests: [{ mediaType: 'application/vnd.oci.image.manifest.v1+json', digest: `sha256:${'c'.repeat(64)}` }],
+    });
+    const buildArgv: string[][] = [];
+    const runner: DockerBuildRunner & DockerPublishRunner & DockerVerifyRunner = {
+      run(executable: string, args: ReadonlyArray<string>, runOptions: DockerRunOptions) {
+        void executable;
+        void runOptions;
+        buildArgv.push([...args]);
+        expect(args[0]).toBe('buildx');
+        const outputIndex = args.indexOf('--output');
+        expect(outputIndex).toBeGreaterThan(-1);
+        const dest = (args[outputIndex + 1] as string)
+          .split(',')
+          .find((part) => part.startsWith('dest='))
+          ?.slice(5);
+        expect(dest).toMatch(/\.tmp-[0-9a-f-]+$/);
+        mkdirSync(dest as string, { recursive: true });
+        writeFileSync(join(dest as string, 'index.json'), indexJson);
+        return { durationMs: 1 };
+      },
+      capture() {
+        throw new Error('export builds must not capture');
+      },
+    };
+
+    const built = await buildDockerImages({ ...options, runner });
+    expect(built.images).toHaveLength(1);
+    const entry = built.images[0];
+    expect(entry?.exportDir).toBe(join(project.cwd, 'oci-layouts', 'app'));
+    expect(entry?.exportDigest).toBe(`sha256:${createHash('sha256').update(indexJson).digest('hex')}`);
+    expect(readFileSync(join(project.cwd, 'oci-layouts', 'app', 'index.json'), 'utf8')).toBe(indexJson);
+    expect(readdirSync(join(project.cwd, 'oci-layouts'))).toEqual(['app']);
+    const argv = buildArgv[0] ?? [];
+    expect(argv).toContain('--output');
+    expect(argv).not.toContain('--load');
+    expect(argv).not.toContain('--push');
+    expect(argv).toContain('org.opencontainers.image.revision=abc123');
+    expect(argv).toContain('type=registry,ref=registry.example.com/team/app:cache');
+
+    const refusing: DockerPublishRunner = {
+      run() {
+        throw new Error('publish must not invoke the runner for export plans');
+      },
+      capture() {
+        throw new Error('publish must not invoke the runner for export plans');
+      },
+    };
+    await expect(publishDockerImages({ ...options, runner: refusing })).rejects.toThrow(
+      /export-only.*rebuild without ociExportDir/,
+    );
   });
 });

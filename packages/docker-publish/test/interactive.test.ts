@@ -175,6 +175,121 @@ describe('resolveInteractiveDockerPublishOptions', () => {
     expect(actual.plan.images[0]?.labels).toEqual({ 'org.example.component': 'app' });
   });
 
+  it('preserves annotations, cache specs, and ociExportDir when advanced customization is declined', async () => {
+    const root = project();
+    seedBaseProject(root);
+    const config = {
+      ...baseConfig(root),
+      annotations: { 'org.opencontainers.image.title': 'app' },
+      cacheFrom: ['type=registry,ref=registry.example.com/team/app:cache'],
+      cacheTo: ['type=inline'],
+      ociExportDir: 'oci-layouts',
+      images: [
+        {
+          name: 'app',
+          contextDir: 'services/app',
+          annotations: { 'org.example.component': 'app' },
+        },
+      ],
+    };
+    const configPath = writeConfig(root, 'docker-publish.json', config);
+    const expected = await resolveDockerPublishCliOptions(flags({ config: configPath }), {});
+
+    const prompter = createScriptedPrompter(['', '', '', '', false, undefined, '', '', false, '', '', false]);
+    const actual = await resolveInteractiveDockerPublishOptions(
+      flags({ config: configPath }),
+      {},
+      { interactive: true, prompter, canPromptNow: true },
+    );
+    expect(actual).toEqual(expected);
+    expect(actual.plan.annotations).toEqual({ 'org.opencontainers.image.title': 'app' });
+    expect(actual.plan.cacheFrom).toEqual(['type=registry,ref=registry.example.com/team/app:cache']);
+    expect(actual.plan.cacheTo).toEqual(['type=inline']);
+    expect(actual.plan.ociExportDir).toBe(join(realpathSync(root), 'oci-layouts'));
+    expect(actual.plan.images[0]?.annotations).toEqual({ 'org.example.component': 'app' });
+  });
+
+  it('applies customized annotations, cache specs, and OCI export answers to the plan', async () => {
+    const root = project();
+    seedBaseProject(root);
+    const configPath = writeConfig(root, 'docker-publish.json', baseConfig(root));
+
+    const prompter = createScriptedPrompter([
+      '',
+      '',
+      '',
+      '',
+      false,
+      undefined,
+      '',
+      '',
+      false,
+      '',
+      '',
+      true,
+      false,
+      'LOG_LEVEL=info',
+      'org.example.component=app',
+      'org.example.revision=abc123',
+      'type=registry,ref=registry.example.com/team/app:cache',
+      'type=inline',
+      '2',
+      '600000',
+      '1048576',
+      '',
+      'oci-layouts',
+    ]);
+    const actual = await resolveInteractiveDockerPublishOptions(
+      flags({ config: configPath }),
+      {},
+      { interactive: true, prompter, canPromptNow: true },
+    );
+    expect(actual.plan.annotations).toEqual({ 'org.example.revision': 'abc123' });
+    expect(actual.plan.cacheFrom).toEqual(['type=registry,ref=registry.example.com/team/app:cache']);
+    expect(actual.plan.cacheTo).toEqual(['type=inline']);
+    expect(actual.plan.ociExportDir).toBe(join(realpathSync(root), 'oci-layouts'));
+  });
+
+  it('re-prompts an absolute OCI export directory with the plan error message', async () => {
+    const root = project();
+    seedBaseProject(root);
+    const configPath = writeConfig(root, 'docker-publish.json', baseConfig(root));
+
+    const prompter = createScriptedPrompter([
+      '',
+      '',
+      '',
+      '',
+      false,
+      undefined,
+      '',
+      '',
+      false,
+      '',
+      '',
+      true,
+      false,
+      '',
+      '',
+      '',
+      '',
+      '',
+      '2',
+      '600000',
+      '1048576',
+      '',
+      '/abs/layouts',
+      'oci-layouts',
+    ]);
+    const actual = await resolveInteractiveDockerPublishOptions(
+      flags({ config: configPath }),
+      {},
+      { interactive: true, prompter, canPromptNow: true },
+    );
+    expect(actual.plan.ociExportDir).toBe(join(realpathSync(root), 'oci-layouts'));
+    expect(prompter.calls.filter((call) => call.message.startsWith('OCI export directory'))).toHaveLength(2);
+  });
+
   it('preserves global build args and labels when advanced customization is declined', async () => {
     const root = project();
     seedBaseProject(root);
@@ -398,9 +513,13 @@ describe('resolveInteractiveDockerPublishOptions', () => {
       false,
       'LOG_LEVEL=info',
       'org.example.component=app',
+      '',
+      '',
+      '',
       '4',
       '600000',
       '1048576',
+      '',
       '',
     ]);
     const actual = await resolveInteractiveDockerPublishOptions(
@@ -436,6 +555,10 @@ describe('resolveInteractiveDockerPublishOptions', () => {
       false,
       'API_TOKEN=abc',
       'LOG_LEVEL=info',
+      '',
+      '',
+      '',
+      '',
       '',
       '',
       '',

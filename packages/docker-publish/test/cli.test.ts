@@ -164,6 +164,36 @@ process.exit(3);
   return path;
 }
 
+function writeOciExportDocker(root: string): string {
+  const path = join(root, 'oci-docker.cjs');
+  writeFileSync(
+    path,
+    `#!/usr/bin/env node
+const fs = require('node:fs');
+const path = require('node:path');
+const args = process.argv.slice(2);
+if (args[0] === 'buildx' && args[1] === 'build') {
+  const at = args.indexOf('--output');
+  if (at < 0) {
+    process.stderr.write('missing --output in export build\\n');
+    process.exit(3);
+  }
+  const dest = args[at + 1].split(',').filter((part) => part.startsWith('dest='))[0].slice(5);
+  fs.mkdirSync(dest, { recursive: true });
+  fs.writeFileSync(
+    path.join(dest, 'index.json'),
+    JSON.stringify({ schemaVersion: 2, manifests: [{ digest: 'sha256:' + 'c'.repeat(64) }] }),
+  );
+  process.exit(0);
+}
+process.stderr.write('unexpected fake-docker argv: ' + JSON.stringify(args) + '\\n');
+process.exit(3);
+`,
+  );
+  chmodSync(path, 0o755);
+  return path;
+}
+
 function treeSnapshot(root: string): ReadonlyArray<string> {
   const entries: string[] = [];
   const visit = (directory: string, prefix = ''): void => {
@@ -493,6 +523,81 @@ describe('Docker publish CLI execution', () => {
     for (const source of ['cli.ts', 'cli-build.ts', 'cli-publish.ts', 'cli-options.ts']) {
       expect(readFileSync(join(packageRoot, 'src', source), 'utf8')).not.toContain('process.exit(');
     }
+  });
+});
+
+describe('Docker publish OCI export CLI flag (PAR-04)', () => {
+  it('exposes --oci-export-dir on build and unified help but keeps annotations/cache config-file-only', () => {
+    const buildHelp = runCli(buildCli, ['--help']);
+    const unifiedHelp = runCli(unifiedCli, ['--help']);
+    const publishHelp = runCli(publishCli, ['--help']);
+    expect(buildHelp.stdout).toContain('--oci-export-dir');
+    expect(unifiedHelp.stdout).toContain('--oci-export-dir');
+    expect(publishHelp.stdout).not.toContain('--oci-export-dir');
+
+    for (const [cli, flag] of [
+      [buildCli, '--annotation'],
+      [buildCli, '--cache-from'],
+      [buildCli, '--cache-to'],
+      [unifiedCli, '--annotation'],
+    ] as const) {
+      const rejected = runCli(cli, [flag, 'x=y']);
+      expect(rejected.status).toBe(1);
+      expect(rejected.stderr).toContain(`Unknown argument: ${flag}`);
+    }
+  });
+
+  it('overrides config ociExportDir with --oci-export-dir on build and unified CLIs', () => {
+    const cases = [
+      { cli: buildCli, extra: [] as string[] },
+      { cli: unifiedCli, extra: ['--build'] as string[] },
+    ];
+    for (const { cli, extra } of cases) {
+      const cwd = fixture();
+      writeImageContext(cwd, 'services/app');
+      const config = writeConfig(cwd, { ociExportDir: 'cfg-layouts' });
+      const result = runCli(cli, [
+        '--cwd',
+        cwd,
+        '--config',
+        config,
+        '--docker-executable',
+        writeOciExportDocker(cwd),
+        '--oci-export-dir',
+        'flag-layouts',
+        ...extra,
+      ]);
+      expect(result).toMatchObject({ status: 0, stderr: '' });
+      expect(existsSync(join(cwd, 'flag-layouts', 'app', 'index.json'))).toBe(true);
+      expect(existsSync(join(cwd, 'cfg-layouts'))).toBe(false);
+    }
+  });
+
+  it('fails invalid --oci-export-dir values before any runner call', () => {
+    const cases = [
+      { cli: buildCli, extra: [] as string[] },
+      { cli: unifiedCli, extra: ['--build'] as string[] },
+    ];
+    for (const { cli, extra } of cases) {
+      for (const value of ['../escape', '/abs/layouts']) {
+        const cwd = fixture();
+        writeImageContext(cwd, 'services/app');
+        const marker = writeMarkerExecutable(cwd);
+        const config = writeConfig(cwd, { dockerExecutable: marker.path });
+        const result = runCli(cli, ['--cwd', cwd, '--config', config, '--oci-export-dir', value, ...extra]);
+        expect(result.status).toBe(1);
+        expect(result.stderr).toContain('ociExportDir');
+        expect(result.stdout).toBe('');
+        expect(existsSync(marker.marker)).toBe(false);
+      }
+    }
+
+    const cwd = fixture();
+    writeImageContext(cwd, 'services/app');
+    const config = writeConfig(cwd);
+    const missing = runCli(buildCli, ['--cwd', cwd, '--config', config, '--oci-export-dir']);
+    expect(missing.status).toBe(1);
+    expect(missing.stderr).toContain('Missing value for --oci-export-dir');
   });
 });
 

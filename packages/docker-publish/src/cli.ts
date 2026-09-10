@@ -31,6 +31,7 @@ const SPECS: FlagSpec[] = [
   { name: 'publish-concurrency' },
   { name: 'docker-executable' },
   { name: 'digest-manifest' },
+  { name: 'oci-export-dir' },
   { name: 'build', boolean: true },
   { name: 'push', boolean: true },
   { name: 'verify', boolean: true },
@@ -61,6 +62,7 @@ Options:
   --publish-concurrency <count> Maximum concurrent pushes; overrides config publishConcurrency
   --docker-executable <path> Docker executable; overrides config dockerExecutable
   --digest-manifest <path>  Write a sorted JSON digest manifest; overrides config digestManifestPath
+  --oci-export-dir <path>   Write per-image OCI layouts; overrides config ociExportDir
   --dry-run                 Resolve and print the plan without invoking Docker
   -i, --interactive         Prompt for missing required values interactively
   -h, --help                Show this help message
