@@ -1,3 +1,9 @@
+## [0.28.0](https://github.com/egose/repo-toolkit/compare/v0.27.0...v0.28.0) (2026-09-10)
+
+### Features
+
+* default platforms and auth usernames ([561f5f7](https://github.com/egose/repo-toolkit/commit/561f5f7078edc26e50f3df35f782b55d43ba3db4))
+
 ## [0.27.0](https://github.com/egose/repo-toolkit/compare/v0.26.0...v0.27.0) (2026-09-10)
 
 ### Features
