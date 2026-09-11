@@ -65,26 +65,28 @@ function fakeClient(opts: { existingAttachments?: Attachment[] } = {}): {
   return { client, uploads, updates, attachmentsByName };
 }
 
+const PNG_FIXTURE = Buffer.from('89504e470d0a1a0a', 'hex');
+
 describe('rewriteMermaidBlocks — renderHook succeeds', () => {
-  it('converts mermaid placeholders to attachment image macros and uploads SVGs', async () => {
+  it('converts mermaid placeholders to attachment image macros and uploads PNGs', async () => {
     const md = '```mermaid\ngraph TD\nA-->B\n```';
     const { html, mermaidBlocks } = markdownToStorage(md);
     const { client, uploads, updates } = fakeClient();
 
     const renderHook = vi.fn(async (_source: string, outFile: string) => {
-      await writeFile(outFile, '<svg id="ok"/>', 'utf8');
+      await writeFile(outFile, PNG_FIXTURE);
     });
 
     const result = await rewriteMermaidBlocks(html, mermaidBlocks, 'P1', client, { renderHook });
 
     expect(renderHook).toHaveBeenCalledTimes(1);
     expect(uploads).toHaveLength(1);
-    expect(uploads[0].file).toMatch(/diagram\.svg$/);
-    expect(uploads[0].filename).toBe('mermaid-f202f94e8104ac38.svg');
+    expect(uploads[0].file).toMatch(/diagram\.png$/);
+    expect(uploads[0].filename).toBe('mermaid-f202f94e8104ac38.png');
     expect(updates).toHaveLength(0);
     expect(result.fallbacks).toEqual([]);
     expect(result.uploaded).toHaveLength(1);
-    expect(result.html).toContain('<ac:image><ri:attachment ri:filename="mermaid-f202f94e8104ac38.svg" /></ac:image>');
+    expect(result.html).toContain('<ac:image><ri:attachment ri:filename="mermaid-f202f94e8104ac38.png" /></ac:image>');
     expect(result.html).not.toContain('mermaid-placeholder');
   });
 
@@ -93,15 +95,15 @@ describe('rewriteMermaidBlocks — renderHook succeeds', () => {
     const { html, mermaidBlocks } = markdownToStorage(md);
     const existing: Attachment = {
       id: 'att-existing',
-      filename: 'mermaid-68c902c781f04249.svg',
-      title: 'mermaid-68c902c781f04249.svg',
+      filename: 'mermaid-68c902c781f04249.png',
+      title: 'mermaid-68c902c781f04249.png',
       version: { number: 1, message: 'rt-content-sha256:stale-hash' },
       _links: { webui: '/u' },
     };
     const { client, uploads, updates } = fakeClient({ existingAttachments: [existing] });
 
     const renderHook = vi.fn(async (_source: string, outFile: string) => {
-      await writeFile(outFile, '<svg/>', 'utf8');
+      await writeFile(outFile, PNG_FIXTURE);
     });
 
     const result = await rewriteMermaidBlocks(html, mermaidBlocks, 'P1', client, { renderHook });
@@ -117,8 +119,8 @@ describe('rewriteMermaidBlocks — renderHook succeeds', () => {
     const { html, mermaidBlocks } = markdownToStorage(md);
     const existing: Attachment = {
       id: 'att-stable',
-      filename: 'mermaid-68c902c781f04249.svg',
-      title: 'mermaid-68c902c781f04249.svg',
+      filename: 'mermaid-68c902c781f04249.png',
+      title: 'mermaid-68c902c781f04249.png',
       version: { number: 5, message: 'rt-content-sha256:68c902c781f04249' },
       _links: { webui: '/u' },
     };
@@ -135,7 +137,7 @@ describe('rewriteMermaidBlocks — renderHook succeeds', () => {
     expect(updates).toHaveLength(0);
     expect(result.fallbacks).toEqual([]);
     expect(result.uploaded).toHaveLength(0);
-    expect(result.html).toContain('<ac:image><ri:attachment ri:filename="mermaid-68c902c781f04249.svg" /></ac:image>');
+    expect(result.html).toContain('<ac:image><ri:attachment ri:filename="mermaid-68c902c781f04249.png" /></ac:image>');
   });
 });
 
@@ -190,12 +192,12 @@ describe('rewriteMermaidBlocks — edge cases', () => {
     const { html, mermaidBlocks } = markdownToStorage('# Title\n\n```mermaid\ngraph TD\nA-->B\n```\n\ntext');
     const { client } = fakeClient();
     const renderHook = vi.fn(async (_s: string, outFile: string) => {
-      await writeFile(outFile, '<svg/>', 'utf8');
+      await writeFile(outFile, PNG_FIXTURE);
     });
     const result = await rewriteMermaidBlocks(html, mermaidBlocks, 'P1', client, { renderHook });
     expect(result.html).toContain('<h1>Title</h1>');
     expect(result.html).toContain('<p>text</p>');
-    expect(result.html).toContain('ri:filename="mermaid-f202f94e8104ac38.svg"');
+    expect(result.html).toContain('ri:filename="mermaid-f202f94e8104ac38.png"');
   });
 
   it('renderMermaidPlaceholder escapes invalid attribute characters in the id', () => {
@@ -211,14 +213,14 @@ describe('CFARC-02: insertion-stable content-addressed mermaid names', () => {
     const { html: firstHtml, mermaidBlocks: firstBlocks } = markdownToStorage(first);
 
     const renderHook = vi.fn(async (_source: string, outFile: string) => {
-      await writeFile(outFile, '<svg/>', 'utf8');
+      await writeFile(outFile, PNG_FIXTURE);
     });
 
     const { client: client1, attachmentsByName: atts1, uploads: uploads1 } = fakeClient();
     const r1 = await rewriteMermaidBlocks(firstHtml, firstBlocks, 'P1', client1, { renderHook });
     expect(uploads1).toHaveLength(1);
     const firstFilename = uploads1[0].filename;
-    expect(firstFilename).toMatch(/^mermaid-[0-9a-f]{16}\.svg$/);
+    expect(firstFilename).toMatch(/^mermaid-[0-9a-f]{16}\.png$/);
     expect(r1.html).toContain(`ri:filename="${firstFilename}"`);
 
     const second = '```mermaid\nflowchart TD\nX-->Y\n```\n\n```mermaid\nflowchart LR\nA-->B\n```';
@@ -251,7 +253,7 @@ describe('CFARC-02: insertion-stable content-addressed mermaid names', () => {
     };
 
     const reusedRender = vi.fn(async (_source: string, outFile: string) => {
-      await writeFile(outFile, '<svg/>', 'utf8');
+      await writeFile(outFile, PNG_FIXTURE);
     });
 
     const r2 = await rewriteMermaidBlocks(secondHtml, secondBlocks, 'P1', reusedClient, { renderHook: reusedRender });
@@ -317,7 +319,7 @@ describe('CFSEC-05: bound Mermaid subprocess and upload-error propagation', () =
     return entries.filter((e) => e.startsWith('rt-mermaid-'));
   }
 
-  it('spawns the configured binary verbatim with no shell mediation and validates a regular SVG', async () => {
+  it('spawns the configured binary verbatim with no shell mediation and validates a regular PNG', async () => {
     const argvLog = join(scratchDir, 'argv.json');
     const script = await makeFakeMmdc(
       'ok.mjs',
@@ -327,7 +329,7 @@ describe('CFSEC-05: bound Mermaid subprocess and upload-error propagation', () =
         `let out = ''; for (let i = 0; i < process.argv.length - 1; i++) {`,
         `  if (process.argv[i] === '-o') { out = process.argv[i + 1]; break; }`,
         `}`,
-        `await fs.writeFile(out, '<svg id="ok"/>\\n', 'utf8');`,
+        `await fs.writeFile(out, Buffer.from('89504e470d0a1a0a', 'hex'));`,
       ].join('\n'),
     );
 
@@ -340,10 +342,18 @@ describe('CFSEC-05: bound Mermaid subprocess and upload-error propagation', () =
     expect(
       argv.filter(
         (a) =>
-          a === '-i' || a === '-' || a === '-o' || a === '-t' || a === '-b' || a === 'default' || a === 'transparent',
+          a === '-i' ||
+          a === '-' ||
+          a === '-o' ||
+          a === '-t' ||
+          a === '-b' ||
+          a === '-s' ||
+          a === 'default' ||
+          a === 'white' ||
+          a === '2',
       ),
-    ).toEqual(['-i', '-', '-o', '-t', 'default', '-b', 'transparent']);
-    expect(argv.some((a) => /diagram\.svg$/.test(a))).toBe(true);
+    ).toEqual(['-i', '-', '-o', '-t', 'default', '-b', 'white', '-s', '2']);
+    expect(argv.some((a) => /diagram\.png$/.test(a))).toBe(true);
     expect(r.fallbacks).toEqual([]);
     expect(r.uploaded).toHaveLength(1);
     await expect(leftoverWorkDirs()).resolves.toEqual([]);
@@ -370,7 +380,7 @@ describe('CFSEC-05: bound Mermaid subprocess and upload-error propagation', () =
         `  if (process.argv[i] === '-o') { out = process.argv[i + 1]; break; }`,
         `}`,
         `process.stdout.write(Buffer.alloc(64 * 1024, 0x41));`,
-        `await fs.writeFile(out, '<svg/>', 'utf8');`,
+        `await fs.writeFile(out, Buffer.from('89504e470d0a1a0a', 'hex'));`,
       ].join('\n'),
     );
     const r = await run(script, { maxStreamBytes: 1024, renderTimeoutMs: 10_000 });
@@ -388,7 +398,7 @@ describe('CFSEC-05: bound Mermaid subprocess and upload-error propagation', () =
         `  if (process.argv[i] === '-o') { out = process.argv[i + 1]; break; }`,
         `}`,
         `process.stderr.write(Buffer.alloc(64 * 1024, 0x42));`,
-        `await fs.writeFile(out, '<svg/>', 'utf8');`,
+        `await fs.writeFile(out, Buffer.from('89504e470d0a1a0a', 'hex'));`,
       ].join('\n'),
     );
     const r = await run(script, { maxStreamBytes: 1024, renderTimeoutMs: 10_000 });
@@ -405,9 +415,9 @@ describe('CFSEC-05: bound Mermaid subprocess and upload-error propagation', () =
     await expect(leftoverWorkDirs()).resolves.toEqual([]);
   }, 15000);
 
-  it('falls back when the rendered output is not a valid SVG', async () => {
+  it('falls back when the rendered output is not a valid PNG', async () => {
     const script = await makeFakeMmdc(
-      'broken-svg.mjs',
+      'broken-png.mjs',
       [
         `const fs = await import('node:fs/promises');`,
         `let out = ''; for (let i = 0; i < process.argv.length - 1; i++) {`,
@@ -425,13 +435,13 @@ describe('CFSEC-05: bound Mermaid subprocess and upload-error propagation', () =
 
   it('propagates a ConfluenceUploadError from upload and does not fall back', async () => {
     const script = await makeFakeMmdc(
-      'ok-svg.mjs',
+      'ok-png.mjs',
       [
         `const fs = await import('node:fs/promises');`,
         `let out = ''; for (let i = 0; i < process.argv.length - 1; i++) {`,
         `  if (process.argv[i] === '-o') { out = process.argv[i + 1]; break; }`,
         `}`,
-        `await fs.writeFile(out, '<svg/>', 'utf8');`,
+        `await fs.writeFile(out, Buffer.from('89504e470d0a1a0a', 'hex'));`,
       ].join('\n'),
     );
     const md = '```mermaid\ngraph TD\nA-->B\n```';
@@ -464,8 +474,8 @@ describe('CFSEC-05: bound Mermaid subprocess and upload-error propagation', () =
     const { html, mermaidBlocks } = markdownToStorage(md);
     const existing: Attachment = {
       id: 'att-reuse',
-      filename: 'mermaid-68c902c781f04249.svg',
-      title: 'mermaid-68c902c781f04249.svg',
+      filename: 'mermaid-68c902c781f04249.png',
+      title: 'mermaid-68c902c781f04249.png',
       version: { number: 1, message: 'rt-content-sha256:68c902c781f04249' },
       _links: { webui: '/u' },
     };
@@ -477,7 +487,7 @@ describe('CFSEC-05: bound Mermaid subprocess and upload-error propagation', () =
     expect(uploads).toHaveLength(0);
     expect(updates).toHaveLength(0);
     expect(r.uploaded).toHaveLength(0);
-    expect(r.html).toContain('ri:filename="mermaid-68c902c781f04249.svg"');
+    expect(r.html).toContain('ri:filename="mermaid-68c902c781f04249.png"');
     await expect(leftoverWorkDirs()).resolves.toEqual([]);
   });
 });

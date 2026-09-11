@@ -340,6 +340,76 @@ describe('ConfluenceClient.uploadAttachment (multipart)', () => {
     expect(wire).toContain(fileBytes);
   });
 
+  it('sets duplex half on the streamed multipart upload so undici fetch accepts the body', async () => {
+    const file = join(tmpDir, 'duplex.png');
+    await writeFile(file, Buffer.from([5, 6]));
+    const seen: RequestInit[] = [];
+    const fetchFn = vi.fn(async (_endpoint: string, init: RequestInit) => {
+      seen.push(init);
+      return makeResponse(200, {
+        results: [{ id: 'A9', title: 'duplex.png', version: { number: 1 }, _links: { webui: '/a9' } }],
+      }) as Response;
+    });
+    const client = new ConfluenceClient({
+      baseUrl: 'https://x/wiki',
+      username: 'u',
+      apiToken: 't',
+      fetch: fetchFn as unknown as typeof fetch,
+    });
+    await client.uploadAttachment('P1', file, 'duplex check');
+    expect(seen).toHaveLength(1);
+    expect(seen[0]?.duplex).toBe('half');
+  });
+
+  it('sends image/svg+xml for svg uploads so Confluence renders them inline', async () => {
+    const file = join(tmpDir, 'diagram.svg');
+    await writeFile(file, '<svg/>');
+    const { fetchFn, calls } = buildFetchSequence([
+      {
+        status: 200,
+        body: { results: [{ id: 'A10', title: 'diagram.svg', version: { number: 1 }, _links: { webui: '/a10' } }] },
+      },
+    ]);
+    const client = new ConfluenceClient({
+      baseUrl: 'https://x/wiki',
+      username: 'u',
+      apiToken: 't',
+      fetch: fetchFn as unknown as typeof fetch,
+    });
+    await client.uploadAttachment('P1', file, 'svg mime check');
+    const wire = await drainBodyStream(calls[0].init.body);
+    expect(wire).toContain('filename="diagram.svg"\r\nContent-Type: image/svg+xml\r\n');
+  });
+
+  it('sends image/png for png uploads and octet-stream for unknown extensions', async () => {
+    const pngFile = join(tmpDir, 'logo.png');
+    await writeFile(pngFile, Buffer.from([1]));
+    const datFile = join(tmpDir, 'blob.dat');
+    await writeFile(datFile, Buffer.from([2]));
+    const { fetchFn, calls } = buildFetchSequence([
+      {
+        status: 200,
+        body: { results: [{ id: 'A11', title: 'logo.png', version: { number: 1 }, _links: { webui: '/a11' } }] },
+      },
+      {
+        status: 200,
+        body: { results: [{ id: 'A12', title: 'blob.dat', version: { number: 1 }, _links: { webui: '/a12' } }] },
+      },
+    ]);
+    const client = new ConfluenceClient({
+      baseUrl: 'https://x/wiki',
+      username: 'u',
+      apiToken: 't',
+      fetch: fetchFn as unknown as typeof fetch,
+    });
+    await client.uploadAttachment('P1', pngFile);
+    await client.uploadAttachment('P1', datFile);
+    expect(await drainBodyStream(calls[0].init.body)).toContain('filename="logo.png"\r\nContent-Type: image/png\r\n');
+    expect(await drainBodyStream(calls[1].init.body)).toContain(
+      'filename="blob.dat"\r\nContent-Type: application/octet-stream\r\n',
+    );
+  });
+
   it('targets the existing-attachment data endpoint when attachmentId given', async () => {
     const file = join(tmpDir, 'pic.png');
     await writeFile(file, Buffer.from([9]));

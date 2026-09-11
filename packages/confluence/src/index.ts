@@ -1010,11 +1010,15 @@ async function syncEntry(
       if (hasMermaidBlocks) {
         const mermaidResult = await rewriteMermaidBlocks(body, [...mermaidBlocks], pageId, client);
         body = mermaidResult.html;
-        if (mermaidResult.fallbacks.length > 0) {
-          log(
-            `mermaid: ${mermaidResult.fallbacks.length} block(s) not rendered (mmdc unavailable or failed); emitted as code macros`,
-          );
-        }
+        log(
+          formatMermaidStatus({
+            path: segments.join('/'),
+            pageId,
+            total: mermaidBlocks.length,
+            uploaded: mermaidResult.uploaded.length,
+            fallbacks: mermaidResult.fallbacks,
+          }),
+        );
       }
       if (hasLocalImages) {
         const result = await rewriteImagesToAttachments(body, pageId, client, {
@@ -1054,6 +1058,32 @@ async function syncEntry(
     recordDirectory(segments.slice(0, idx + 1).join('/'), segment, page.id, idx + 1);
     currentParentId = page.id;
   }
+}
+
+export interface MermaidStatusInput {
+  path: string;
+  pageId: string;
+  total: number;
+  /** Blocks freshly rendered and uploaded/updated (excludes hash-match reuses). */
+  uploaded: number;
+  /** Ids emitted as code macros because rendering was unavailable or failed. */
+  fallbacks: ReadonlyArray<string>;
+}
+
+export function formatMermaidStatus(input: MermaidStatusInput): string {
+  const fallbackCount = input.fallbacks.length;
+  const renderedCount = input.total - fallbackCount;
+  const reusedCount = renderedCount - input.uploaded;
+  let status =
+    `mermaid: ${input.path} (page ${input.pageId}): ` +
+    `${renderedCount}/${input.total} block(s) rendered as images` +
+    (reusedCount > 0 ? ` (${reusedCount} reused)` : '');
+  if (fallbackCount > 0) {
+    status +=
+      `; ${fallbackCount} block(s) not rendered (mmdc unavailable or failed); ` +
+      `emitted as code macros (${input.fallbacks.join(', ')})`;
+  }
+  return status;
 }
 
 class PageTitleCache {
@@ -1219,7 +1249,7 @@ interface PredictContext {
  *   (so a dry-validation pass before a PUT never relaxes the CFSEC-02
  *   boundary).
  * - Preflight mermaid replaces every `<ac:structured-macro ac:name="mermaid-placeholder">`
- *   with the content-addressed `mermaid-<hash16>.svg` macro when an existing
+ *   with the content-addressed `mermaid-<hash16>.png` macro when an existing
  *   attachment matches the source hash, or a `code` macro when `mmdc` would
  *   be unavailable; producing the same predicted HTML the real rewrite would.
  */

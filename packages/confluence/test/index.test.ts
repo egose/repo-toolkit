@@ -10,6 +10,7 @@ const DIST_INDEX_DTS = resolve(TEST_DIR, '..', 'dist', 'index.d.ts');
 import {
   CONFLUENCE_MANAGED_LABEL,
   PAGE_TITLE_STRATEGIES,
+  formatMermaidStatus,
   planCleanDeletions,
   planStalePruning,
   ReconciliationError,
@@ -462,6 +463,39 @@ describe('syncConfluenceToDocs', () => {
     const body = (createCall!.args[0] as { body?: { value: string } }).body?.value ?? '';
     expect(body).toContain('<ri:url ri:value="https://cdn.example/logo.png"');
     expect(body).not.toContain('data-local-src');
+  });
+
+  it('logs mermaid status with path, counts, and fallback ids when mmdc is unavailable', async () => {
+    await writeFile(join(tmp, 'page.md'), '```mermaid\ngraph TD\nA-->B\n```\n\n```mermaid\nflowchart LR\nX-->Y\n```');
+    const logSpy = vi.fn();
+    const { client } = buildFakeClient({ spaceId: 'SPACE' });
+    const savedPath = process.env.PATH;
+    process.env.PATH = join(tmpdir(), 'rt-no-mmdc-log');
+    try {
+      await syncConfluenceToDocs({
+        folder: tmp,
+        username: 'u',
+        apiToken: 't',
+        baseUrl: 'https://x/wiki',
+        spaceKey: 'ENG',
+        parentPageId: '123',
+        client: client,
+        updateParentPage: false,
+        log: logSpy,
+      });
+    } finally {
+      if (savedPath === undefined) {
+        delete process.env.PATH;
+      } else {
+        process.env.PATH = savedPath;
+      }
+    }
+    const line = logSpy.mock.calls.map((c) => String(c[0])).find((m) => m.startsWith('mermaid:'));
+    expect(line).toBeDefined();
+    expect(line).toContain('page.md');
+    expect(line).toContain('0/2 block(s) rendered as images');
+    expect(line).toContain('2 block(s) not rendered');
+    expect(line).toContain('mermaid-1, mermaid-2');
   });
 
   it('skips unchanged pages when skipUnchanged is on', async () => {
@@ -988,39 +1022,76 @@ describe('CFARC-02: content-addressed attachments and no-op second sync', () => 
     // A mermaid-only page (no attachments, no local images) where mmdc is
     // unavailable (default in the fake environment) falls back to code macros.
     // Re-syncing the same file must be a no-op (no PUT).
-    await writeFile(join(tmp, 'page.md'), '```mermaid\ngraph TD\nA-->B\n```');
-    const { client, calls } = buildFakeClient({ spaceId: 'SPACE' });
-    await syncConfluenceToDocs({
-      folder: tmp,
-      username: 'u',
-      apiToken: 't',
-      baseUrl: 'https://x/wiki',
-      spaceKey: 'ENG',
-      parentPageId: '123',
-      client: client,
-      log: () => {},
-      updateParentPage: false,
-    });
-    const firstPuts = calls.filter((c) => c.method === 'updatePage').length;
-    const firstUploads = calls.filter((c) => c.method === 'uploadAttachment').length;
-    expect(firstPuts).toBe(1);
-    expect(firstUploads).toBe(0);
+    // Hide mmdc from PATH so the test does not depend on the host having it installed.
+    const savedPath = process.env.PATH;
+    process.env.PATH = join(tmpdir(), 'rt-no-mmdc');
+    try {
+      await writeFile(join(tmp, 'page.md'), '```mermaid\ngraph TD\nA-->B\n```');
+      const { client, calls } = buildFakeClient({ spaceId: 'SPACE' });
+      await syncConfluenceToDocs({
+        folder: tmp,
+        username: 'u',
+        apiToken: 't',
+        baseUrl: 'https://x/wiki',
+        spaceKey: 'ENG',
+        parentPageId: '123',
+        client: client,
+        log: () => {},
+        updateParentPage: false,
+      });
+      const firstPuts = calls.filter((c) => c.method === 'updatePage').length;
+      const firstUploads = calls.filter((c) => c.method === 'uploadAttachment').length;
+      expect(firstPuts).toBe(1);
+      expect(firstUploads).toBe(0);
 
-    await syncConfluenceToDocs({
-      folder: tmp,
-      username: 'u',
-      apiToken: 't',
-      baseUrl: 'https://x/wiki',
-      spaceKey: 'ENG',
-      parentPageId: '123',
-      client: client,
-      log: () => {},
-      updateParentPage: false,
-    });
-    const secondPuts = calls.filter((c) => c.method === 'updatePage').length;
-    const secondUploads = calls.filter((c) => c.method === 'uploadAttachment').length;
-    expect(secondPuts).toBe(firstPuts);
-    expect(secondUploads).toBe(firstUploads);
+      await syncConfluenceToDocs({
+        folder: tmp,
+        username: 'u',
+        apiToken: 't',
+        baseUrl: 'https://x/wiki',
+        spaceKey: 'ENG',
+        parentPageId: '123',
+        client: client,
+        log: () => {},
+        updateParentPage: false,
+      });
+      const secondPuts = calls.filter((c) => c.method === 'updatePage').length;
+      const secondUploads = calls.filter((c) => c.method === 'uploadAttachment').length;
+      expect(secondPuts).toBe(firstPuts);
+      expect(secondUploads).toBe(firstUploads);
+    } finally {
+      if (savedPath === undefined) {
+        delete process.env.PATH;
+      } else {
+        process.env.PATH = savedPath;
+      }
+    }
+  });
+});
+
+describe('formatMermaidStatus', () => {
+  it('reports fully rendered blocks with reuse count', () => {
+    expect(formatMermaidStatus({ path: 'page.md', pageId: 'P1', total: 2, uploaded: 1, fallbacks: [] })).toBe(
+      'mermaid: page.md (page P1): 2/2 block(s) rendered as images (1 reused)',
+    );
+  });
+
+  it('reports partial renders with fallback ids', () => {
+    expect(
+      formatMermaidStatus({ path: 'guide/page.md', pageId: 'P2', total: 3, uploaded: 1, fallbacks: ['mermaid-3'] }),
+    ).toBe(
+      'mermaid: guide/page.md (page P2): 2/3 block(s) rendered as images (1 reused); ' +
+        '1 block(s) not rendered (mmdc unavailable or failed); emitted as code macros (mermaid-3)',
+    );
+  });
+
+  it('reports a total fallback without a reuse suffix', () => {
+    expect(
+      formatMermaidStatus({ path: 'page.md', pageId: 'P1', total: 1, uploaded: 0, fallbacks: ['mermaid-1'] }),
+    ).toBe(
+      'mermaid: page.md (page P1): 0/1 block(s) rendered as images; ' +
+        '1 block(s) not rendered (mmdc unavailable or failed); emitted as code macros (mermaid-1)',
+    );
   });
 });
 
@@ -1438,6 +1509,7 @@ describe('CFARC-04: public declarations expose only intentional package contract
     'validateAttachmentSources',
     'rewriteMermaidBlocks',
     'preflightMermaidBlocks',
+    'formatMermaidStatus',
   ]);
 
   // Type-only declarations exported from the root barrel. Asserted against the
@@ -1479,6 +1551,7 @@ describe('CFARC-04: public declarations expose only intentional package contract
     'MermaidRewriteResult',
     'MermaidRewriteOptions',
     'MermaidPreflightResult',
+    'MermaidStatusInput',
   ]);
 
   // Implementation internals that must NOT be re-exported from the root API.

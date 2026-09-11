@@ -405,6 +405,7 @@ export class ConfluenceClient implements ConfluenceGateway {
     }
 
     const filename = sanitizeFilename(filenameOverride ?? basename(filePath));
+    const fileMimeType = mimeTypeForFilename(filename);
     const endpoint = attachmentId
       ? this.v1Url(`/content/${encodeURIComponent(pageId)}/child/attachment/${encodeURIComponent(attachmentId)}/data`)
       : this.v1Url(`/content/${encodeURIComponent(pageId)}/child/attachment`);
@@ -416,7 +417,7 @@ export class ConfluenceClient implements ConfluenceGateway {
     const body = Readable.from(
       (async function* () {
         const fileHeader = Buffer.from(
-          `--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="${filename}"\r\nContent-Type: application/octet-stream\r\n\r\n`,
+          `--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="${filename}"\r\nContent-Type: ${fileMimeType}\r\n\r\n`,
           'utf8',
         );
         yield fileHeader;
@@ -493,13 +494,17 @@ export class ConfluenceClient implements ConfluenceGateway {
     while (attempt <= maxRetries) {
       const signal = this.makeTimeoutSignal();
       try {
-        const response = await this.fetchFn(endpoint, {
+        const fetchInit: RequestInit & { duplex?: 'half' } = {
           method,
           headers,
           body: init.body as BodyInit,
           redirect: 'manual',
           signal,
-        });
+        };
+        if (init.uploadKind === 'attachment') {
+          fetchInit.duplex = 'half';
+        }
+        const response = await this.fetchFn(endpoint, fetchInit);
 
         if (response.status >= 300 && response.status < 400) {
           throw new ConfluenceApiError('Redirect responses are not allowed', response.status, endpoint, '');
@@ -652,6 +657,29 @@ async function readBodyBounded(response: Response, maxBytes: number): Promise<st
     return text.slice(0, maxBytes) + '...';
   }
   return text;
+}
+
+const ATTACHMENT_MIME_TYPES: Readonly<Record<string, string>> = {
+  svg: 'image/svg+xml',
+  png: 'image/png',
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  gif: 'image/gif',
+  webp: 'image/webp',
+  bmp: 'image/bmp',
+  avif: 'image/avif',
+};
+
+function mimeTypeForFilename(filename: string): string {
+  const dot = filename.lastIndexOf('.');
+  const ext = dot >= 0 ? filename.slice(dot + 1).toLowerCase() : '';
+  if (/^[a-z0-9]+$/.test(ext)) {
+    const mime = ATTACHMENT_MIME_TYPES[ext];
+    if (mime) {
+      return mime;
+    }
+  }
+  return 'application/octet-stream';
 }
 
 function sanitizeFilename(name: string): string {
