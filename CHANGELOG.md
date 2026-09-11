@@ -1,3 +1,13 @@
+## [0.30.0](https://github.com/egose/repo-toolkit/compare/v0.29.0...v0.30.0) (2026-09-11)
+
+### Features
+
+* **confluence:** render mermaid as png and improve attachment mime handling ([4c90021](https://github.com/egose/repo-toolkit/commit/4c90021ae4c773664096414e6ad95318c9b6649e))
+
+### Bug Fixes
+
+* **confluence:** treat whitespace-only markdown lines as blank ([d162166](https://github.com/egose/repo-toolkit/commit/d16216611cd5135aca31224cc34fe95732cf28e9))
+
 ## [0.29.0](https://github.com/egose/repo-toolkit/compare/v0.28.0...v0.29.0) (2026-09-11)
 
 ### Features
