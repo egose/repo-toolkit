@@ -105,7 +105,7 @@ export function markdownToStorage(markdown: string, options: MarkdownConvertOpti
   while (i < lines.length) {
     const line = lines[i];
 
-    if (line === undefined || line === '') {
+    if (line === undefined || line.trim() === '') {
       i += 1;
       continue;
     }

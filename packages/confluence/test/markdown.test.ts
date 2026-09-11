@@ -288,6 +288,36 @@ body content here`;
     expect(html).toContain('still here');
     expect(html).toContain('not closed');
   });
+
+  it('treats spaces-only lines as blank instead of stalling', () => {
+    const { html } = markdownToStorage('a\n   \nb');
+    expect(html).toBe('<p>a</p>\n<p>b</p>');
+  });
+
+  it('treats tab-only lines as blank instead of stalling', () => {
+    const { html } = markdownToStorage('# T\n\t\ntext');
+    expect(html).toBe('<h1>T</h1>\n<p>text</p>');
+  });
+
+  it('parses a mermaid fence followed by a spaces-only line', () => {
+    const md = '# Mermaid smoke test\n\n```mermaid\ngraph TD\n  A-->B\n```\n  \n## Purpose';
+    const { html, mermaidBlocks } = markdownToStorage(md);
+    expect(mermaidBlocks).toEqual([{ id: 'mermaid-1', source: 'graph TD\n  A-->B' }]);
+    expect(html).toContain('mermaid-placeholder');
+    expect(html).toContain('<h2>Purpose</h2>');
+  });
+
+  it('treats whitespace-only lines as blank between every block type', () => {
+    const md = ['# H', '   ', '```js', 'x();', '```', '\t', '- a', '- b', '  ', '> q', ' ', '---', ' ', 'tail'].join(
+      '\n',
+    );
+    const { html } = markdownToStorage(md);
+    expect(html).toContain('<h1>H</h1>');
+    expect(html).toContain('<ul>');
+    expect(html).toContain('<blockquote>q</blockquote>');
+    expect(html).toContain('<hr />');
+    expect(html).toContain('<p>tail</p>');
+  });
 });
 
 function assertWellFormedXhtml(html: string): void {

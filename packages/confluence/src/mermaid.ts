@@ -1,4 +1,5 @@
 import { spawn, spawnSync } from 'node:child_process';
+import { Buffer } from 'node:buffer';
 import { mkdtemp, rm, writeFile, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -41,7 +42,7 @@ export interface MermaidPreflightResult {
 export interface MermaidRewriteOptions {
   /** Override the mmdc binary path; otherwise discovered via PATH. */
   mmdcPath?: string;
-  /** Override the render command for tests (must write a valid SVG at outFile). */
+  /** Override the render command for tests (must write a valid PNG at outFile). */
   renderHook?: (source: string, outFile: string) => Promise<void>;
   /** Force-enable or force-disable rendering regardless of PATH detection. When true, skips the mmdc probe. */
   available?: boolean;
@@ -53,11 +54,10 @@ export interface MermaidRewriteOptions {
 
 export const DEFAULT_MERMAID_RENDER_TIMEOUT_MS = 30_000;
 export const DEFAULT_MERMAID_MAX_STREAM_BYTES = 1024 * 1024;
-const SVG_START_RE = /<svg[\s/>]/;
-const SVG_END_RE = /<\/svg>\s*$|\/>\s*$/;
+const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 
 const UPLOAD_COMMENT_PREFIX = 'rt-content-sha256:';
-const MERMAID_BASENAME = 'mermaid.svg';
+const MERMAID_BASENAME = 'mermaid.png';
 
 export async function rewriteMermaidBlocks(
   html: string,
@@ -114,7 +114,7 @@ export async function rewriteMermaidBlocks(
     const workDir = await mkdtemp(join(tmpdir(), 'rt-mermaid-'));
     try {
       const inPath = join(workDir, 'diagram.mmd');
-      const outPath = join(workDir, 'diagram.svg');
+      const outPath = join(workDir, 'diagram.png');
       await writeFile(inPath, block.source, 'utf8');
       try {
         await renderHook(block.source, outPath, options.mmdcPath, options.renderTimeoutMs, options.maxStreamBytes);
@@ -124,16 +124,15 @@ export async function rewriteMermaidBlocks(
         continue;
       }
 
-      let svg: string;
+      let image: Buffer;
       try {
-        svg = await readFile(outPath, 'utf8');
+        image = await readFile(outPath);
       } catch {
         fallbacks.push(block.id);
         remainingIds.add(block.id);
         continue;
       }
-      const trimmed = svg.trim();
-      if (trimmed.length === 0 || !SVG_START_RE.test(trimmed) || !SVG_END_RE.test(trimmed)) {
+      if (!isValidPng(image)) {
         fallbacks.push(block.id);
         remainingIds.add(block.id);
         continue;
@@ -270,6 +269,10 @@ function mermaidAttachmentFilename(hash: string): string {
   return escapeAttachmentFilename(buildStableName(MERMAID_BASENAME, hash));
 }
 
+function isValidPng(data: Buffer): boolean {
+  return data.length >= PNG_SIGNATURE.length && data.subarray(0, PNG_SIGNATURE.length).equals(PNG_SIGNATURE);
+}
+
 function attachmentContentHash(attachment: Attachment): string | null {
   const message = attachment.version?.message;
   if (!message) {
@@ -318,7 +321,7 @@ function runMmdc(
   maxStreamBytes: number,
 ): Promise<void> {
   return new Promise<void>((resolve, reject) => {
-    const child = spawn(cmdPath, ['-i', '-', '-o', outFile, '-t', 'default', '-b', 'transparent'], {
+    const child = spawn(cmdPath, ['-i', '-', '-o', outFile, '-t', 'default', '-b', 'white', '-s', '2'], {
       stdio: ['pipe', 'pipe', 'pipe'],
       shell: false,
     });
