@@ -583,6 +583,257 @@ describe('build argument and label maps', () => {
   });
 });
 
+describe('annotations map', () => {
+  it('defaults global and per-image annotations to empty maps', () => {
+    withProject('docker-publish-plan-', (root) => {
+      writeImageContext(root, 'services/app');
+      const plan = resolveDockerPublishPlan(singleImageOptions(root));
+      expect(plan.annotations).toEqual({});
+      expect(plan.images[0].annotations).toEqual({});
+    });
+  });
+
+  it('accepts annotations as a known global and per-image option', () => {
+    withProject('docker-publish-plan-', (root) => {
+      writeImageContext(root, 'services/app');
+      const plan = resolveDockerPublishPlan({
+        ...singleImageOptions(root),
+        annotations: { 'org.opencontainers.image.title': 'app' },
+        images: [
+          {
+            name: 'app',
+            contextDir: 'services/app',
+            annotations: { 'manifest:org.opencontainers.image.revision': 'abc123' },
+          },
+        ],
+      });
+      expect(plan.annotations).toEqual({ 'org.opencontainers.image.title': 'app' });
+      expect(plan.images[0].annotations).toEqual({ 'manifest:org.opencontainers.image.revision': 'abc123' });
+    });
+  });
+
+  it('rejects oversized and malformed annotation maps like buildArgs', () => {
+    withProject('docker-publish-plan-', (root) => {
+      writeImageContext(root, 'services/app');
+      const base = singleImageOptions(root);
+      const tooMany: Record<string, string> = {};
+      for (let i = 0; i < 65; i += 1) {
+        tooMany[`KEY_${i}`] = 'v';
+      }
+      expect(() => resolveDockerPublishPlan({ ...base, annotations: tooMany })).toThrow(
+        'must not contain more than 64 entries',
+      );
+      expect(() => resolveDockerPublishPlan({ ...base, annotations: { OK: 'x'.repeat(4097) } })).toThrow(
+        'must not exceed 4096 characters',
+      );
+      expect(() => resolveDockerPublishPlan({ ...base, annotations: { 'MY KEY': 'v' } })).toThrow(
+        'must not contain whitespace or control characters',
+      );
+      expect(() => resolveDockerPublishPlan({ ...base, annotations: { K: 'v\0' } })).toThrow(
+        'must not contain NUL bytes',
+      );
+      expect(() => resolveDockerPublishPlan({ ...base, annotations: { ['K'.repeat(129)]: 'v' } })).toThrow(
+        'keys must be 1-128 characters long',
+      );
+      expect(() => resolveDockerPublishPlan({ ...base, annotations: ['x'] })).toThrow('annotations must be an object');
+      const nonString = singleImageOptions(root) as unknown as { images: Array<Record<string, unknown>> };
+      nonString.images[0]['annotations'] = { REVISION: 4 };
+      expect(() => resolveDockerPublishPlan(nonString)).toThrow('must be a string');
+    });
+  });
+
+  it('rejects secret-like annotation keys unless explicitly allowed', () => {
+    withProject('docker-publish-plan-', (root) => {
+      writeImageContext(root, 'services/app');
+      const base = singleImageOptions(root);
+      expect(() => resolveDockerPublishPlan({ ...base, annotations: { API_TOKEN: 'x' } })).toThrow(
+        'looks like a secret',
+      );
+      expect(() =>
+        resolveDockerPublishPlan({
+          ...base,
+          images: [{ name: 'app', contextDir: 'services/app', annotations: { DB_PASSWORD: 'x' } }],
+        }),
+      ).toThrow('looks like a secret');
+      const allowed = resolveDockerPublishPlan({
+        ...base,
+        annotations: { API_TOKEN: 'x' },
+        allowSecretsInBuildArgs: true,
+      });
+      expect(allowed.annotations).toEqual({ API_TOKEN: 'x' });
+    });
+  });
+
+  it('still rejects unknown keys alongside annotations', () => {
+    withProject('docker-publish-plan-', (root) => {
+      writeImageContext(root, 'services/app');
+      const base = singleImageOptions(root);
+      expect(() =>
+        resolveDockerPublishPlan({ ...base, annotations: {}, images: [{ ...base.images[0], extra: true }] }),
+      ).toThrow('Unknown images[0]: extra');
+    });
+  });
+});
+
+describe('build cache specs', () => {
+  it('defaults global cacheFrom and cacheTo to empty lists', () => {
+    withProject('docker-publish-plan-', (root) => {
+      writeImageContext(root, 'services/app');
+      const plan = resolveDockerPublishPlan(singleImageOptions(root));
+      expect(plan.cacheFrom).toEqual([]);
+      expect(plan.cacheTo).toEqual([]);
+    });
+  });
+
+  it('accepts global cacheFrom and cacheTo specs preserving order', () => {
+    withProject('docker-publish-plan-', (root) => {
+      writeImageContext(root, 'services/app');
+      const plan = resolveDockerPublishPlan({
+        ...singleImageOptions(root),
+        cacheFrom: ['type=registry,ref=registry.example.com/app:cache', 'type=local,src=/tmp/cache'],
+        cacheTo: ['type=inline', 'type=local,dest=/tmp/cache,mode=max'],
+      });
+      expect(plan.cacheFrom).toEqual(['type=registry,ref=registry.example.com/app:cache', 'type=local,src=/tmp/cache']);
+      expect(plan.cacheTo).toEqual(['type=inline', 'type=local,dest=/tmp/cache,mode=max']);
+    });
+  });
+
+  it('rejects empty, oversize, NUL, and non-string cache entries', () => {
+    withProject('docker-publish-plan-', (root) => {
+      writeImageContext(root, 'services/app');
+      const base = singleImageOptions(root);
+      expect(() => resolveDockerPublishPlan({ ...base, cacheFrom: [''] })).toThrow(
+        'cacheFrom[0] must be a non-empty string',
+      );
+      expect(() => resolveDockerPublishPlan({ ...base, cacheTo: [''] })).toThrow(
+        'cacheTo[0] must be a non-empty string',
+      );
+      expect(() => resolveDockerPublishPlan({ ...base, cacheFrom: [`x${'\0'}y`] })).toThrow(
+        'must not contain NUL bytes',
+      );
+      expect(() => resolveDockerPublishPlan({ ...base, cacheFrom: ['x'.repeat(4097)] })).toThrow(
+        'must not exceed 4096 characters',
+      );
+      expect(() => resolveDockerPublishPlan({ ...base, cacheTo: [{ type: 'registry' }] as unknown as string })).toThrow(
+        'cacheTo[0] must be a non-empty string',
+      );
+    });
+  });
+
+  it('rejects more than 16 cache entries per list', () => {
+    withProject('docker-publish-plan-', (root) => {
+      writeImageContext(root, 'services/app');
+      const base = singleImageOptions(root);
+      const many = Array.from({ length: 17 }, (_, index) => `type=registry,ref=registry.example.com/app:${index}`);
+      expect(() => resolveDockerPublishPlan({ ...base, cacheFrom: many })).toThrow(
+        'must not contain more than 16 entries',
+      );
+      expect(() => resolveDockerPublishPlan({ ...base, cacheTo: many })).toThrow(
+        'must not contain more than 16 entries',
+      );
+    });
+  });
+
+  it('rejects non-array cache values with a clear message', () => {
+    withProject('docker-publish-plan-', (root) => {
+      writeImageContext(root, 'services/app');
+      const base = singleImageOptions(root);
+      expect(() => resolveDockerPublishPlan({ ...base, cacheFrom: 'type=inline' as unknown as string[] })).toThrow(
+        'cacheFrom must be an array of cache spec strings',
+      );
+      expect(() => resolveDockerPublishPlan({ ...base, cacheTo: { type: 'inline' } as unknown as string[] })).toThrow(
+        'cacheTo must be an array of cache spec strings',
+      );
+    });
+  });
+
+  it('is global-only and rejects per-image cache keys', () => {
+    withProject('docker-publish-plan-', (root) => {
+      writeImageContext(root, 'services/app');
+      const base = singleImageOptions(root);
+      expect(() =>
+        resolveDockerPublishPlan({
+          ...base,
+          images: [{ ...base.images[0], cacheFrom: ['type=inline'] } as unknown as (typeof base.images)[0]],
+        }),
+      ).toThrow('Unknown images[0]: cacheFrom');
+      expect(() =>
+        resolveDockerPublishPlan({
+          ...base,
+          images: [{ ...base.images[0], cacheTo: ['type=inline'] } as unknown as (typeof base.images)[0]],
+        }),
+      ).toThrow('Unknown images[0]: cacheTo');
+    });
+  });
+});
+
+describe('oci export dir', () => {
+  it('defaults ociExportDir to undefined', () => {
+    withProject('docker-publish-plan-', (root) => {
+      writeImageContext(root, 'services/app');
+      const plan = resolveDockerPublishPlan(singleImageOptions(root));
+      expect(plan.ociExportDir).toBeUndefined();
+    });
+  });
+
+  it('accepts a relative dir resolved inside the project root', () => {
+    withProject('docker-publish-plan-', (root) => {
+      writeImageContext(root, 'services/app');
+      const plan = resolveDockerPublishPlan({ ...singleImageOptions(root), ociExportDir: 'oci-layouts' });
+      expect(plan.ociExportDir).toBe(join(realpathSync(root), 'oci-layouts'));
+      expect(join(plan.ociExportDir as string, 'app')).toBe(join(realpathSync(root), 'oci-layouts', 'app'));
+    });
+  });
+
+  it('treats dot-only ociExportDir as the project root', () => {
+    withProject('docker-publish-plan-', (root) => {
+      writeImageContext(root, 'services/app');
+      for (const dotOnly of ['.', './']) {
+        const plan = resolveDockerPublishPlan({ ...singleImageOptions(root), ociExportDir: dotOnly });
+        expect(plan.ociExportDir).toBe(realpathSync(root));
+      }
+    });
+  });
+
+  it('rejects absolute, parent-segment, NUL, empty, and non-string values', () => {
+    withProject('docker-publish-plan-', (root) => {
+      writeImageContext(root, 'services/app');
+      const base = singleImageOptions(root);
+      expect(() => resolveDockerPublishPlan({ ...base, ociExportDir: '/abs/layouts' })).toThrow(
+        'ociExportDir must be relative',
+      );
+      expect(() => resolveDockerPublishPlan({ ...base, ociExportDir: '../escape' })).toThrow(
+        'without parent-directory segments',
+      );
+      expect(() => resolveDockerPublishPlan({ ...base, ociExportDir: 'layouts/../escape' })).toThrow(
+        'without parent-directory segments',
+      );
+      expect(() => resolveDockerPublishPlan({ ...base, ociExportDir: 'layouts/\0dir' })).toThrow(
+        'must not contain NUL bytes',
+      );
+      expect(() => resolveDockerPublishPlan({ ...base, ociExportDir: '' })).toThrow(
+        'ociExportDir must be a non-empty string',
+      );
+      expect(() => resolveDockerPublishPlan({ ...base, ociExportDir: 42 as unknown as string })).toThrow(
+        'ociExportDir must be a string',
+      );
+    });
+  });
+
+  it('is global-only and rejects per-image ociExportDir keys', () => {
+    withProject('docker-publish-plan-', (root) => {
+      writeImageContext(root, 'services/app');
+      const base = singleImageOptions(root);
+      expect(() =>
+        resolveDockerPublishPlan({
+          ...base,
+          images: [{ ...base.images[0], ociExportDir: 'oci-layouts' } as unknown as (typeof base.images)[0]],
+        }),
+      ).toThrow('Unknown images[0]: ociExportDir');
+    });
+  });
+});
+
 describe('scalar options', () => {
   it('rejects wrong types and out-of-range limits', () => {
     withProject('docker-publish-plan-', (root) => {

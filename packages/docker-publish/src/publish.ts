@@ -82,6 +82,11 @@ const PUBLISH_EXTRA_KEYS = new Set([
 export async function publishDockerImages(options: DockerPublishImagesOptions): Promise<DockerPublishResult> {
   const runner = resolveDockerRunner(options, true);
   const plan = resolveDockerPublishPlan(stripExtraKeys(options, PUBLISH_EXTRA_KEYS) as unknown as DockerPublishOptions);
+  if (plan.ociExportDir !== undefined) {
+    throw new Error(
+      `Cannot publish a plan with ociExportDir (${plan.ociExportDir}): OCI export is export-only with no local tags to push; rebuild without ociExportDir to publish`,
+    );
+  }
   const publishConcurrency = resolvePublishConcurrency(options);
   const requested = resolveRequestedReferences(options, plan);
   const manifestPath = resolveManifestPath(options, plan);

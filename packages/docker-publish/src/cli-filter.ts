@@ -86,6 +86,9 @@ export function applyCliOverrides(configured: Record<string, unknown>, result: P
     }
     config.buildConcurrency = positiveInteger(result.values.concurrency, '--concurrency');
   }
+  if (result.values['oci-export-dir'] !== undefined) {
+    config.ociExportDir = result.values['oci-export-dir'];
+  }
   return config as unknown as DockerPublishOptions;
 }
 
@@ -122,6 +125,12 @@ export function applyCliFilters(
     platforms,
     buildArgs: { ...plan.buildArgs },
     labels: { ...plan.labels },
+    annotations: { ...plan.annotations },
+    cacheFrom: [...plan.cacheFrom],
+    cacheTo: [...plan.cacheTo],
+    // ociExportDir is threaded from the raw merged config, not the resolved plan:
+    // the plan holds it absolute and re-resolution rejects absolute paths.
+    ...(typeof raw.ociExportDir === 'string' ? { ociExportDir: raw.ociExportDir as string } : {}),
     buildConcurrency: plan.buildConcurrency,
     processLimits: { ...plan.processLimits },
     dockerExecutable: plan.dockerExecutable,

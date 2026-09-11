@@ -1,4 +1,8 @@
-import { redactSensitiveValues } from '@repo-toolkit/publish-package';
+import { createHash, randomBytes } from 'node:crypto';
+import { lstatSync, mkdirSync, readFileSync, renameSync, rmSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+
+import { isPlainObject, redactSensitiveValues } from '@repo-toolkit/publish-package';
 
 import {
   assertResolvedImagePaths,
@@ -34,6 +38,8 @@ export interface DockerBuildImageResult {
   readonly references: ReadonlyArray<string>;
   readonly platforms: ReadonlyArray<string>;
   readonly imageIds: Readonly<Record<string, string>>;
+  readonly exportDir?: string;
+  readonly exportDigest?: string;
   readonly durationMs: number;
 }
 
@@ -62,6 +68,9 @@ async function buildOneImage(
   image: DockerPublishImage,
   runner: DockerRunner,
 ): Promise<DockerBuildImageResult> {
+  if (plan.ociExportDir !== undefined) {
+    return buildOneImageExport(plan, image, runner);
+  }
   const start = Date.now();
   const platformNames = imagePlatformNames(plan);
   const buildSecrets = collectBuildSecrets(plan, image);
@@ -79,6 +88,94 @@ async function buildOneImage(
     await untagImage(plan, image, buildSecrets, runner);
     throw buildError(image.name, platformNames, error, buildSecrets);
   }
+}
+
+function exportDirForImage(plan: DockerPublishPlan, image: DockerPublishImage): string {
+  return join(plan.ociExportDir as string, image.name);
+}
+
+async function buildOneImageExport(
+  plan: DockerPublishPlan,
+  image: DockerPublishImage,
+  runner: DockerRunner,
+): Promise<DockerBuildImageResult> {
+  // OCI-layout export mode: buildx writes the layout to an exclusive temp
+  // sibling, which is renamed atomically onto the final per-image dir only on
+  // success. Exported images have no local tags, so local tag verification
+  // and untag are skipped; the layout's index.json is validated instead.
+  // Registry verification (verifyDockerPublish) stays manifest-only against
+  // registries and does not cover exported layouts, and export + push in one
+  // plan is rejected at the publish entry (PAR-04 owns the user docs).
+  const start = Date.now();
+  const platformNames = imagePlatformNames(plan);
+  const buildSecrets = collectBuildSecrets(plan, image);
+  const finalDir = exportDirForImage(plan, image);
+  const tempDir = `${finalDir}.tmp-${process.pid}-${randomBytes(16).toString('hex')}`;
+  try {
+    mkdirSync(dirname(finalDir), { recursive: true });
+    if (lstatSync(tempDir, { throwIfNoEntry: false })) {
+      throw new Error(`OCI export temp path already exists: ${tempDir}`);
+    }
+    mkdirSync(tempDir);
+  } catch (error) {
+    throw buildError(image.name, platformNames, error, buildSecrets);
+  }
+  try {
+    await runBuild(plan, image, platformNames, buildSecrets, runner, tempDir);
+  } catch (error) {
+    rmSync(tempDir, { recursive: true, force: true });
+    throw buildError(image.name, platformNames, error, buildSecrets);
+  }
+  try {
+    rmSync(finalDir, { recursive: true, force: true });
+    renameSync(tempDir, finalDir);
+  } catch (error) {
+    rmSync(tempDir, { recursive: true, force: true });
+    throw buildError(image.name, platformNames, error, buildSecrets);
+  }
+  const exportDigest = readExportDigest(image.name, platformNames, finalDir, buildSecrets);
+  return {
+    image: image.name,
+    references: [...image.references],
+    platforms: [...platformNames],
+    imageIds: {},
+    exportDir: finalDir,
+    exportDigest,
+    durationMs: Date.now() - start,
+  };
+}
+
+function readExportDigest(
+  imageName: string,
+  platformNames: ReadonlyArray<string>,
+  finalDir: string,
+  secrets: ReadonlyArray<string>,
+): string {
+  let raw: Buffer;
+  try {
+    raw = readFileSync(join(finalDir, 'index.json'));
+  } catch {
+    throw buildError(imageName, platformNames, `OCI export layout is missing index.json in ${finalDir}`, secrets);
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw.toString('utf8'));
+  } catch {
+    throw buildError(imageName, platformNames, `OCI export index.json is not valid JSON in ${finalDir}`, secrets);
+  }
+  if (!isPlainObject(parsed)) {
+    throw buildError(imageName, platformNames, `OCI export index.json is malformed in ${finalDir}`, secrets);
+  }
+  const manifests = (parsed as Record<string, unknown>)['manifests'];
+  if (!Array.isArray(manifests) || manifests.length === 0) {
+    throw buildError(
+      imageName,
+      platformNames,
+      `OCI export index.json has an empty manifests array in ${finalDir}`,
+      secrets,
+    );
+  }
+  return `sha256:${createHash('sha256').update(raw).digest('hex')}`;
 }
 
 function imagePlatformNames(plan: DockerPublishPlan): ReadonlyArray<string> {
@@ -145,6 +242,7 @@ function containsControlCharacter(text: string): boolean {
 function collectBuildSecrets(plan: DockerPublishPlan, image: DockerPublishImage): string[] {
   const buildArgs = mergedMap(plan.buildArgs, image.buildArgs, 'buildArgs', plan.allowSecretsInBuildArgs);
   const labels = mergedMap(plan.labels, image.labels, 'labels', plan.allowSecretsInBuildArgs);
+  const annotations = mergedMap(plan.annotations, image.annotations, 'annotations', plan.allowSecretsInBuildArgs);
   const secrets: string[] = [];
   const consider = (entries: Readonly<Record<string, string>>): void => {
     for (const key of Object.keys(entries)) {
@@ -158,12 +256,19 @@ function collectBuildSecrets(plan: DockerPublishPlan, image: DockerPublishImage)
   };
   consider(buildArgs);
   consider(labels);
+  consider(annotations);
   return secrets;
 }
 
-function buildArgv(plan: DockerPublishPlan, image: DockerPublishImage, platformNames: ReadonlyArray<string>): string[] {
+function buildArgv(
+  plan: DockerPublishPlan,
+  image: DockerPublishImage,
+  platformNames: ReadonlyArray<string>,
+  exportDest?: string,
+): string[] {
   const buildArgs = mergedMap(plan.buildArgs, image.buildArgs, 'buildArgs', plan.allowSecretsInBuildArgs);
   const labels = mergedMap(plan.labels, image.labels, 'labels', plan.allowSecretsInBuildArgs);
+  const annotations = mergedMap(plan.annotations, image.annotations, 'annotations', plan.allowSecretsInBuildArgs);
   const argv: string[] = ['buildx', 'build', '--platform', platformNames.join(','), '-f', image.resolvedDockerfile];
   if (image.target !== undefined) {
     argv.push('--target', image.target);
@@ -177,7 +282,24 @@ function buildArgv(plan: DockerPublishPlan, image: DockerPublishImage, platformN
   for (const key of Object.keys(labels).sort()) {
     argv.push('--label', `${key}=${labels[key]}`);
   }
-  if (platformNames.length === 1) {
+  // Combined labels-plus-annotations input stays a caller-side concern: callers
+  // duplicate shared entries into both maps.
+  for (const key of Object.keys(annotations).sort()) {
+    argv.push('--annotation', `${key}=${annotations[key]}`);
+  }
+  // Cache specs may carry registry URLs or driver options that resemble secrets
+  // but cannot be classified reliably, so they are passed through without secret
+  // scanning. Do not embed secrets in cache specs; cache values never appear in
+  // summaries (PAR-04 owns the user-facing guidance).
+  for (const spec of plan.cacheFrom) {
+    argv.push('--cache-from', spec);
+  }
+  for (const spec of plan.cacheTo) {
+    argv.push('--cache-to', spec);
+  }
+  if (exportDest !== undefined) {
+    argv.push('--output', `type=oci,dest=${exportDest}`);
+  } else if (platformNames.length === 1) {
     argv.push('--load');
   }
   argv.push(image.resolvedContextDir);
@@ -209,9 +331,10 @@ async function runBuild(
   platformNames: ReadonlyArray<string>,
   secrets: ReadonlyArray<string>,
   runner: DockerRunner,
+  exportDest?: string,
 ): Promise<void> {
   assertResolvedImagePaths(plan, image);
-  await runner.run(plan.dockerExecutable, buildArgv(plan, image, platformNames), runOptions(plan, secrets));
+  await runner.run(plan.dockerExecutable, buildArgv(plan, image, platformNames, exportDest), runOptions(plan, secrets));
 }
 
 async function verifyLocalImages(

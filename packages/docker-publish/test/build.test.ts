@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import {
   lstatSync,
   mkdtempSync,
@@ -16,6 +17,7 @@ import { redactSensitiveValues } from '@repo-toolkit/publish-package';
 
 import {
   buildDockerImages,
+  publishDockerImages,
   resolveDockerPublishPlan,
   type DockerBuildRunner,
   type DockerPublishOptions,
@@ -286,8 +288,8 @@ describe('build path never publishes', () => {
       const source = readFileSync(join(packageRoot, 'src', 'build.ts'), 'utf8');
       expect(source).not.toContain('--push');
       expect(source).not.toContain('child_process');
-      expect(source).not.toContain('node:fs');
       expect(source).not.toContain('process.exit');
+      expect(source).toContain('node:fs');
       expect(source).toContain('buildx');
     });
   });
@@ -842,6 +844,579 @@ describe('secret build-arg and label redaction', () => {
         plan.images[0].resolvedContextDir,
       ]);
       expect(builds[0].options.secrets ?? []).toEqual([]);
+    });
+  });
+});
+
+describe('annotation argv', () => {
+  it('passes merged annotations as sorted --annotation entries with per-image precedence', async () => {
+    await withProject('docker-publish-build-', async (root) => {
+      writeImageContext(root, 'services/app');
+      const base: DockerPublishOptions = {
+        cwd: root,
+        images: [
+          {
+            name: 'app',
+            contextDir: 'services/app',
+            annotations: { 'z-key': 'image', shared: 'image' },
+          },
+        ],
+        registries: [{ hostname: 'registry.example.com' }],
+        tags: ['1.0.0'],
+        platforms: ['linux/amd64'],
+        annotations: { 'a-key': 'global', shared: 'global' },
+      };
+      const plan = resolveDockerPublishPlan(base);
+      const { calls, runner } = createSyncRunner();
+      await buildDockerImages({ ...base, runner });
+      const builds = calls.filter((call) => call.kind === 'run' && call.args[0] === 'buildx');
+      expect(builds.length).toBe(1);
+      expect(builds[0].args).toEqual([
+        'buildx',
+        'build',
+        '--platform',
+        'linux/amd64',
+        '-f',
+        plan.images[0].resolvedDockerfile,
+        '-t',
+        'registry.example.com/app:1.0.0',
+        '--annotation',
+        'a-key=global',
+        '--annotation',
+        'shared=image',
+        '--annotation',
+        'z-key=image',
+        '--load',
+        plan.images[0].resolvedContextDir,
+      ]);
+    });
+  });
+
+  it('flows buildx qualifier prefixes through as ordinary key characters', async () => {
+    await withProject('docker-publish-build-', async (root) => {
+      writeImageContext(root, 'services/app');
+      const base: DockerPublishOptions = {
+        cwd: root,
+        images: [{ name: 'app', contextDir: 'services/app' }],
+        registries: [{ hostname: 'registry.example.com' }],
+        tags: ['1.0.0'],
+        platforms: ['linux/amd64'],
+        annotations: { 'manifest:org.opencontainers.image.revision': 'abc123' },
+      };
+      const { calls, runner } = createSyncRunner();
+      await buildDockerImages({ ...base, runner });
+      const builds = calls.filter((call) => call.kind === 'run' && call.args[0] === 'buildx');
+      expect(builds.length).toBe(1);
+      expect(builds[0].args).toContain('--annotation');
+      expect(builds[0].args).toContain('manifest:org.opencontainers.image.revision=abc123');
+    });
+  });
+
+  it('rejects merged annotation overflow at build time like buildArgs', async () => {
+    await withProject('docker-publish-build-', async (root) => {
+      writeImageContext(root, 'services/app');
+      const globalAnnotations: Record<string, string> = {};
+      const imageAnnotations: Record<string, string> = {};
+      for (let i = 0; i < 40; i += 1) {
+        globalAnnotations[`GLOBAL_${i}`] = 'g';
+        imageAnnotations[`IMAGE_${i}`] = 'v';
+      }
+      const base: DockerPublishOptions = {
+        cwd: root,
+        images: [{ name: 'app', contextDir: 'services/app', annotations: imageAnnotations }],
+        registries: [{ hostname: 'registry.example.com' }],
+        tags: ['1.0.0'],
+        platforms: ['linux/amd64'],
+        annotations: globalAnnotations,
+      };
+      const plan = resolveDockerPublishPlan(base);
+      expect(Object.keys(plan.annotations).length).toBe(40);
+      const { calls, runner } = createSyncRunner();
+      const failure = await buildDockerImages({ ...base, runner }).then(
+        () => {
+          throw new Error('expected the build to fail');
+        },
+        (error: unknown) => error as Error,
+      );
+      expect(failure.message).toContain('must not contain more than 64 entries');
+      expect(calls.filter((call) => call.kind === 'run' && call.args[0] === 'buildx').length).toBe(0);
+      expect(calls.length).toBe(0);
+    });
+  });
+
+  it('rejects secret-like annotation keys at plan time before invoking any process', async () => {
+    await withProject('docker-publish-build-', async (root) => {
+      writeImageContext(root, 'services/app');
+      const base: DockerPublishOptions = {
+        cwd: root,
+        images: [{ name: 'app', contextDir: 'services/app' }],
+        registries: [{ hostname: 'registry.example.com' }],
+        tags: ['1.0.0'],
+        platforms: ['linux/amd64'],
+        annotations: { API_TOKEN: 'x' },
+      };
+      const { calls, runner } = createSyncRunner();
+      await expect(buildDockerImages({ ...base, runner })).rejects.toThrow('looks like a secret');
+      expect(calls.length).toBe(0);
+    });
+  });
+});
+
+describe('secret annotation redaction', () => {
+  const ANNOTATION_CANARY = 'canary-annotation-token-PAR01-7c2e91';
+
+  function secretAnnotationBase(root: string): DockerPublishOptions {
+    return {
+      cwd: root,
+      images: [
+        {
+          name: 'app',
+          contextDir: 'services/app',
+          annotations: { 'org.example.api-token': ANNOTATION_CANARY },
+        },
+      ],
+      registries: [{ hostname: 'registry.example.com' }],
+      tags: ['1.0.0'],
+      platforms: ['linux/amd64'],
+      allowSecretsInBuildArgs: true,
+    };
+  }
+
+  it('passes secret annotation values as runner secrets and redacts the build failure', async () => {
+    await withProject('docker-publish-build-', async (root) => {
+      writeImageContext(root, 'services/app');
+      const base = secretAnnotationBase(root);
+      const calls: RecordedCall[] = [];
+      const runner: DockerBuildRunner = {
+        run(executable, args, options) {
+          calls.push({ kind: 'run', executable, args: [...args], options });
+          if (args[0] === 'rmi') {
+            return { durationMs: 0 };
+          }
+          throw new Error(`daemon echoed ${ANNOTATION_CANARY}`);
+        },
+        capture(executable, args, options) {
+          calls.push({ kind: 'capture', executable, args: [...args], options });
+          return { stdout: '', stderr: '', durationMs: 0, outputBytes: 0 };
+        },
+      };
+      const failure = await buildDockerImages({ ...base, runner }).then(
+        () => {
+          throw new Error('expected the build to fail');
+        },
+        (error: unknown) => error as Error,
+      );
+      expect(failure.message).toContain('"app"');
+      expect(failure.message).not.toContain(ANNOTATION_CANARY);
+      const builds = calls.filter((call) => call.kind === 'run' && call.args[0] === 'buildx');
+      expect(builds.length).toBe(1);
+      const runSecrets = (builds[0].options.secrets ?? []) as ReadonlyArray<string>;
+      expect(runSecrets).toContain(ANNOTATION_CANARY);
+      const scrubbedArgv = redactSensitiveValues(builds[0].args.join('\n'), runSecrets);
+      expect(scrubbedArgv).not.toContain(ANNOTATION_CANARY);
+    });
+  });
+
+  it('adds no annotation values to the build result', async () => {
+    await withProject('docker-publish-build-', async (root) => {
+      writeImageContext(root, 'services/app');
+      const base = secretAnnotationBase(root);
+      const { runner } = createSyncRunner();
+      const result = await buildDockerImages({ ...base, runner });
+      expect(result.images.length).toBe(1);
+      expect(JSON.stringify(result)).not.toContain(ANNOTATION_CANARY);
+    });
+  });
+});
+
+describe('build cache flags', () => {
+  it('passes cache specs as repeated flags after annotations and before --load', async () => {
+    await withProject('docker-publish-build-', async (root) => {
+      writeImageContext(root, 'services/app');
+      const base: DockerPublishOptions = {
+        cwd: root,
+        images: [{ name: 'app', contextDir: 'services/app' }],
+        registries: [{ hostname: 'registry.example.com' }],
+        tags: ['1.0.0'],
+        platforms: ['linux/amd64'],
+        annotations: { 'org.example.title': 'app' },
+        cacheFrom: ['type=registry,ref=registry.example.com/app:cache', 'type=local,src=/tmp/cache'],
+        cacheTo: ['type=inline', 'type=local,dest=/tmp/cache,mode=max'],
+      };
+      const plan = resolveDockerPublishPlan(base);
+      const { calls, runner } = createSyncRunner();
+      await buildDockerImages({ ...base, runner });
+      const builds = calls.filter((call) => call.kind === 'run' && call.args[0] === 'buildx');
+      expect(builds.length).toBe(1);
+      expect(builds[0].args).toEqual([
+        'buildx',
+        'build',
+        '--platform',
+        'linux/amd64',
+        '-f',
+        plan.images[0].resolvedDockerfile,
+        '-t',
+        'registry.example.com/app:1.0.0',
+        '--annotation',
+        'org.example.title=app',
+        '--cache-from',
+        'type=registry,ref=registry.example.com/app:cache',
+        '--cache-from',
+        'type=local,src=/tmp/cache',
+        '--cache-to',
+        'type=inline',
+        '--cache-to',
+        'type=local,dest=/tmp/cache,mode=max',
+        '--load',
+        plan.images[0].resolvedContextDir,
+      ]);
+    });
+  });
+
+  it('preserves user order exactly and never sorts cache specs', async () => {
+    await withProject('docker-publish-build-', async (root) => {
+      writeImageContext(root, 'services/app');
+      const cacheFrom = ['type=local,src=/tmp/z', 'type=registry,ref=registry.example.com/app:a', 'type=inline'];
+      const cacheTo = ['type=local,dest=/tmp/z,mode=max', 'type=inline'];
+      const base: DockerPublishOptions = {
+        cwd: root,
+        images: [{ name: 'app', contextDir: 'services/app' }],
+        registries: [{ hostname: 'registry.example.com' }],
+        tags: ['1.0.0'],
+        platforms: ['linux/amd64'],
+        cacheFrom,
+        cacheTo,
+      };
+      const first = createSyncRunner();
+      await buildDockerImages({ ...base, runner: first.runner });
+      const firstBuilds = first.calls.filter((call) => call.kind === 'run' && call.args[0] === 'buildx');
+      expect(firstBuilds.length).toBe(1);
+      const firstFrom = firstBuilds[0].args.filter((_, index) => firstBuilds[0].args[index - 1] === '--cache-from');
+      const firstTo = firstBuilds[0].args.filter((_, index) => firstBuilds[0].args[index - 1] === '--cache-to');
+      expect(firstFrom).toEqual(cacheFrom);
+      expect(firstTo).toEqual(cacheTo);
+
+      const reversed: DockerPublishOptions = {
+        ...base,
+        cacheFrom: [...cacheFrom].reverse(),
+        cacheTo: [...cacheTo].reverse(),
+      };
+      const second = createSyncRunner();
+      await buildDockerImages({ ...reversed, runner: second.runner });
+      const secondBuilds = second.calls.filter((call) => call.kind === 'run' && call.args[0] === 'buildx');
+      expect(secondBuilds.length).toBe(1);
+      const secondFrom = secondBuilds[0].args.filter((_, index) => secondBuilds[0].args[index - 1] === '--cache-from');
+      const secondTo = secondBuilds[0].args.filter((_, index) => secondBuilds[0].args[index - 1] === '--cache-to');
+      expect(secondFrom).toEqual([...cacheFrom].reverse());
+      expect(secondTo).toEqual([...cacheTo].reverse());
+    });
+  });
+
+  it('emits no cache flags when no cache is configured', async () => {
+    await withProject('docker-publish-build-', async (root) => {
+      writeImageContext(root, 'services/app');
+      const base: DockerPublishOptions = {
+        cwd: root,
+        images: [{ name: 'app', contextDir: 'services/app' }],
+        registries: [{ hostname: 'registry.example.com' }],
+        tags: ['1.0.0'],
+        platforms: ['linux/amd64'],
+      };
+      const { calls, runner } = createSyncRunner();
+      await buildDockerImages({ ...base, runner });
+      const builds = calls.filter((call) => call.kind === 'run' && call.args[0] === 'buildx');
+      expect(builds.length).toBe(1);
+      expect(builds[0].args).not.toContain('--cache-from');
+      expect(builds[0].args).not.toContain('--cache-to');
+    });
+  });
+
+  it('fails invalid cache specs during planning before invoking any process', async () => {
+    await withProject('docker-publish-build-', async (root) => {
+      writeImageContext(root, 'services/app');
+      const base: DockerPublishOptions = {
+        cwd: root,
+        images: [{ name: 'app', contextDir: 'services/app' }],
+        registries: [{ hostname: 'registry.example.com' }],
+        tags: ['1.0.0'],
+        platforms: ['linux/amd64'],
+        cacheFrom: [''],
+      };
+      const { calls, runner } = createSyncRunner();
+      await expect(buildDockerImages({ ...base, runner })).rejects.toThrow('cacheFrom[0] must be a non-empty string');
+      expect(calls.length).toBe(0);
+    });
+  });
+
+  it('adds no cache spec values to the build result', async () => {
+    await withProject('docker-publish-build-', async (root) => {
+      writeImageContext(root, 'services/app');
+      const cacheMarker = 'type=registry,ref=registry.example.com/par02-unique-cache-marker';
+      const base: DockerPublishOptions = {
+        cwd: root,
+        images: [{ name: 'app', contextDir: 'services/app' }],
+        registries: [{ hostname: 'registry.example.com' }],
+        tags: ['1.0.0'],
+        platforms: ['linux/amd64'],
+        cacheFrom: [cacheMarker],
+        cacheTo: ['type=inline'],
+      };
+      const { runner } = createSyncRunner();
+      const result = await buildDockerImages({ ...base, runner });
+      expect(result.images.length).toBe(1);
+      expect(JSON.stringify(result)).not.toContain(cacheMarker);
+    });
+  });
+});
+
+describe('oci export mode', () => {
+  const OCI_OUTPUT_PREFIX = 'type=oci,dest=';
+
+  function destFromArgs(args: ReadonlyArray<string>): string {
+    const outputIndex = args.indexOf('--output');
+    expect(outputIndex).toBeGreaterThanOrEqual(0);
+    const spec = args[outputIndex + 1];
+    expect(spec.slice(0, OCI_OUTPUT_PREFIX.length)).toBe(OCI_OUTPUT_PREFIX);
+    return spec.slice(OCI_OUTPUT_PREFIX.length);
+  }
+
+  function createExportRunner(calls: RecordedCall[], writeLayout: (dest: string) => void): DockerBuildRunner {
+    return {
+      run(executable, args, options) {
+        calls.push({ kind: 'run', executable, args: [...args], options });
+        if (args[0] === 'rmi') {
+          return { durationMs: 0 };
+        }
+        writeLayout(destFromArgs(args));
+        return { durationMs: 5 };
+      },
+      capture(executable, args, options) {
+        calls.push({ kind: 'capture', executable, args: [...args], options });
+        throw new Error('capture must not be called for OCI export builds');
+      },
+    };
+  }
+
+  function writeValidLayout(dest: string, digest = 'a'.repeat(64)): void {
+    const indexContent = JSON.stringify({
+      schemaVersion: 2,
+      manifests: [{ mediaType: 'application/vnd.oci.image.index.v1+json', digest: `sha256:${digest}`, size: 100 }],
+    });
+    writeFileSync(join(dest, 'index.json'), indexContent);
+    writeFileSync(join(dest, 'oci-layout'), JSON.stringify({ imageLayoutVersion: '1.0.0' }));
+  }
+
+  function tempLeftovers(root: string, exportRel: string): string[] {
+    const stats = lstatSync(join(root, exportRel), { throwIfNoEntry: false });
+    if (!stats) {
+      return [];
+    }
+    return readdirSync(join(root, exportRel)).filter((name) => name.indexOf('.tmp-') >= 0);
+  }
+
+  it('writes per-image layouts with --output instead of --load and reports exportDigest', async () => {
+    await withProject('docker-publish-build-', async (root) => {
+      writeImageContext(root, 'services/app');
+      const base: DockerPublishOptions = {
+        cwd: root,
+        images: [{ name: 'app', contextDir: 'services/app' }],
+        registries: [{ hostname: 'registry.example.com' }],
+        tags: ['1.0.0'],
+        platforms: ['linux/amd64'],
+        ociExportDir: 'oci-layouts',
+      };
+      const plan = resolveDockerPublishPlan(base);
+      const calls: RecordedCall[] = [];
+      const runner = createExportRunner(calls, (dest) => writeValidLayout(dest));
+      const result = await buildDockerImages({ ...base, runner });
+
+      const builds = calls.filter((call) => call.kind === 'run' && call.args[0] === 'buildx');
+      expect(builds.length).toBe(1);
+      expect(builds[0].args).not.toContain('--load');
+      expect(builds[0].args).not.toContain('--push');
+      const tempDest = destFromArgs(builds[0].args);
+      const finalDir = join(realpathSync(root), 'oci-layouts', 'app');
+      expect(tempDest.slice(0, `${finalDir}.tmp-`.length)).toBe(`${finalDir}.tmp-`);
+      expect(calls.filter((call) => call.kind === 'capture').length).toBe(0);
+      expect(calls.filter((call) => call.kind === 'run' && call.args[0] === 'rmi').length).toBe(0);
+
+      const raw = readFileSync(join(finalDir, 'index.json'));
+      const expectedDigest = `sha256:${createHash('sha256').update(raw).digest('hex')}`;
+      expect(result.images.length).toBe(1);
+      expect(result.images[0].image).toBe('app');
+      expect(result.images[0].platforms).toEqual(['linux/amd64']);
+      expect(result.images[0].imageIds).toEqual({});
+      expect(result.images[0].exportDir).toBe(finalDir);
+      expect(result.images[0].exportDigest).toBe(expectedDigest);
+      expect(plan.ociExportDir).toBe(join(realpathSync(root), 'oci-layouts'));
+      expect(tempLeftovers(root, 'oci-layouts')).toEqual([]);
+    });
+  });
+
+  it('exports multi-platform images into one layout without --load', async () => {
+    await withProject('docker-publish-build-', async (root) => {
+      writeImageContext(root, 'services/app');
+      const base: DockerPublishOptions = {
+        cwd: root,
+        images: [{ name: 'app', contextDir: 'services/app' }],
+        registries: [{ hostname: 'registry.example.com' }],
+        tags: ['1.0.0'],
+        platforms: ['linux/amd64', 'linux/arm64'],
+        ociExportDir: 'oci-layouts',
+      };
+      const calls: RecordedCall[] = [];
+      const runner = createExportRunner(calls, (dest) => writeValidLayout(dest));
+      const result = await buildDockerImages({ ...base, runner });
+      const builds = calls.filter((call) => call.kind === 'run' && call.args[0] === 'buildx');
+      expect(builds.length).toBe(1);
+      expect(builds[0].args).toContain('--platform');
+      expect(builds[0].args).toContain('linux/amd64,linux/arm64');
+      expect(builds[0].args).not.toContain('--load');
+      expect(builds[0].args).not.toContain('--push');
+      expect(result.images[0].platforms).toEqual(['linux/amd64', 'linux/arm64']);
+      expect(result.images[0].exportDir).toBe(join(realpathSync(root), 'oci-layouts', 'app'));
+      expect(result.images[0].exportDigest).toMatch(/^sha256:[0-9a-f]{64}$/);
+      expect(calls.filter((call) => call.kind === 'capture').length).toBe(0);
+    });
+  });
+
+  it('fails closed on malformed layouts without untagging', async () => {
+    await withProject('docker-publish-build-', async (root) => {
+      writeImageContext(root, 'services/app');
+      const base: DockerPublishOptions = {
+        cwd: root,
+        images: [{ name: 'app', contextDir: 'services/app' }],
+        registries: [{ hostname: 'registry.example.com' }],
+        tags: ['1.0.0'],
+        platforms: ['linux/amd64'],
+        ociExportDir: 'oci-layouts',
+      };
+      const cases: ReadonlyArray<readonly [string, (dest: string) => void]> = [
+        ['missing index.json', () => {}],
+        ['not valid JSON', (dest) => writeFileSync(join(dest, 'index.json'), 'not-json{{{')],
+        [
+          'empty manifests array',
+          (dest) => writeFileSync(join(dest, 'index.json'), JSON.stringify({ schemaVersion: 2, manifests: [] })),
+        ],
+      ];
+      for (const [message, writeLayout] of cases) {
+        const calls: RecordedCall[] = [];
+        const failure = await buildDockerImages({
+          ...base,
+          runner: createExportRunner(calls, writeLayout),
+        }).then(
+          () => {
+            throw new Error('expected the export build to fail');
+          },
+          (error: unknown) => error as Error,
+        );
+        expect(failure.message, message).toContain('"app"');
+        expect(failure.message, message).toMatch(/missing index\.json|not valid JSON|empty manifests/);
+        expect(calls.filter((call) => call.kind === 'run' && call.args[0] === 'rmi').length, message).toBe(0);
+        expect(tempLeftovers(root, 'oci-layouts'), message).toEqual([]);
+      }
+    });
+  });
+
+  it('leaves no partial dir and cleans the temp sibling when the build fails', async () => {
+    await withProject('docker-publish-build-', async (root) => {
+      writeImageContext(root, 'services/app');
+      const base: DockerPublishOptions = {
+        cwd: root,
+        images: [{ name: 'app', contextDir: 'services/app' }],
+        registries: [{ hostname: 'registry.example.com' }],
+        tags: ['1.0.0'],
+        platforms: ['linux/amd64'],
+        ociExportDir: 'oci-layouts',
+      };
+      const calls: RecordedCall[] = [];
+      const runner: DockerBuildRunner = {
+        run(executable, args, options) {
+          calls.push({ kind: 'run', executable, args: [...args], options });
+          if (args[0] === 'rmi') {
+            return { durationMs: 0 };
+          }
+          throw new Error('Executable "docker" exited with status 1 (duration 5ms): export boom');
+        },
+        capture(executable, args, options) {
+          calls.push({ kind: 'capture', executable, args: [...args], options });
+          throw new Error('capture must not be called for OCI export builds');
+        },
+      };
+      const failure = await buildDockerImages({ ...base, runner }).then(
+        () => {
+          throw new Error('expected the export build to fail');
+        },
+        (error: unknown) => error as Error,
+      );
+      expect(failure.message).toContain('"app"');
+      expect(failure.message).toContain('export boom');
+      expect(lstatSync(join(root, 'oci-layouts', 'app'), { throwIfNoEntry: false })).toBeUndefined();
+      expect(tempLeftovers(root, 'oci-layouts')).toEqual([]);
+      expect(calls.filter((call) => call.kind === 'run' && call.args[0] === 'rmi').length).toBe(0);
+    });
+  });
+
+  it('refuses to publish a plan carrying ociExportDir before any push', async () => {
+    await withProject('docker-publish-build-', async (root) => {
+      writeImageContext(root, 'services/app');
+      const base: DockerPublishOptions = {
+        cwd: root,
+        images: [{ name: 'app', contextDir: 'services/app' }],
+        registries: [{ hostname: 'registry.example.com' }],
+        tags: ['1.0.0'],
+        platforms: ['linux/amd64'],
+        ociExportDir: 'oci-layouts',
+      };
+      const { calls, runner } = createRecordedRunner();
+      const failure = await publishDockerImages({ ...base, runner }).then(
+        () => {
+          throw new Error('expected publish to fail');
+        },
+        (error: unknown) => error as Error,
+      );
+      expect(failure.message).toMatch(/export-only.*rebuild without ociExportDir/);
+      expect(calls.length).toBe(0);
+    });
+  });
+
+  it('fails invalid ociExportDir during planning before invoking any process', async () => {
+    await withProject('docker-publish-build-', async (root) => {
+      writeImageContext(root, 'services/app');
+      const { calls, runner } = createSyncRunner();
+      await expect(
+        buildDockerImages({
+          cwd: root,
+          images: [{ name: 'app', contextDir: 'services/app' }],
+          registries: [{ hostname: 'registry.example.com' }],
+          tags: ['1.0.0'],
+          platforms: ['linux/amd64'],
+          ociExportDir: '../escape',
+          runner,
+        }),
+      ).rejects.toThrow('without parent-directory segments');
+      expect(calls.length).toBe(0);
+    });
+  });
+
+  it('never emits --push on the export path', async () => {
+    await withProject('docker-publish-build-', async (root) => {
+      writeImageContext(root, 'services/app');
+      const calls: RecordedCall[] = [];
+      await buildDockerImages({
+        cwd: root,
+        images: [{ name: 'app', contextDir: 'services/app' }],
+        registries: [{ hostname: 'registry.example.com' }],
+        tags: ['1.0.0'],
+        platforms: ['linux/amd64', 'linux/arm64'],
+        ociExportDir: 'oci-layouts',
+        runner: createExportRunner(calls, (dest) => writeValidLayout(dest)),
+      });
+      for (const call of calls) {
+        expect(call.args).not.toContain('--push');
+      }
+      const source = readFileSync(join(packageRoot, 'src', 'build.ts'), 'utf8');
+      expect(source).not.toContain('--push');
     });
   });
 });

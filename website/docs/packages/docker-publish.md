@@ -95,6 +95,39 @@ Two images pushed to two registries with distinct tags, build arguments, and lab
 
 The plan resolves eight references: two images × two registries × two tags. A registry without `repositoryPrefix` produces references such as `localhost:5000/worker:1.2.3`. Per-image `buildArgs` merge over global `buildArgs`; per-image `labels` merge over global `labels`.
 
+### Annotations, Cache, And OCI Export
+
+One image with OCI manifest annotations and layer-cache configuration. Global `annotations` merge with per-image entries the same way `buildArgs` and `labels` do; `cacheFrom`/`cacheTo` pass layer-cache specs through in order. OCI-layout export is exercised separately via `--oci-export-dir`, which overrides `ociExportDir` without changing the fixture.
+
+<!-- example:annotations-cache-export -->
+
+```json
+{
+  "images": [
+    {
+      "name": "app",
+      "contextDir": "services/app"
+    }
+  ],
+  "registries": [
+    {
+      "hostname": "registry.example.com",
+      "repositoryPrefix": "team"
+    }
+  ],
+  "tags": ["2.0.0"],
+  "platforms": ["linux/amd64"],
+  "annotations": {
+    "org.opencontainers.image.title": "app",
+    "org.opencontainers.image.revision": "abc123"
+  },
+  "cacheFrom": ["type=registry,ref=registry.example.com/team/app:cache"],
+  "cacheTo": ["type=inline"]
+}
+```
+
+The plan resolves one reference, `registry.example.com/team/app:2.0.0`. The build passes sorted `--annotation KEY=VALUE` entries, then ordered `--cache-from`/`--cache-to` specs (comma-bearing specs stay single entries — they are never comma-split), then `--load` for this single-platform image.
+
 ## Configuration Reference
 
 Configuration is a JSON, `.mjs`, or `.cjs` (default export) file loaded with the shared `loadConfigFile` helper. Unknown keys fail validation at every level (options, image, registry, `processLimits`, `verification`).
@@ -108,6 +141,9 @@ Configuration is a JSON, `.mjs`, or `.cjs` (default export) file loaded with the
 | `platforms`               | string array | host platform (e.g. `linux/amd64`)               | Explicit `os/arch[/variant]` list. Omit it to build for the machine running the CLI (detected from the host OS/arch; exotic hosts fail closed with an error telling you to set it explicitly). A known-OS/arch table covers the common pairs; anything else requires `allowCustomPlatforms: true`. |
 | `buildArgs`               | string map   | `{}`                                             | Passed as separate `--build-arg KEY=VALUE` argv entries. Max 64 entries, 128-char keys, 4096-char values; no whitespace or control characters in keys. Keys containing `TOKEN`, `SECRET`, or `PASSWORD` are rejected unless `allowSecretsInBuildArgs: true`.                                       |
 | `labels`                  | string map   | `{}`                                             | Passed as separate `--label KEY=VALUE` argv entries. Same bounds and secret-key guard as `buildArgs`.                                                                                                                                                                                              |
+| `annotations`             | string map   | `{}`                                             | Global and per-image maps merged per image (per-image wins), passed as sorted `--annotation KEY=VALUE` argv entries. Same bounds and secret-key guard as `buildArgs`. Buildx qualifier prefixes (`manifest:`, `index:`, …) flow through as ordinary key characters. See Annotations.               |
+| `cacheFrom` / `cacheTo`   | string array | `[]`                                             | Global-only layer-cache specs, passed as repeated `--cache-from <spec>` / `--cache-to <spec>` entries in input order (never sorted). Each entry non-empty, max 4096 chars, no NUL bytes, max 16 entries per list. See Build cache.                                                                 |
+| `ociExportDir`            | string       | unset                                            | Global-only project-root-relative directory for per-image OCI layouts (`<ociExportDir>/<image-name>/`). Dot-only means the project root; no `..` segments and no escape from the project root. Export-only: refuses to publish. See OCI export.                                                    |
 | `buildConcurrency`        | number       | `2`                                              | Max concurrent image builds. Positive safe integer, max 64.                                                                                                                                                                                                                                        |
 | `publishConcurrency`      | number       | `1`                                              | Max concurrent pushes. Serial by default to avoid registry rate limits. Positive safe integer, max 64. Library-only for `publishDockerImages`; the CLIs also accept `--publish-concurrency`.                                                                                                       |
 | `processLimits`           | object       | `{ timeoutMs: 600000, maxOutputBytes: 1048576 }` | Timeout and captured-output cap applied at the runner boundary to every Docker invocation.                                                                                                                                                                                                         |
@@ -123,7 +159,7 @@ Configuration is a JSON, `.mjs`, or `.cjs` (default export) file loaded with the
 
 Configuration supplies defaults and explicit CLI flags override them:
 
-- `--cwd` overrides `cwd`; `--docker-executable` overrides `dockerExecutable`; `--concurrency` overrides `buildConcurrency`; `--publish-concurrency` overrides `publishConcurrency`; `--digest-manifest` overrides `digestManifestPath`.
+- `--cwd` overrides `cwd`; `--docker-executable` overrides `dockerExecutable`; `--concurrency` overrides `buildConcurrency`; `--publish-concurrency` overrides `publishConcurrency`; `--digest-manifest` overrides `digestManifestPath`; `--oci-export-dir` (build and unified CLIs) overrides `ociExportDir` with plan validation before any Docker process runs.
 - `--image`, `--platform`, and `--registry` are repeatable (comma-split) filters that narrow the resolved plan to named entries. Unknown or duplicate filter values fail before any Docker process runs.
 - The publish and unified CLIs pass `auth`, `digestManifestPath`, `publishConcurrency`, and `expectedDigests` through without revalidating them as plan keys.
 - A `runner` key in CLI configuration is rejected: custom runners are available only to library callers.
@@ -142,6 +178,7 @@ repo-toolkit-docker-publish --config docker-publish.json --verify
 ```
 
 - The build CLI builds every planned image and prints image IDs (single-platform `--load` builds), references, platforms, and durations.
+- The build and unified CLIs accept `--oci-export-dir <path>` to write per-image OCI layouts instead of loading local images (see OCI export); invalid values fail during plan resolution before any Docker process runs. `annotations`, `cacheFrom`, and `cacheTo` stay config-file-only like `buildArgs`/`labels`.
 - The publish CLI builds first unless `--skip-build` is given (publish prebuilt local images), pushes only planned references, optionally writes the digest manifest, and optionally verifies with `--verify` using the just-published digests.
 - The unified CLI dispatches via `--build`/`--push`/`--verify`. Without an operation flag it runs build followed by push. `--verify` after a push reuses the returned digests; `--verify` without `--push` uses `expectedDigests` from configuration.
 - `--dry-run` resolves and prints the full plan (images, references, platforms) without invoking Docker and without requiring daemon access. Invalid configuration fails before any runner call.
@@ -158,7 +195,7 @@ repo-toolkit-publish-docker-publish --config docker-publish.json --interactive
 repo-toolkit-docker-publish --interactive --build --push
 ```
 
-The staged flow is: config-file path (offered only when `--config` is absent; empty input configures without a file), essentials (image entries, registry entries, tags, platforms — defaulting to the host platform when the config omits it — each looped with an add-another confirm where applicable), then an advanced group (build args, labels, concurrencies, process limits, Docker executable) behind a customize confirm that defaults to No. An empty context-directory answer means the project root (`.`). Registry hostnames are chosen from a common-registry list (Docker Hub, GHCR, GitLab, GCR, Quay.io, local `localhost:5000`) with a custom-hostname entry last; the configured hostname preselects the matching entry, or the custom entry when it is not listed. Every prompt defaults to the loaded config value when one exists, so accepting all defaults reproduces the equivalent config file.
+The staged flow is: config-file path (offered only when `--config` is absent; empty input configures without a file), essentials (image entries, registry entries, tags, platforms — defaulting to the host platform when the config omits it — each looped with an add-another confirm where applicable), then an advanced group (build args, labels, annotations, cache-from/cache-to specs, concurrencies, process limits, Docker executable, OCI export directory) behind a customize confirm that defaults to No. An empty context-directory answer means the project root (`.`). Registry hostnames are chosen from a common-registry list (Docker Hub, GHCR, GitLab, GCR, Quay.io, local `localhost:5000`) with a custom-hostname entry last; the configured hostname preselects the matching entry, or the custom entry when it is not listed. Every prompt defaults to the loaded config value when one exists, so accepting all defaults reproduces the equivalent config file.
 
 Precedence is CLI flag > prompt answer > config default: explicit flags such as `--cwd`, `--docker-executable`, `--concurrency`, and the `--image` / `--platform` / `--registry` filters always win over prompted and configured values.
 
@@ -232,10 +269,37 @@ Platforms are explicit `os/arch[/variant]` tokens validated against a known-OS t
 
 ## Load-Versus-Push Separation
 
-- Build runs `docker buildx build --platform <join> -f <Dockerfile> [-t <reference>...] [--build-arg ...] [--label ...]` plus `--load` for single-platform images only. The build path never contains `--push` (asserted by tests at both the argv and module-source level).
+- Build runs `docker buildx build --platform <join> -f <Dockerfile> [-t <reference>...] [--build-arg ...] [--label ...] [--annotation ...] [--cache-from ...] [--cache-to ...]` plus `--load` for single-platform images only, or `--output type=oci,dest=<temp-dir>` when `ociExportDir` is set. The build path never contains `--push` (asserted by tests at both the argv and module-source level).
 - Single-platform `--load` builds are verified with `docker images --no-trunc --format ...`: empty, missing, unexpected, or conflicting entries fail closed. On failure the operation best-effort untags (`docker rmi`) what it created and reports image identity, platform set, and the output tail.
 - Multi-platform builds produce no local image; their digests are captured at publish time.
 - No build output files are written to the repository; only the Docker daemon receives image data.
+
+## Annotations
+
+`annotations` is a global string map with optional per-image overrides, mirroring `buildArgs`/`labels` exactly:
+
+- Same contract: max 64 entries, 128-char keys, 4096-char values, no whitespace or control characters in keys, and the `TOKEN`/`SECRET`/`PASSWORD` secret-key guard unless `allowSecretsInBuildArgs: true`. Per-image entries merge over global entries; unknown keys fail validation.
+- Argv mapping: sorted `--annotation KEY=VALUE` entries after `--label` entries. Buildx qualifier prefixes (`manifest:`, `manifest-descriptor:`, `index:`, `index-descriptor:`) flow through as ordinary key characters, so `manifest:org.opencontainers.image.revision` stamps the manifest annotation directly.
+- Secrecy: secret-pattern annotation values travel through the runner `secrets` channel and are redacted from build errors, exactly like build secrets. Annotation values never appear in plan or result summaries.
+- There is no flag surface: annotations stay config-file-only (no `--annotation` CLI flag), like `buildArgs`/`labels`. Supplying the same entries in both `labels` and `annotations` (the action's `metadata-labels-annotations`) stays a caller-side concern.
+
+## Build Cache
+
+`cacheFrom`/`cacheTo` are global-only string lists wiring layer caching into every build:
+
+- Contract: each entry is a non-empty string, max 4096 chars, no NUL bytes, max 16 entries per list. Non-array values fail during planning. Per-image `cacheFrom`/`cacheTo` keys are rejected — caching is a plan-wide policy.
+- Argv mapping: repeated `--cache-from <spec>` / `--cache-to <spec>` entries after annotations and before `--load`/context. User order is preserved exactly (never sorted): cache-from order is priority order.
+- Secrecy: specs are not scanned for secrets (registry URLs and driver options cannot be classified reliably), so cache specs must not embed secrets. Cache values never appear in summaries.
+- There is no flag surface: cache specs stay config-file-only (no `--cache-from`/`--cache-to` CLI flags).
+
+## OCI Export
+
+`ociExportDir` is a global-only export-only mode for air-gapped or layout-consuming workflows (not a general `--output` passthrough):
+
+- Contract: a non-empty project-root-relative path; dot-only (`.`, `./`) selects the project root itself; `..` segments, absolute paths, and escapes from the project root fail during planning. Each image exports to `<ociExportDir>/<image-name>/`. The build and unified CLIs accept `--oci-export-dir <path>`, which overrides the config value with the same plan-time validation.
+- Build behavior: when set, each image builds with `--output type=oci,dest=<temp-sibling-dir>` instead of `--load` (all platform counts; multi-platform images land in the one layout). Buildx writes to an exclusively created temp sibling that is renamed atomically onto the final directory only on success and removed on any failure. Local tag verification and untag are skipped (no local tags exist); instead `<dest>/index.json` must parse with a non-empty `manifests` array. The build result reports additive-only `exportDir` (resolved layout dir) and `exportDigest` (`sha256:` over the raw `index.json` bytes).
+- Export-only incompatibility with push: publishing a plan that carries `ociExportDir` fails closed before any push with an error directing the caller to rebuild without it. Registry `verify` stays manifest-only against registries and does not cover exported layouts.
+- Summaries carry no new value-bearing fields: `exportDir`/`exportDigest` live on the library build result only, never in plan summaries; annotation, cache, and export values appear in no summary, log, or error beyond redaction.
 
 ## Context Trust
 
