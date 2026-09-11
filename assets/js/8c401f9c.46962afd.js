@@ -59,6 +59,10 @@ const toc = [{
   "id": "multiple-images-and-registries",
   "level": 3
 }, {
+  "value": "Annotations, Cache, And OCI Export",
+  "id": "annotations-cache-and-oci-export",
+  "level": 3
+}, {
   "value": "Configuration Reference",
   "id": "configuration-reference",
   "level": 2
@@ -109,6 +113,18 @@ const toc = [{
 }, {
   "value": "Load-Versus-Push Separation",
   "id": "load-versus-push-separation",
+  "level": 2
+}, {
+  "value": "Annotations",
+  "id": "annotations",
+  "level": 2
+}, {
+  "value": "Build Cache",
+  "id": "build-cache",
+  "level": 2
+}, {
+  "value": "OCI Export",
+  "id": "oci-export",
   "level": 2
 }, {
   "value": "Context Trust",
@@ -257,6 +273,42 @@ function _createMdxContent(props) {
       }), " merge over global ", (0,jsx_runtime.jsx)(_components.code, {
         children: "labels"
       }), "."]
+    }), "\n", (0,jsx_runtime.jsx)(_components.h3, {
+      id: "annotations-cache-and-oci-export",
+      children: "Annotations, Cache, And OCI Export"
+    }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
+      children: ["One image with OCI manifest annotations and layer-cache configuration. Global ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "annotations"
+      }), " merge with per-image entries the same way ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "buildArgs"
+      }), " and ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "labels"
+      }), " do; ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "cacheFrom"
+      }), "/", (0,jsx_runtime.jsx)(_components.code, {
+        children: "cacheTo"
+      }), " pass layer-cache specs through in order. OCI-layout export is exercised separately via ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "--oci-export-dir"
+      }), ", which overrides ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "ociExportDir"
+      }), " without changing the fixture."]
+    }), "\n", (0,jsx_runtime.jsx)(_components.pre, {
+      children: (0,jsx_runtime.jsx)(_components.code, {
+        className: "language-json",
+        children: "{\n  \"images\": [\n    {\n      \"name\": \"app\",\n      \"contextDir\": \"services/app\"\n    }\n  ],\n  \"registries\": [\n    {\n      \"hostname\": \"registry.example.com\",\n      \"repositoryPrefix\": \"team\"\n    }\n  ],\n  \"tags\": [\"2.0.0\"],\n  \"platforms\": [\"linux/amd64\"],\n  \"annotations\": {\n    \"org.opencontainers.image.title\": \"app\",\n    \"org.opencontainers.image.revision\": \"abc123\"\n  },\n  \"cacheFrom\": [\"type=registry,ref=registry.example.com/team/app:cache\"],\n  \"cacheTo\": [\"type=inline\"]\n}\n"
+      })
+    }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
+      children: ["The plan resolves one reference, ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "registry.example.com/team/app:2.0.0"
+      }), ". The build passes sorted ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "--annotation KEY=VALUE"
+      }), " entries, then ordered ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "--cache-from"
+      }), "/", (0,jsx_runtime.jsx)(_components.code, {
+        children: "--cache-to"
+      }), " specs (comma-bearing specs stay single entries — they are never comma-split), then ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "--load"
+      }), " for this single-platform image."]
     }), "\n", (0,jsx_runtime.jsx)(_components.h2, {
       id: "configuration-reference",
       children: "Configuration Reference"
@@ -421,6 +473,64 @@ function _createMdxContent(props) {
             }), " argv entries. Same bounds and secret-key guard as ", (0,jsx_runtime.jsx)(_components.code, {
               children: "buildArgs"
             }), "."]
+          })]
+        }), (0,jsx_runtime.jsxs)(_components.tr, {
+          children: [(0,jsx_runtime.jsx)(_components.td, {
+            children: (0,jsx_runtime.jsx)(_components.code, {
+              children: "annotations"
+            })
+          }), (0,jsx_runtime.jsx)(_components.td, {
+            children: "string map"
+          }), (0,jsx_runtime.jsx)(_components.td, {
+            children: (0,jsx_runtime.jsx)(_components.code, {
+              children: "{}"
+            })
+          }), (0,jsx_runtime.jsxs)(_components.td, {
+            children: ["Global and per-image maps merged per image (per-image wins), passed as sorted ", (0,jsx_runtime.jsx)(_components.code, {
+              children: "--annotation KEY=VALUE"
+            }), " argv entries. Same bounds and secret-key guard as ", (0,jsx_runtime.jsx)(_components.code, {
+              children: "buildArgs"
+            }), ". Buildx qualifier prefixes (", (0,jsx_runtime.jsx)(_components.code, {
+              children: "manifest:"
+            }), ", ", (0,jsx_runtime.jsx)(_components.code, {
+              children: "index:"
+            }), ", …) flow through as ordinary key characters. See Annotations."]
+          })]
+        }), (0,jsx_runtime.jsxs)(_components.tr, {
+          children: [(0,jsx_runtime.jsxs)(_components.td, {
+            children: [(0,jsx_runtime.jsx)(_components.code, {
+              children: "cacheFrom"
+            }), " / ", (0,jsx_runtime.jsx)(_components.code, {
+              children: "cacheTo"
+            })]
+          }), (0,jsx_runtime.jsx)(_components.td, {
+            children: "string array"
+          }), (0,jsx_runtime.jsx)(_components.td, {
+            children: (0,jsx_runtime.jsx)(_components.code, {
+              children: "[]"
+            })
+          }), (0,jsx_runtime.jsxs)(_components.td, {
+            children: ["Global-only layer-cache specs, passed as repeated ", (0,jsx_runtime.jsx)(_components.code, {
+              children: "--cache-from <spec>"
+            }), " / ", (0,jsx_runtime.jsx)(_components.code, {
+              children: "--cache-to <spec>"
+            }), " entries in input order (never sorted). Each entry non-empty, max 4096 chars, no NUL bytes, max 16 entries per list. See Build cache."]
+          })]
+        }), (0,jsx_runtime.jsxs)(_components.tr, {
+          children: [(0,jsx_runtime.jsx)(_components.td, {
+            children: (0,jsx_runtime.jsx)(_components.code, {
+              children: "ociExportDir"
+            })
+          }), (0,jsx_runtime.jsx)(_components.td, {
+            children: "string"
+          }), (0,jsx_runtime.jsx)(_components.td, {
+            children: "unset"
+          }), (0,jsx_runtime.jsxs)(_components.td, {
+            children: ["Global-only project-root-relative directory for per-image OCI layouts (", (0,jsx_runtime.jsx)(_components.code, {
+              children: "<ociExportDir>/<image-name>/"
+            }), "). Dot-only means the project root; no ", (0,jsx_runtime.jsx)(_components.code, {
+              children: ".."
+            }), " segments and no escape from the project root. Export-only: refuses to publish. See OCI export."]
           })]
         }), (0,jsx_runtime.jsxs)(_components.tr, {
           children: [(0,jsx_runtime.jsx)(_components.td, {
@@ -619,7 +729,11 @@ function _createMdxContent(props) {
           children: "--digest-manifest"
         }), " overrides ", (0,jsx_runtime.jsx)(_components.code, {
           children: "digestManifestPath"
-        }), "."]
+        }), "; ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "--oci-export-dir"
+        }), " (build and unified CLIs) overrides ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "ociExportDir"
+        }), " with plan validation before any Docker process runs."]
       }), "\n", (0,jsx_runtime.jsxs)(_components.li, {
         children: [(0,jsx_runtime.jsx)(_components.code, {
           children: "--image"
@@ -664,6 +778,20 @@ function _createMdxContent(props) {
         children: ["The build CLI builds every planned image and prints image IDs (single-platform ", (0,jsx_runtime.jsx)(_components.code, {
           children: "--load"
         }), " builds), references, platforms, and durations."]
+      }), "\n", (0,jsx_runtime.jsxs)(_components.li, {
+        children: ["The build and unified CLIs accept ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "--oci-export-dir <path>"
+        }), " to write per-image OCI layouts instead of loading local images (see OCI export); invalid values fail during plan resolution before any Docker process runs. ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "annotations"
+        }), ", ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "cacheFrom"
+        }), ", and ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "cacheTo"
+        }), " stay config-file-only like ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "buildArgs"
+        }), "/", (0,jsx_runtime.jsx)(_components.code, {
+          children: "labels"
+        }), "."]
       }), "\n", (0,jsx_runtime.jsxs)(_components.li, {
         children: ["The publish CLI builds first unless ", (0,jsx_runtime.jsx)(_components.code, {
           children: "--skip-build"
@@ -710,7 +838,7 @@ function _createMdxContent(props) {
     }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
       children: ["The staged flow is: config-file path (offered only when ", (0,jsx_runtime.jsx)(_components.code, {
         children: "--config"
-      }), " is absent; empty input configures without a file), essentials (image entries, registry entries, tags, platforms — defaulting to the host platform when the config omits it — each looped with an add-another confirm where applicable), then an advanced group (build args, labels, concurrencies, process limits, Docker executable) behind a customize confirm that defaults to No. An empty context-directory answer means the project root (", (0,jsx_runtime.jsx)(_components.code, {
+      }), " is absent; empty input configures without a file), essentials (image entries, registry entries, tags, platforms — defaulting to the host platform when the config omits it — each looped with an add-another confirm where applicable), then an advanced group (build args, labels, annotations, cache-from/cache-to specs, concurrencies, process limits, Docker executable, OCI export directory) behind a customize confirm that defaults to No. An empty context-directory answer means the project root (", (0,jsx_runtime.jsx)(_components.code, {
         children: "."
       }), "). Registry hostnames are chosen from a common-registry list (Docker Hub, GHCR, GitLab, GCR, Quay.io, local ", (0,jsx_runtime.jsx)(_components.code, {
         children: "localhost:5000"
@@ -927,10 +1055,14 @@ function _createMdxContent(props) {
     }), "\n", (0,jsx_runtime.jsxs)(_components.ul, {
       children: ["\n", (0,jsx_runtime.jsxs)(_components.li, {
         children: ["Build runs ", (0,jsx_runtime.jsx)(_components.code, {
-          children: "docker buildx build --platform <join> -f <Dockerfile> [-t <reference>...] [--build-arg ...] [--label ...]"
+          children: "docker buildx build --platform <join> -f <Dockerfile> [-t <reference>...] [--build-arg ...] [--label ...] [--annotation ...] [--cache-from ...] [--cache-to ...]"
         }), " plus ", (0,jsx_runtime.jsx)(_components.code, {
           children: "--load"
-        }), " for single-platform images only. The build path never contains ", (0,jsx_runtime.jsx)(_components.code, {
+        }), " for single-platform images only, or ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "--output type=oci,dest=<temp-dir>"
+        }), " when ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "ociExportDir"
+        }), " is set. The build path never contains ", (0,jsx_runtime.jsx)(_components.code, {
           children: "--push"
         }), " (asserted by tests at both the argv and module-source level)."]
       }), "\n", (0,jsx_runtime.jsxs)(_components.li, {
@@ -945,6 +1077,149 @@ function _createMdxContent(props) {
         children: "Multi-platform builds produce no local image; their digests are captured at publish time."
       }), "\n", (0,jsx_runtime.jsx)(_components.li, {
         children: "No build output files are written to the repository; only the Docker daemon receives image data."
+      }), "\n"]
+    }), "\n", (0,jsx_runtime.jsx)(_components.h2, {
+      id: "annotations",
+      children: "Annotations"
+    }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
+      children: [(0,jsx_runtime.jsx)(_components.code, {
+        children: "annotations"
+      }), " is a global string map with optional per-image overrides, mirroring ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "buildArgs"
+      }), "/", (0,jsx_runtime.jsx)(_components.code, {
+        children: "labels"
+      }), " exactly:"]
+    }), "\n", (0,jsx_runtime.jsxs)(_components.ul, {
+      children: ["\n", (0,jsx_runtime.jsxs)(_components.li, {
+        children: ["Same contract: max 64 entries, 128-char keys, 4096-char values, no whitespace or control characters in keys, and the ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "TOKEN"
+        }), "/", (0,jsx_runtime.jsx)(_components.code, {
+          children: "SECRET"
+        }), "/", (0,jsx_runtime.jsx)(_components.code, {
+          children: "PASSWORD"
+        }), " secret-key guard unless ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "allowSecretsInBuildArgs: true"
+        }), ". Per-image entries merge over global entries; unknown keys fail validation."]
+      }), "\n", (0,jsx_runtime.jsxs)(_components.li, {
+        children: ["Argv mapping: sorted ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "--annotation KEY=VALUE"
+        }), " entries after ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "--label"
+        }), " entries. Buildx qualifier prefixes (", (0,jsx_runtime.jsx)(_components.code, {
+          children: "manifest:"
+        }), ", ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "manifest-descriptor:"
+        }), ", ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "index:"
+        }), ", ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "index-descriptor:"
+        }), ") flow through as ordinary key characters, so ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "manifest:org.opencontainers.image.revision"
+        }), " stamps the manifest annotation directly."]
+      }), "\n", (0,jsx_runtime.jsxs)(_components.li, {
+        children: ["Secrecy: secret-pattern annotation values travel through the runner ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "secrets"
+        }), " channel and are redacted from build errors, exactly like build secrets. Annotation values never appear in plan or result summaries."]
+      }), "\n", (0,jsx_runtime.jsxs)(_components.li, {
+        children: ["There is no flag surface: annotations stay config-file-only (no ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "--annotation"
+        }), " CLI flag), like ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "buildArgs"
+        }), "/", (0,jsx_runtime.jsx)(_components.code, {
+          children: "labels"
+        }), ". Supplying the same entries in both ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "labels"
+        }), " and ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "annotations"
+        }), " (the action's ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "metadata-labels-annotations"
+        }), ") stays a caller-side concern."]
+      }), "\n"]
+    }), "\n", (0,jsx_runtime.jsx)(_components.h2, {
+      id: "build-cache",
+      children: "Build Cache"
+    }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
+      children: [(0,jsx_runtime.jsx)(_components.code, {
+        children: "cacheFrom"
+      }), "/", (0,jsx_runtime.jsx)(_components.code, {
+        children: "cacheTo"
+      }), " are global-only string lists wiring layer caching into every build:"]
+    }), "\n", (0,jsx_runtime.jsxs)(_components.ul, {
+      children: ["\n", (0,jsx_runtime.jsxs)(_components.li, {
+        children: ["Contract: each entry is a non-empty string, max 4096 chars, no NUL bytes, max 16 entries per list. Non-array values fail during planning. Per-image ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "cacheFrom"
+        }), "/", (0,jsx_runtime.jsx)(_components.code, {
+          children: "cacheTo"
+        }), " keys are rejected — caching is a plan-wide policy."]
+      }), "\n", (0,jsx_runtime.jsxs)(_components.li, {
+        children: ["Argv mapping: repeated ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "--cache-from <spec>"
+        }), " / ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "--cache-to <spec>"
+        }), " entries after annotations and before ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "--load"
+        }), "/context. User order is preserved exactly (never sorted): cache-from order is priority order."]
+      }), "\n", (0,jsx_runtime.jsx)(_components.li, {
+        children: "Secrecy: specs are not scanned for secrets (registry URLs and driver options cannot be classified reliably), so cache specs must not embed secrets. Cache values never appear in summaries."
+      }), "\n", (0,jsx_runtime.jsxs)(_components.li, {
+        children: ["There is no flag surface: cache specs stay config-file-only (no ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "--cache-from"
+        }), "/", (0,jsx_runtime.jsx)(_components.code, {
+          children: "--cache-to"
+        }), " CLI flags)."]
+      }), "\n"]
+    }), "\n", (0,jsx_runtime.jsx)(_components.h2, {
+      id: "oci-export",
+      children: "OCI Export"
+    }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
+      children: [(0,jsx_runtime.jsx)(_components.code, {
+        children: "ociExportDir"
+      }), " is a global-only export-only mode for air-gapped or layout-consuming workflows (not a general ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "--output"
+      }), " passthrough):"]
+    }), "\n", (0,jsx_runtime.jsxs)(_components.ul, {
+      children: ["\n", (0,jsx_runtime.jsxs)(_components.li, {
+        children: ["Contract: a non-empty project-root-relative path; dot-only (", (0,jsx_runtime.jsx)(_components.code, {
+          children: "."
+        }), ", ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "./"
+        }), ") selects the project root itself; ", (0,jsx_runtime.jsx)(_components.code, {
+          children: ".."
+        }), " segments, absolute paths, and escapes from the project root fail during planning. Each image exports to ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "<ociExportDir>/<image-name>/"
+        }), ". The build and unified CLIs accept ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "--oci-export-dir <path>"
+        }), ", which overrides the config value with the same plan-time validation."]
+      }), "\n", (0,jsx_runtime.jsxs)(_components.li, {
+        children: ["Build behavior: when set, each image builds with ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "--output type=oci,dest=<temp-sibling-dir>"
+        }), " instead of ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "--load"
+        }), " (all platform counts; multi-platform images land in the one layout). Buildx writes to an exclusively created temp sibling that is renamed atomically onto the final directory only on success and removed on any failure. Local tag verification and untag are skipped (no local tags exist); instead ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "<dest>/index.json"
+        }), " must parse with a non-empty ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "manifests"
+        }), " array. The build result reports additive-only ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "exportDir"
+        }), " (resolved layout dir) and ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "exportDigest"
+        }), " (", (0,jsx_runtime.jsx)(_components.code, {
+          children: "sha256:"
+        }), " over the raw ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "index.json"
+        }), " bytes)."]
+      }), "\n", (0,jsx_runtime.jsxs)(_components.li, {
+        children: ["Export-only incompatibility with push: publishing a plan that carries ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "ociExportDir"
+        }), " fails closed before any push with an error directing the caller to rebuild without it. Registry ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "verify"
+        }), " stays manifest-only against registries and does not cover exported layouts."]
+      }), "\n", (0,jsx_runtime.jsxs)(_components.li, {
+        children: ["Summaries carry no new value-bearing fields: ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "exportDir"
+        }), "/", (0,jsx_runtime.jsx)(_components.code, {
+          children: "exportDigest"
+        }), " live on the library build result only, never in plan summaries; annotation, cache, and export values appear in no summary, log, or error beyond redaction."]
       }), "\n"]
     }), "\n", (0,jsx_runtime.jsx)(_components.h2, {
       id: "context-trust",
