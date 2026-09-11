@@ -1,3 +1,13 @@
+## [0.29.0](https://github.com/egose/repo-toolkit/compare/v0.28.0...v0.29.0) (2026-09-11)
+
+### Features
+
+* add OCI export and annotation support to docker publish ([b4e43d0](https://github.com/egose/repo-toolkit/commit/b4e43d01f48dcd788f2d17d20bb3812d026b7880))
+
+### Documentation
+
+* update task notes for OCI export parity work ([2aa1e14](https://github.com/egose/repo-toolkit/commit/2aa1e14c25700f6829cfa4b19abea6aeb7ecd3f4))
+
 ## [0.28.0](https://github.com/egose/repo-toolkit/compare/v0.27.0...v0.28.0) (2026-09-10)
 
 ### Features
