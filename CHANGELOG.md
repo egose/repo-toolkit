@@ -1,3 +1,13 @@
+## [0.31.0](https://github.com/egose/repo-toolkit/compare/v0.30.0...v0.31.0) (2026-09-14)
+
+### Features
+
+* reuse configured sections and env-backed auth in interactive flow ([86a1f51](https://github.com/egose/repo-toolkit/commit/86a1f5124bd596912753db7e65f77ebc35bd17b5))
+
+### Documentation
+
+* describe interactive prompt reuse and auth shortcuts ([2064b10](https://github.com/egose/repo-toolkit/commit/2064b10613cdba114c2c5429338afcbc6e0b1a16))
+
 ## [0.30.0](https://github.com/egose/repo-toolkit/compare/v0.29.0...v0.30.0) (2026-09-11)
 
 ### Features
