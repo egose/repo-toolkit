@@ -838,11 +838,11 @@ function _createMdxContent(props) {
     }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
       children: ["The staged flow is: config-file path (offered only when ", (0,jsx_runtime.jsx)(_components.code, {
         children: "--config"
-      }), " is absent; empty input configures without a file), essentials (image entries, registry entries, tags, platforms — defaulting to the host platform when the config omits it — each looped with an add-another confirm where applicable), then an advanced group (build args, labels, annotations, cache-from/cache-to specs, concurrencies, process limits, Docker executable, OCI export directory) behind a customize confirm that defaults to No. An empty context-directory answer means the project root (", (0,jsx_runtime.jsx)(_components.code, {
+      }), " is absent; empty input configures without a file), then only the sections missing from the config — image entries, registry entries, tags, platforms (defaulting to the host platform when the config omits it, each looped with an add-another confirm where applicable) — then an advanced group (build args, labels, annotations, cache-from/cache-to specs, concurrencies, process limits, Docker executable, OCI export directory) behind a customize confirm that defaults to No. Sections already configured with a non-empty value are reused silently without re-prompting: with a complete config only the advanced customize confirm is asked. An empty context-directory answer means the project root (", (0,jsx_runtime.jsx)(_components.code, {
         children: "."
       }), "). Registry hostnames are chosen from a common-registry list (Docker Hub, GHCR, GitLab, GCR, Quay.io, local ", (0,jsx_runtime.jsx)(_components.code, {
         children: "localhost:5000"
-      }), ") with a custom-hostname entry last; the configured hostname preselects the matching entry, or the custom entry when it is not listed. Every prompt defaults to the loaded config value when one exists, so accepting all defaults reproduces the equivalent config file."]
+      }), ") with a custom-hostname entry last; the configured hostname preselects the matching entry, or the custom entry when it is not listed. Missing-section prompts default to the loaded config value when one exists, so accepting all defaults reproduces the equivalent config file."]
     }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
       children: ["Precedence is CLI flag > prompt answer > config default: explicit flags such as ", (0,jsx_runtime.jsx)(_components.code, {
         children: "--cwd"
@@ -864,13 +864,17 @@ function _createMdxContent(props) {
         children: "--config"
       }), " or run in a TTY. CI never hangs on stdin."]
     }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
-      children: ["Auth is ephemeral-only: per registry the CLI prompts the username (defaulting to the configured literal ", (0,jsx_runtime.jsx)(_components.code, {
+      children: ["Auth is ephemeral-only: per registry whose configured ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "auth"
+      }), " entry does not resolve from the environment, the CLI prompts the username (defaulting to the configured literal ", (0,jsx_runtime.jsx)(_components.code, {
         children: "username"
       }), " when one exists, otherwise to the ", (0,jsx_runtime.jsx)(_components.code, {
         children: "usernameEnv"
       }), " value from the environment) and the ", (0,jsx_runtime.jsx)(_components.code, {
         children: "passwordEnv"
-      }), " name, then — when the named password variable is set and non-empty — offers a choice between using the environment value (default, recommended) and entering a new masked password; otherwise it goes straight to masked entry. Entered passwords live in memory for this run's ", (0,jsx_runtime.jsx)(_components.code, {
+      }), " name, then — when the named password variable is set and non-empty — offers a choice between using the environment value (default, recommended) and entering a new masked password; otherwise it goes straight to masked entry. When the configured entry resolves fully from the environment (literal or env username plus a set non-empty password), no auth prompt is shown and the env credentials are used for this run's ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "--password-stdin"
+      }), " login. Entered passwords live in memory for this run's ", (0,jsx_runtime.jsx)(_components.code, {
         children: "--password-stdin"
       }), " login only. Nothing is written to disk, ", (0,jsx_runtime.jsx)(_components.code, {
         children: "process.env"
