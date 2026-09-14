@@ -226,14 +226,25 @@ export async function resolveInteractiveDockerPublishOptions(
   if (Object.prototype.hasOwnProperty.call(loaded, 'runner')) {
     throw new Error('runner is available only to library callers');
   }
-  const images = await promptImageEntries(prompter, readImageDefaults(loaded));
-  const registries = await promptRegistryEntries(prompter, readRegistryDefaults(loaded));
-  const tags = await promptTags(prompter, readStringListDefault(loaded.tags));
-  const platforms = await promptPlatforms(
-    prompter,
-    loaded.platforms === undefined ? defaultHostPlatforms() : readStringListDefault(loaded.platforms),
-    readBooleanDefault(loaded.allowCustomPlatforms, false),
-  );
+  const images = hasConfiguredList(loaded.images)
+    ? loaded.images
+    : await promptImageEntries(prompter, readImageDefaults(loaded));
+  const registries = hasConfiguredList(loaded.registries)
+    ? loaded.registries
+    : await promptRegistryEntries(prompter, readRegistryDefaults(loaded));
+  const tags = hasConfiguredList(loaded.tags)
+    ? loaded.tags
+    : await promptTags(prompter, readStringListDefault(loaded.tags));
+  const platforms = hasConfiguredList(loaded.platforms)
+    ? {
+        entries: loaded.platforms,
+        allowCustomPlatforms: readBooleanDefault(loaded.allowCustomPlatforms, false),
+      }
+    : await promptPlatforms(
+        prompter,
+        loaded.platforms === undefined ? defaultHostPlatforms() : readStringListDefault(loaded.platforms),
+        readBooleanDefault(loaded.allowCustomPlatforms, false),
+      );
   const advanced = await promptAdvanced(prompter, loaded, platforms.allowCustomPlatforms);
   const configured: Record<string, unknown> = {};
   for (const key of Object.keys(loaded)) {
@@ -306,6 +317,10 @@ const KNOWN_REGISTRIES: ReadonlyArray<{ readonly hostname: string; readonly labe
   { hostname: 'quay.io', label: 'Quay.io (quay.io)' },
   { hostname: 'localhost:5000', label: 'Local registry (localhost:5000)' },
 ];
+
+function hasConfiguredList(value: unknown): value is ReadonlyArray<unknown> {
+  return Array.isArray(value) && value.length > 0;
+}
 
 function readImageDefaults(loaded: Record<string, unknown>): ImageDefault[] {
   if (!Array.isArray(loaded.images)) {
@@ -1121,6 +1136,14 @@ export async function promptInteractiveAuth(
     const configured = Object.prototype.hasOwnProperty.call(configuredAuth, hostname)
       ? (configuredAuth[hostname] as DockerPublishRegistryAuth)
       : undefined;
+    if (configured !== undefined) {
+      const resolved = resolveConfiguredEnvCredentials(configured);
+      if (resolved !== undefined) {
+        auth[hostname] = configured;
+        authValues[hostname] = resolved;
+        continue;
+      }
+    }
     const configuredUsername = configured?.username;
     let promptedUsername: string;
     let promptedUsernameEnv: string | undefined;
@@ -1155,6 +1178,25 @@ export async function promptInteractiveAuth(
     authValues[hostname] = { username: promptedUsername, password };
   }
   return { auth, authValues };
+}
+
+function resolveConfiguredEnvCredentials(
+  configured: DockerPublishRegistryAuth,
+): InteractiveAuthCredentials | undefined {
+  const username =
+    configured.username !== undefined
+      ? configured.username
+      : configured.usernameEnv === undefined
+        ? undefined
+        : process.env[configured.usernameEnv];
+  const password = process.env[configured.passwordEnv];
+  if (typeof username !== 'string' || username.length === 0) {
+    return undefined;
+  }
+  if (typeof password !== 'string' || password.length === 0) {
+    return undefined;
+  }
+  return { username, password };
 }
 
 export function collectInteractiveSecrets(

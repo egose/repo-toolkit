@@ -366,7 +366,7 @@ describe('plan-once CLI resolution (REV-10)', () => {
     withProject('docker-publish-verify-', async (root) => {
       const config = writeCliConfig(root, [{ name: 'app', contextDir: 'services/app' }]);
       const expected = await resolveDockerPublishCliOptions({ values: { config }, repeat: {}, unknown: [] }, {});
-      const prompter = createScriptedPrompter(['', '', '', '', false, undefined, '', '', false, '', '', false]);
+      const prompter = createScriptedPrompter([false]);
       planResolutionCalls.count = 0;
       const resolved = await resolveInteractiveDockerPublishOptions(
         { values: { config }, repeat: {}, unknown: [] },
