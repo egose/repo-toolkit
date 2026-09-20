@@ -12,6 +12,7 @@ Shared monorepo for repository tooling packages.
 - `@repo-toolkit/confluence`: sync a folder of markdown docs to Confluence pages and attachments (GitHub Action compatible)
 - `@repo-toolkit/go-release`: build and verify deterministic cross-platform Go binary releases
 - `@repo-toolkit/docker-publish`: plan, build, publish, and verify Docker/OCI container images to target registries
+- `@repo-toolkit/secret-sync`: synchronize explicitly selected local files with 1Password Connect
 
 ## Workspace Layout
 
@@ -23,6 +24,7 @@ Shared monorepo for repository tooling packages.
 - `packages/confluence`: docs-as-code sync to Confluence and `repo-toolkit-confluence` CLI
 - `packages/go-release`: Go release builder/verifier and `repo-toolkit-go-release` / `repo-toolkit-build-go-release` / `repo-toolkit-verify-go-release` CLIs
 - `packages/docker-publish`: Docker image publisher and `repo-toolkit-docker-publish` / `repo-toolkit-build-docker-publish` / `repo-toolkit-publish-docker-publish` CLIs
+- `packages/secret-sync`: secret file syncer and `repo-toolkit-secret-sync` CLI
 - `website/`: standalone Docusaurus docs site for the workspace packages
 
 ## Development

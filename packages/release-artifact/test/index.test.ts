@@ -1012,7 +1012,7 @@ describe('bin/install (black-box)', () => {
     const rootDir = await mkdtemp(join(tmpdir(), 'repo-toolkit-bbinstall-valid-'));
     const downloadDir = join(rootDir, 'download');
     const installDir = join(rootDir, 'install', REPO_TOOL_NAME);
-    let archivePath: string;
+    let archivePath: string | undefined;
 
     try {
       await mkdir(downloadDir, { recursive: true });
@@ -1034,7 +1034,9 @@ describe('bin/install (black-box)', () => {
       expect(existsSync(join(installDir, 'bin', 'repo-toolkit-verify-artifact'))).toBe(true);
     } finally {
       await rm(rootDir, { recursive: true, force: true });
-      rmSync(archivePath!, { force: true });
+      if (archivePath) {
+        rmSync(archivePath, { force: true });
+      }
       rmSync(join(repoRoot, 'dist', `${REPO_TOOL_NAME}-${REPO_VERSION}`), { recursive: true, force: true });
     }
   }, 120_000);
@@ -1043,7 +1045,7 @@ describe('bin/install (black-box)', () => {
     const rootDir = await mkdtemp(join(tmpdir(), 'repo-toolkit-bbinstall-stale-'));
     const downloadDir = join(rootDir, 'download');
     const installDir = join(rootDir, 'install', REPO_TOOL_NAME);
-    let archivePath: string;
+    let archivePath: string | undefined;
 
     try {
       await mkdir(installDir, { recursive: true });
@@ -1065,7 +1067,9 @@ describe('bin/install (black-box)', () => {
       expect(await readFile(join(installDir, 'preexisting.txt'), 'utf8')).toBe('untouched\n');
     } finally {
       await rm(rootDir, { recursive: true, force: true });
-      rmSync(archivePath!, { force: true });
+      if (archivePath) {
+        rmSync(archivePath, { force: true });
+      }
       rmSync(join(repoRoot, 'dist', `${REPO_TOOL_NAME}-${REPO_VERSION}`), { recursive: true, force: true });
     }
   }, 120_000);
@@ -1074,7 +1078,7 @@ describe('bin/install (black-box)', () => {
     const rootDir = await mkdtemp(join(tmpdir(), 'repo-toolkit-bbinstall-ver-'));
     const downloadDir = join(rootDir, 'download');
     const installDir = join(rootDir, 'install', REPO_TOOL_NAME);
-    let archivePath: string;
+    let archivePath: string | undefined;
 
     try {
       await mkdir(downloadDir, { recursive: true });
@@ -1100,7 +1104,9 @@ describe('bin/install (black-box)', () => {
       expect(leftovers).toEqual([]);
     } finally {
       await rm(rootDir, { recursive: true, force: true });
-      rmSync(archivePath!, { force: true });
+      if (archivePath) {
+        rmSync(archivePath, { force: true });
+      }
       rmSync(join(repoRoot, 'dist', `${REPO_TOOL_NAME}-${REPO_VERSION}`), { recursive: true, force: true });
     }
   }, 120_000);
@@ -1109,7 +1115,7 @@ describe('bin/install (black-box)', () => {
     const rootDir = await mkdtemp(join(tmpdir(), 'repo-toolkit-bbinstall-preexisting-'));
     const downloadDir = join(rootDir, 'download');
     const installDir = join(rootDir, 'install', REPO_TOOL_NAME);
-    let archivePath: string;
+    let archivePath: string | undefined;
 
     try {
       await mkdir(join(installDir, 'bin'), { recursive: true });
@@ -1134,7 +1140,9 @@ describe('bin/install (black-box)', () => {
       expect(await readFile(join(installDir, 'VERSION'), 'utf8')).toBe('fake\n');
     } finally {
       await rm(rootDir, { recursive: true, force: true });
-      rmSync(archivePath!, { force: true });
+      if (archivePath) {
+        rmSync(archivePath, { force: true });
+      }
       rmSync(join(repoRoot, 'dist', `${REPO_TOOL_NAME}-${REPO_VERSION}`), { recursive: true, force: true });
     }
   }, 120_000);
@@ -1143,7 +1151,7 @@ describe('bin/install (black-box)', () => {
     const rootDir = await mkdtemp(join(tmpdir(), 'repo-toolkit-bbinstall-multi-'));
     const downloadDir = join(rootDir, 'download');
     const installDir = join(rootDir, 'install', REPO_TOOL_NAME);
-    let archivePath: string;
+    let archivePath: string | undefined;
 
     try {
       await mkdir(downloadDir, { recursive: true });
@@ -1167,7 +1175,9 @@ describe('bin/install (black-box)', () => {
       expect(stderr).toMatch(/Expected exactly one release archive/);
     } finally {
       await rm(rootDir, { recursive: true, force: true });
-      rmSync(archivePath!, { force: true });
+      if (archivePath) {
+        rmSync(archivePath, { force: true });
+      }
       rmSync(join(repoRoot, 'dist', `${REPO_TOOL_NAME}-${REPO_VERSION}`), { recursive: true, force: true });
     }
   }, 120_000);

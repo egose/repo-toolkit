@@ -17,5 +17,6 @@ This site is the primary documentation home for the `repo-toolkit` workspace pac
 - [`@repo-toolkit/confluence`](./confluence): sync a folder of Markdown docs to Confluence pages and attachments (GitHub Action compatible).
 - [`@repo-toolkit/go-release`](./go-release): build and verify deterministic cross-platform Go binary releases.
 - [`@repo-toolkit/docker-publish`](./docker-publish): plan, build, publish, and verify Docker/OCI container images to target registries.
+- [`@repo-toolkit/secret-sync`](./secret-sync): synchronize explicitly selected local files with 1Password Connect.
 
 Package-local `README.md` files stay intentionally short and point back here for the full guides.

@@ -105,6 +105,15 @@ importers:
         specifier: workspace:*
         version: link:../publish-package
 
+  packages/secret-sync:
+    dependencies:
+      '@repo-toolkit/publish-package':
+        specifier: workspace:*
+        version: link:../publish-package
+      picomatch:
+        specifier: ^4.0.5
+        version: 4.0.5
+
 packages:
 
   '@babel/code-frame@7.29.7':

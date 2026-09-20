@@ -17,7 +17,9 @@
       "@repo-toolkit/go-release": ["packages/go-release/src/index.ts"],
       "@repo-toolkit/go-release/*": ["packages/go-release/src/*"],
       "@repo-toolkit/docker-publish": ["packages/docker-publish/src/index.ts"],
-      "@repo-toolkit/docker-publish/*": ["packages/docker-publish/src/*"]
+      "@repo-toolkit/docker-publish/*": ["packages/docker-publish/src/*"],
+      "@repo-toolkit/secret-sync": ["packages/secret-sync/src/index.ts"],
+      "@repo-toolkit/secret-sync/*": ["packages/secret-sync/src/*"]
     }
   }
 }
