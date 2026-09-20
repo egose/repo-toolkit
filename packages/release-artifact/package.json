@@ -30,7 +30,7 @@
   },
   "scripts": {
     "build": "tsup --config tsup.config.ts",
-    "test": "pnpm --filter @repo-toolkit/release-artifact... build && vitest run --config vitest.config.ts",
+    "test": "pnpm -r --if-present build && pnpm --filter @repo-toolkit/release-artifact... build && vitest run --config vitest.config.ts",
     "build-artifact": "node dist/cli-build.js",
     "verify-artifact": "node dist/cli-verify.js",
     "install-artifact": "node dist/cli-install.js",
