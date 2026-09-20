@@ -37,6 +37,7 @@
     "build-docker-publish": "pnpm --filter @repo-toolkit/docker-publish... build && node packages/docker-publish/dist/cli-build.js",
     "publish-docker-publish": "pnpm --filter @repo-toolkit/docker-publish... build && node packages/docker-publish/dist/cli-publish.js",
     "docker-publish": "pnpm --filter @repo-toolkit/docker-publish... build && node packages/docker-publish/dist/cli.js",
+    "secret-sync": "pnpm --filter @repo-toolkit/secret-sync... build && node packages/secret-sync/dist/cli.js",
     "release": "release-it",
     "test": "pnpm -r --workspace-concurrency=1 --if-present test"
   },
@@ -55,5 +56,12 @@
     "typescript": "^6.0.3",
     "typescript-eslint": "^8.67.0",
     "vitest": "^4.1.10"
-  }
+  },
+  "main": "index.js",
+  "directories": {
+    "doc": "docs"
+  },
+  "keywords": [],
+  "type": "commonjs",
+  "homepage": "https://github.com/egose/repo-toolkit#readme"
 }

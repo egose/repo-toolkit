@@ -1,0 +1,44 @@
+{
+  "name": "@repo-toolkit/secret-sync",
+  "description": "Synchronize explicitly selected local files with 1Password Connect",
+  "version": "0.0.0-PLACEHOLDER",
+  "license": "PLACEHOLDER",
+  "repository": "PLACEHOLDER",
+  "type": "module",
+  "sideEffects": false,
+  "keywords": [
+    "secret",
+    "sync",
+    "1password",
+    "connect",
+    "tooling"
+  ],
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "bin": {
+    "repo-toolkit-secret-sync": "dist/cli.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsup --config tsup.config.ts",
+    "test": "pnpm --filter @repo-toolkit/secret-sync... build && vitest run --config vitest.config.ts",
+    "secret-sync": "node dist/cli.js"
+  },
+  "dependencies": {
+    "@repo-toolkit/publish-package": "workspace:*",
+    "picomatch": "^4.0.5"
+  },
+  "files": [
+    "README.md",
+    "dist"
+  ],
+  "engines": {
+    "node": ">=20"
+  }
+}

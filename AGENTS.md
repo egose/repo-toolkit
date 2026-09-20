@@ -12,6 +12,7 @@ This is a pnpm workspace monorepo for the `@repo-toolkit/*` packages.
 - `packages/release-artifact` — release artifact builder/verifier and `repo-toolkit-build-artifact` / `repo-toolkit-verify-artifact` CLIs. Depends on `@repo-toolkit/publish-package`.
 - `packages/go-release` — deterministic Go matrix builder/verifier and `repo-toolkit-build-go-release` / `repo-toolkit-verify-go-release` CLIs. Depends on `@repo-toolkit/publish-package` and invokes configured Go and GNU-compatible tar executables.
 - `packages/docker-publish` — Docker/OCI image plan/build/publish/verify pipeline and `repo-toolkit-docker-publish` / `repo-toolkit-build-docker-publish` / `repo-toolkit-publish-docker-publish` CLIs. Depends on `@repo-toolkit/publish-package` and invokes the configured Docker executable with `buildx`. Readability (thin CLIs, one module per stage), accuracy (single `formatImageReference` helper, digest pinning), security (allowlisted registries, env-only auth with redaction), performance (bounded build/publish concurrency, manifest-only verify), testability (injectable fake runners, no daemon or network required).
+- `packages/secret-sync` — 1Password Connect file syncer and `repo-toolkit-secret-sync` CLI. Depends on `@repo-toolkit/publish-package` and `picomatch`; invokes the configured Connect endpoint with `fetch`. Readability (thin CLI, one module per stage: `cli-options`/`format`/`init`/`doctor`), accuracy (exact dispatch with strict per-command flags, metadata-only schema-versioned JSON), security (env-only auth with redaction, 0700/0600 state), performance (bounded concurrency, metadata-only diff/verify), testability (injectable fake stores, fake-server example, no vault or network required).
 - `bin/` — asdf plugin scripts (`download`, `install`, `list-all`, `lib/repo-toolkit.sh`) that consume the tarball produced by `release-artifact`.
 - `website/` — standalone Docusaurus docs site (separate pnpm project; do not run its install from the workspace root).
 - `scripts/` — none. Repository-level scripts live inside the packages.
@@ -41,6 +42,7 @@ pnpm verify-go-release -- --config go-release.json --version 1.2.3
 pnpm build-docker-publish -- --config docker-publish.json --dry-run
 pnpm publish-docker-publish -- --config docker-publish.json --skip-build
 pnpm docker-publish -- --config docker-publish.json --build --push
+pnpm secret-sync -- status --check --json
 pnpm release             # release-it (uses .release-it.json)
 ```
 
