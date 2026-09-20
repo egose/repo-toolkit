@@ -1,3 +1,13 @@
+## [0.32.0](https://github.com/egose/repo-toolkit/compare/v0.31.0...v0.32.0) (2026-09-20)
+
+### Features
+
+* add secret sync package and workspace wiring ([5a9aaaf](https://github.com/egose/repo-toolkit/commit/5a9aaafbd90dfc6bbe5f848b775f922f30dd0e30))
+
+### Bug Fixes
+
+* **release-artifact:** make release-artifact tests tolerate missing temporary archives ([e8de149](https://github.com/egose/repo-toolkit/commit/e8de1495d3d751a9fe2fe0bc8995e5b30c25b508))
+
 ## [0.31.0](https://github.com/egose/repo-toolkit/compare/v0.30.0...v0.31.0) (2026-09-14)
 
 ### Features
