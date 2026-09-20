@@ -1365,6 +1365,30 @@ describe('mergeClosureDependencies (RAARC-03)', () => {
     }
   });
 
+  it('keeps exact external runtime ranges so native/wasm deps install in production mode', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'repo-toolkit-merge-closure-ext-'));
+    try {
+      await mkdir(join(rootDir, 'packages', 'a'), { recursive: true });
+      await mkdir(join(rootDir, 'packages', 'b'), { recursive: true });
+      await writeFile(
+        join(rootDir, 'packages', 'a', 'package.json'),
+        `${JSON.stringify({ name: '@repo-toolkit/a', dependencies: { '@repo-toolkit/b': 'workspace:*', '@1password/sdk': '0.5.0' } })}\n`,
+      );
+      await writeFile(
+        join(rootDir, 'packages', 'b', 'package.json'),
+        `${JSON.stringify({ name: '@repo-toolkit/b', dependencies: { picomatch: '^4.0.5' } })}\n`,
+      );
+
+      expect(mergeClosureDependencies(join(rootDir, 'packages'), ['a', 'b'])).toEqual({
+        '@repo-toolkit/b': 'workspace:*',
+        '@1password/sdk': '0.5.0',
+        picomatch: '^4.0.5',
+      });
+    } finally {
+      await rm(rootDir, { recursive: true, force: true });
+    }
+  });
+
   it('rejects incompatible range conflicts with a clear message', async () => {
     const rootDir = await mkdtemp(join(tmpdir(), 'repo-toolkit-merge-closure-conflict-'));
     try {

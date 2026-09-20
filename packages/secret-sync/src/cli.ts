@@ -18,6 +18,10 @@ const SPECS: FlagSpec[] = [
   { name: 'from' },
   { name: 'from-branch' },
   { name: 'vault' },
+  { name: 'provider' },
+  { name: 'auth' },
+  { name: 'account' },
+  { name: 'token-env' },
   { name: 'json', boolean: true },
   { name: 'dry-run', boolean: true },
   { name: 'check', boolean: true },
@@ -80,6 +84,10 @@ export function buildOptions(
     ...(values.from === undefined ? {} : { from: values.from }),
     ...(values['from-branch'] === undefined ? {} : { fromBranch: values['from-branch'] }),
     ...(values.vault === undefined ? {} : { vault: values.vault }),
+    ...(values.provider === undefined ? {} : { provider: values.provider }),
+    ...(values.auth === undefined ? {} : { auth: values.auth }),
+    ...(values.account === undefined ? {} : { account: values.account }),
+    ...(values['token-env'] === undefined ? {} : { tokenEnv: values['token-env'] }),
     ...(values.json === undefined ? {} : { json: true }),
     ...(values['dry-run'] === undefined ? {} : { dryRun: true }),
     ...(values.check === undefined ? {} : { check: true }),
@@ -136,7 +144,8 @@ Command options:
   branch create: --name <branch> [--from <branch>]
   switch:   --branch <name>
   resolve:  --head <commit-A> --head <commit-B> --take <commit-A>
-  init:     --vault <vault-id>
+  init:     --vault <vault-id> [--provider onepassword-connect | onepassword-sdk]
+            [--auth service-account | desktop] [--account <selector>] [--token-env <name>]
   doctor:   --branch <name>
 `);
 }
@@ -230,7 +239,7 @@ function buildOptionsSafe(
 async function collectErrorSecrets(options: SecretSyncOptions): Promise<string[]> {
   const env = process.env as Record<string, string | undefined>;
   const fallback: string[] = [];
-  for (const name of ['OP_CONNECT_TOKEN', 'OP_CONNECT_HOST']) {
+  for (const name of ['OP_CONNECT_TOKEN', 'OP_CONNECT_HOST', 'OP_SERVICE_ACCOUNT_TOKEN']) {
     const value = env[name];
     if (typeof value === 'string' && value.length > 0) {
       fallback.push(value);

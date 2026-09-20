@@ -12,7 +12,7 @@ Shared monorepo for repository tooling packages.
 - `@repo-toolkit/confluence`: sync a folder of markdown docs to Confluence pages and attachments (GitHub Action compatible)
 - `@repo-toolkit/go-release`: build and verify deterministic cross-platform Go binary releases
 - `@repo-toolkit/docker-publish`: plan, build, publish, and verify Docker/OCI container images to target registries
-- `@repo-toolkit/secret-sync`: synchronize explicitly selected local files with 1Password Connect
+- `@repo-toolkit/secret-sync`: synchronize explicitly selected local files with 1Password Connect or directly with the 1Password SDK
 
 ## Workspace Layout
 

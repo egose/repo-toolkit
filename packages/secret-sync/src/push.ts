@@ -7,8 +7,10 @@ import { publishCommit, validateHistoryDependencies } from './history-store';
 import { sha256Hex } from './records';
 import {
   acquireStateLock,
+  assertIdentityMatches,
   computeFileHmac,
   initState,
+  normalizeOperationIdentity,
   readStateIfPresent,
   saveState,
   setBaseline,
@@ -44,10 +46,12 @@ export interface PushHooks {
 export interface PushOptions {
   store: SecretStore;
   rootAbsolute: string;
-  projectId: string;
+  projectId?: string;
   branch: string;
-  endpoint: string;
-  vaultId: string;
+  endpoint?: string;
+  vaultId?: string;
+  remote?: unknown;
+  identity?: unknown;
   selection?: string[];
   allowDelete?: boolean;
   message?: string;
@@ -81,13 +85,6 @@ export interface PushResult {
   localRecoveryOk: boolean;
   localRecoveryError?: string;
   dryRun: boolean;
-}
-
-function assertProjectId(value: unknown): string {
-  if (typeof value !== 'string' || value.length === 0) {
-    throw new SecretSyncError('validation', 'Push project id must be a non-empty string.');
-  }
-  return value;
 }
 
 function normalizeBlobIds(value: Record<string, string> | undefined): Record<string, string> {
@@ -154,7 +151,14 @@ function acknowledgeCleanPaths(
 
 export async function pushSecrets(options: PushOptions): Promise<PushResult> {
   const branch = validateBranchName(options.branch);
-  const projectId = assertProjectId(options.projectId);
+  const identity = normalizeOperationIdentity({
+    endpoint: options.endpoint,
+    vaultId: options.vaultId,
+    projectId: options.projectId,
+    remote: options.remote,
+    identity: options.identity,
+  });
+  const projectId = identity.projectId;
   const concurrency = resolveOperationConcurrency(options.concurrency);
   const bounds = validateSizeBounds(options.maxFileBytes, options.maxFiles);
   const allowDelete = options.allowDelete === true;
@@ -168,6 +172,9 @@ export async function pushSecrets(options: PushOptions): Promise<PushResult> {
 
   if (dryRun) {
     const state = await readStateIfPresent(options.rootAbsolute);
+    if (state !== undefined) {
+      assertIdentityMatches(identity, state);
+    }
     const loaded = await loadBranchHistory(options.store, projectId, branch, concurrency);
     requireSingleOperationHead(loaded.heads, branch);
     const remotePaths =
@@ -214,11 +221,7 @@ export async function pushSecrets(options: PushOptions): Promise<PushResult> {
 
   const lock = await acquireStateLock(options.rootAbsolute);
   try {
-    const state = await initState(
-      options.rootAbsolute,
-      { endpoint: options.endpoint, vaultId: options.vaultId, projectId },
-      { branch },
-    );
+    const state = await initState(options.rootAbsolute, identity, { branch });
     const loaded = await loadBranchHistory(options.store, projectId, branch, concurrency);
     const head = requireSingleOperationHead(loaded.heads, branch);
     const headsBefore = loaded.headIds;

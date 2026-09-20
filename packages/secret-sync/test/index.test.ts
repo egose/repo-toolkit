@@ -5,16 +5,24 @@ import { describe, expect, it } from 'vitest';
 
 import { buildOptions, extractCommand } from '../src/cli';
 import {
+  DEFAULT_SDK_TOKEN_ENV,
   createSelectionMatcher,
   discoverLocalFiles,
+  isConnectRemote,
+  isSdkRemote,
   resolveSecretSyncPlan,
   runSecretSync,
   selectExactFiles,
   validateBranchName,
   validateGlobPatterns,
+  validateRemoteConfig,
+  validateSecretItemDetail,
+  validateSecretItemSummary,
   validateSecretSyncCommandOptions,
   validateSecretSyncConfig,
 } from '../src/index';
+import { mapWithConcurrency as mapWithConcurrencyNeutral } from '../src/concurrency';
+import { mapWithConcurrency as mapWithConcurrencyCompat } from '../src/connect';
 import { parseFlags } from '@repo-toolkit/publish-package';
 
 const PROJECT_ID = 'a64208df-4a95-4516-b8c7-e00621a7820c';
@@ -289,5 +297,186 @@ describe('cli dispatch', () => {
     const parsed = parseFlags(['--file', 'a,b.env', '--file', 'c.env'], [{ name: 'file', repeatable: true }]);
     if (!parsed) throw new Error('expected flags');
     expect(buildOptions(parsed, 'status').file).toEqual(['a,b.env', 'c.env']);
+  });
+});
+
+describe('provider-neutral remote contracts', () => {
+  it('validates both documented SDK remotes', () => {
+    const service = validateRemoteConfig({
+      type: 'onepassword-sdk',
+      vaultId: 'vault-1',
+      auth: { type: 'service-account', tokenEnv: 'OP_SERVICE_ACCOUNT_TOKEN' },
+    });
+    expect(service).toEqual({
+      type: 'onepassword-sdk',
+      vaultId: 'vault-1',
+      auth: { type: 'service-account', tokenEnv: 'OP_SERVICE_ACCOUNT_TOKEN' },
+    });
+    const desktop = validateRemoteConfig({
+      type: 'onepassword-sdk',
+      vaultId: 'vault-1',
+      auth: { type: 'desktop', account: 'my-account' },
+    });
+    expect(desktop).toEqual({
+      type: 'onepassword-sdk',
+      vaultId: 'vault-1',
+      auth: { type: 'desktop', account: 'my-account' },
+    });
+    if (service.type !== 'onepassword-sdk' || desktop.type !== 'onepassword-sdk') {
+      throw new Error('expected SDK remotes');
+    }
+    expect(isSdkRemote(service)).toBe(true);
+    expect(isSdkRemote(desktop)).toBe(true);
+    expect(isConnectRemote(service)).toBe(false);
+  });
+
+  it('keeps the Connect default when type is omitted', () => {
+    const remote = validateRemoteConfig({ vaultId: 'vault-1' });
+    expect(remote).toEqual({
+      type: 'onepassword-connect',
+      vaultId: 'vault-1',
+      hostEnv: 'OP_CONNECT_HOST',
+      tokenEnv: 'OP_CONNECT_TOKEN',
+    });
+    expect(isConnectRemote(remote)).toBe(true);
+    expect(isSdkRemote(remote)).toBe(false);
+  });
+
+  it('applies deterministic SDK service-account defaults', () => {
+    expect(DEFAULT_SDK_TOKEN_ENV).toBe('OP_SERVICE_ACCOUNT_TOKEN');
+    const first = validateRemoteConfig({
+      type: 'onepassword-sdk',
+      vaultId: 'vault-1',
+      auth: { type: 'service-account' },
+    });
+    const second = validateRemoteConfig({
+      type: 'onepassword-sdk',
+      vaultId: 'vault-1',
+      auth: { type: 'service-account' },
+    });
+    expect(first).toEqual(second);
+    expect(first).toEqual({
+      type: 'onepassword-sdk',
+      vaultId: 'vault-1',
+      auth: { type: 'service-account', tokenEnv: 'OP_SERVICE_ACCOUNT_TOKEN' },
+    });
+  });
+
+  it('rejects unknown, mixed, raw-token, and incompatible auth fields', () => {
+    expect(() => validateRemoteConfig({ type: 'sdk', vaultId: 'v' })).toThrow(/remote\.type/);
+    expect(() => validateRemoteConfig({ type: 'onepassword-sdk', vaultId: 'v', hostEnv: 'OP_CONNECT_HOST' })).toThrow(
+      /Unknown remote field/,
+    );
+    expect(() => validateRemoteConfig({ type: 'onepassword-sdk', vaultId: 'v', tokenEnv: 'OP_CONNECT_TOKEN' })).toThrow(
+      /Unknown remote field/,
+    );
+    expect(() =>
+      validateRemoteConfig({ type: 'onepassword-connect', vaultId: 'v', auth: { type: 'desktop' } }),
+    ).toThrow(/Unknown remote field/);
+    expect(() => validateRemoteConfig({ type: 'onepassword-connect', vaultId: 'v', token: 'raw-secret' })).toThrow(
+      /raw token/,
+    );
+    expect(() =>
+      validateRemoteConfig({
+        type: 'onepassword-sdk',
+        vaultId: 'v',
+        auth: { type: 'service-account', token: 'raw-secret' },
+      }),
+    ).toThrow(/raw token/);
+    expect(() => validateRemoteConfig({ type: 'onepassword-sdk', vaultId: 'v' })).toThrow(/remote\.auth/);
+    expect(() => validateRemoteConfig({ type: 'onepassword-sdk', vaultId: 'v', auth: {} })).toThrow(
+      /remote\.auth\.type/,
+    );
+    expect(() =>
+      validateRemoteConfig({
+        type: 'onepassword-sdk',
+        vaultId: 'v',
+        auth: { type: 'service-account', account: 'extra' },
+      }),
+    ).toThrow(/Unknown remote\.auth field/);
+    expect(() =>
+      validateRemoteConfig({
+        type: 'onepassword-sdk',
+        vaultId: 'v',
+        auth: { type: 'desktop', tokenEnv: 'OP_SERVICE_ACCOUNT_TOKEN' },
+      }),
+    ).toThrow(/Unknown remote\.auth field/);
+    expect(() =>
+      validateRemoteConfig({ type: 'onepassword-sdk', vaultId: 'v', auth: { type: 'desktop', account: '' } }),
+    ).toThrow(/account/);
+  });
+
+  it('plans SDK configs without Connect environment variables', async () => {
+    const savedHost = process.env.OP_CONNECT_HOST;
+    const savedToken = process.env.OP_CONNECT_TOKEN;
+    delete process.env.OP_CONNECT_HOST;
+    delete process.env.OP_CONNECT_TOKEN;
+    try {
+      const plan = await resolveSecretSyncPlan({
+        cwd: process.cwd(),
+        projectId: PROJECT_ID,
+        remote: {
+          type: 'onepassword-sdk',
+          vaultId: 'vault-1',
+          auth: { type: 'service-account', tokenEnv: 'OP_SERVICE_ACCOUNT_TOKEN' },
+        },
+        files: ['.env'],
+      });
+      expect(plan.remote.type).toBe('onepassword-sdk');
+      expect(plan.remote.vaultId).toBe('vault-1');
+      expect(JSON.stringify(plan)).not.toContain('OP_CONNECT_HOST');
+    } finally {
+      if (savedHost !== undefined) process.env.OP_CONNECT_HOST = savedHost;
+      if (savedToken !== undefined) process.env.OP_CONNECT_TOKEN = savedToken;
+    }
+  });
+
+  it('returns injected stores for SDK plans without Connect environment', async () => {
+    const { MemoryFakeStore } = await import('./helpers');
+    const { createSecretStoreForPlan, resolveEndpointForPlan } = await import('../src/cli-options');
+    const store = new MemoryFakeStore();
+    const plan = await resolveSecretSyncPlan({
+      cwd: process.cwd(),
+      projectId: PROJECT_ID,
+      remote: {
+        type: 'onepassword-sdk',
+        vaultId: 'vault-1',
+        auth: { type: 'desktop', account: 'my-account' },
+      },
+      files: ['.env'],
+    });
+    const savedHost = process.env.OP_CONNECT_HOST;
+    const savedToken = process.env.OP_CONNECT_TOKEN;
+    delete process.env.OP_CONNECT_HOST;
+    delete process.env.OP_CONNECT_TOKEN;
+    try {
+      expect(createSecretStoreForPlan(plan, { store })).toBe(store);
+      expect(() => resolveEndpointForPlan(plan, {})).toThrow(/Direct SDK backend/);
+    } finally {
+      if (savedHost !== undefined) process.env.OP_CONNECT_HOST = savedHost;
+      if (savedToken !== undefined) process.env.OP_CONNECT_TOKEN = savedToken;
+    }
+  });
+
+  it('normalizes provider-neutral item DTOs through both validator names', async () => {
+    const { validateConnectItemDetail, validateConnectItemSummary } = await import('../src/index');
+    const summary = { id: 'item-1', title: 'title-1', tags: ['a'], category: 'SECURE_NOTE' };
+    expect(validateSecretItemSummary(summary)).toEqual(validateConnectItemSummary(summary));
+    const detail = {
+      id: 'item-1',
+      title: 'title-1',
+      tags: ['a'],
+      category: 'SECURE_NOTE',
+      fields: [{ type: 'CONCEALED', label: 'payload', value: '{}' }],
+    };
+    expect(validateSecretItemDetail(detail)).toEqual(validateConnectItemDetail(detail));
+  });
+
+  it('shares one concurrency implementation between neutral and Connect entrypoints', async () => {
+    const items = [1, 2, 3, 4, 5];
+    const expected = await mapWithConcurrencyNeutral(items, async (item) => item * 2, 2);
+    const actual = await mapWithConcurrencyCompat(items, async (item) => item * 2, 2);
+    expect(actual).toEqual(expected);
+    expect(actual).toEqual([2, 4, 6, 8, 10]);
   });
 });

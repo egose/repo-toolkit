@@ -541,11 +541,15 @@ Completion evidence:
 - Criterion review: V4/V5 pass as above; CLI/public types/docs match (help text, `SecretSyncOptions`/`runSecretSync` exports, README/website config fences executed by `test/examples.test.ts`); no secrets in logs or package contents (canary/redaction tests plus tarball scan); SECSYNC-01–09 each carry completion evidence above. Remaining limits: POSIX 0700/0600 asserted, Windows ACL behavior unverified on this host; per-file (not multi-file) atomicity and same-host-only state locks per `FILESYSTEM_RACE_LIMITS`/`STATE_LOCK_RACE_LIMITS`; no-CAS races only narrowed by head recheck; history retained, no pruning/GC; `npm install` consumer flow pending the release rewrite; all deferred items in Deferred Work stay deferred.
 - Follow-ups: run V6 against a disposable vault with read/write credentials before any storage-compatibility release claim; re-run `npm install` consumer smoke on a release-rewritten tarball.
 
+## Follow-Up Phase
+
+Direct communication without a Connect server is now planned in [Secret Sync: Direct 1Password SDK Backend](20260920-152444-secret-sync-direct-onepassword.md). That task file extends the implemented package with service-account and desktop-app authentication, provider-neutral state, and SDK runtime distribution checks. The original completion evidence and live-Connect verification limitations above remain the record of this phase.
+
 ## Deferred Work And Definition Of Done
 
 Deferred with rationale:
 
-- SDK/service-account/desktop-auth backend and larger Document/attachment payloads: valuable for users without Connect, but introduce a different dependency, packaging, and provider contract. Investigate after the initial backend; do not imply SDK cannot write files.
+- SDK/service-account/desktop-auth backend: promoted into the [direct SDK follow-up plan](20260920-152444-secret-sync-direct-onepassword.md). Larger Document/attachment payloads remain deferred because they require a separate storage-format and capacity contract; the SDK itself supports file writes.
 - Raw regular expressions: glob syntax covers the requested ESLint-style use case; raw regex needs a separate execution/complexity contract.
 - Automatic content merge, staging/index, offline status, automatic Git branch mapping: introduce ambiguity for secrets and additional local-cache semantics. V1 resolves whole files/snapshots explicitly.
 - Branch rename/delete, automatic history pruning, remote garbage collection: require safe reachability and concurrent-writer rules. V1 retains history and stops at capacity rather than deleting it.

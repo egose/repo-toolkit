@@ -10,6 +10,8 @@ import type {
   SecretSyncLimits,
   SecretSyncRawConfig,
   SecretSyncRemoteConfig,
+  SecretSyncSdkAuthConfig,
+  SecretSyncSdkRemoteConfig,
   SecretSyncValidatedConfig,
 } from './types';
 
@@ -29,6 +31,7 @@ export const DEFAULT_LIMITS: SecretSyncLimits = {
 export const DEFAULT_BRANCH = 'main';
 export const DEFAULT_HOST_ENV = 'OP_CONNECT_HOST';
 export const DEFAULT_TOKEN_ENV = 'OP_CONNECT_TOKEN';
+export const DEFAULT_SDK_TOKEN_ENV = 'OP_SERVICE_ACCOUNT_TOKEN';
 
 const UUID_PATTERN = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
 const BRANCH_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$/;
@@ -37,7 +40,11 @@ const WINDOWS_ABSOLUTE_PATTERN = /^[A-Za-z]:(\/|$)/;
 
 const TOP_LEVEL_KEYS = new Set(['schemaVersion', 'projectId', 'root', 'remote', 'branch', 'files', 'ignore', 'limits']);
 
-const REMOTE_KEYS = new Set(['type', 'vaultId', 'hostEnv', 'tokenEnv']);
+const CONNECT_REMOTE_KEYS = new Set(['type', 'vaultId', 'hostEnv', 'tokenEnv']);
+const SDK_REMOTE_KEYS = new Set(['type', 'vaultId', 'auth']);
+const SDK_SERVICE_ACCOUNT_AUTH_KEYS = new Set(['type', 'tokenEnv']);
+const SDK_DESKTOP_AUTH_KEYS = new Set(['type', 'account']);
+const RAW_TOKEN_FIELDS = new Set(['token', 'authToken', 'serviceAccountToken', 'tokenValue']);
 const LIMIT_KEYS = new Set(['maxFileBytes', 'maxFiles', 'concurrency']);
 
 function assertNoUnknownKeys(value: Record<string, unknown>, allowed: Set<string>, what: string): void {
@@ -158,19 +165,78 @@ export function normalizeProjectRelPath(value: unknown, what = 'path'): string {
   return cleaned.join('/');
 }
 
-export function validateRemoteConfig(value: unknown): SecretSyncRemoteConfig {
+export function isConnectRemote(remote: SecretSyncRemoteConfig): boolean {
+  return remote.type === 'onepassword-connect';
+}
+
+export function isSdkRemote(remote: SecretSyncRemoteConfig): remote is SecretSyncSdkRemoteConfig {
+  return remote.type === 'onepassword-sdk';
+}
+
+function assertNoRawToken(value: Record<string, unknown>, what: string): void {
+  for (const key of Object.keys(value)) {
+    if (RAW_TOKEN_FIELDS.has(key)) {
+      throw new Error(
+        `${what} field ${JSON.stringify(key)} must not carry a raw token value; configure an env variable name instead.`,
+      );
+    }
+  }
+}
+
+function validateSdkAuthConfig(value: unknown): SecretSyncSdkAuthConfig {
   if (!isPlainObject(value)) {
-    throw new Error('remote must be an object with { type, vaultId, hostEnv, tokenEnv }.');
+    throw new Error('remote.auth must be an object with { type: "service-account" | "desktop", ... }.');
   }
   const record = value as Record<string, unknown>;
-  assertNoUnknownKeys(record, REMOTE_KEYS, 'remote');
+  assertNoRawToken(record, 'remote.auth');
+  const authType = record.type;
+  if (authType !== 'service-account' && authType !== 'desktop') {
+    throw new Error(
+      `Unsupported remote.auth.type ${JSON.stringify(authType)}: expected "service-account" or "desktop".`,
+    );
+  }
+  if (authType === 'service-account') {
+    assertNoUnknownKeys(record, SDK_SERVICE_ACCOUNT_AUTH_KEYS, 'remote.auth');
+    return {
+      type: 'service-account',
+      tokenEnv: validateEnvName(record.tokenEnv, 'auth.tokenEnv', DEFAULT_SDK_TOKEN_ENV),
+    };
+  }
+  assertNoUnknownKeys(record, SDK_DESKTOP_AUTH_KEYS, 'remote.auth');
+  const account = record.account;
+  if (typeof account !== 'string' || account.length === 0 || account.length > 256) {
+    throw new Error('remote.auth.account must be a non-empty 1Password account selector of at most 256 characters.');
+  }
+  if (account.includes('\0') || account.includes('\n') || account.includes('\r')) {
+    throw new Error('remote.auth.account contains characters that are never valid in an account selector.');
+  }
+  return { type: 'desktop', account };
+}
+
+export function validateRemoteConfig(value: unknown): SecretSyncRemoteConfig {
+  if (!isPlainObject(value)) {
+    throw new Error('remote must be an object with { type, vaultId, hostEnv, tokenEnv } or { type, vaultId, auth }.');
+  }
+  const record = value as Record<string, unknown>;
+  assertNoRawToken(record, 'remote');
   const type = record.type === undefined ? 'onepassword-connect' : record.type;
-  if (type !== 'onepassword-connect') {
-    throw new Error(`Unsupported remote.type ${JSON.stringify(type)}: expected "onepassword-connect".`);
+  if (type !== 'onepassword-connect' && type !== 'onepassword-sdk') {
+    throw new Error(
+      `Unsupported remote.type ${JSON.stringify(type)}: expected "onepassword-connect" or "onepassword-sdk".`,
+    );
   }
   if (typeof record.vaultId !== 'string' || record.vaultId.length === 0) {
     throw new Error('remote.vaultId must be a non-empty 1Password vault ID.');
   }
+  if (type === 'onepassword-sdk') {
+    assertNoUnknownKeys(record, SDK_REMOTE_KEYS, 'remote');
+    return {
+      type: 'onepassword-sdk',
+      vaultId: record.vaultId,
+      auth: validateSdkAuthConfig(record.auth),
+    };
+  }
+  assertNoUnknownKeys(record, CONNECT_REMOTE_KEYS, 'remote');
   return {
     type: 'onepassword-connect',
     vaultId: record.vaultId,
@@ -251,7 +317,7 @@ export function validateSecretSyncConfig(raw: unknown): SecretSyncValidatedConfi
     throw new Error('projectId must be a UUID string.');
   }
   if (record.remote === undefined) {
-    throw new Error('remote is required: configure { type, vaultId, hostEnv, tokenEnv }.');
+    throw new Error('remote is required: configure { type, vaultId, hostEnv, tokenEnv } or { type, vaultId, auth }.');
   }
   const files = record.files === undefined ? [] : validateGlobPatterns(record.files, 'files');
   const ignore = record.ignore === undefined ? [] : validateGlobPatterns(record.ignore, 'ignore');
@@ -322,6 +388,39 @@ export function validateSecretSyncCommandOptions(
   }
   if (options.vault !== undefined && command !== 'init') {
     throw new Error('--vault is only supported by the init command.');
+  }
+  if (
+    (options.provider !== undefined ||
+      options.auth !== undefined ||
+      options.account !== undefined ||
+      options.tokenEnv !== undefined) &&
+    command !== 'init'
+  ) {
+    throw new Error('--provider, --auth, --account, and --token-env are only supported by the init command.');
+  }
+  if (command === 'init') {
+    if (
+      options.provider !== undefined &&
+      options.provider !== 'onepassword-connect' &&
+      options.provider !== 'onepassword-sdk'
+    ) {
+      throw new Error('--provider must be "onepassword-connect" or "onepassword-sdk".');
+    }
+    if (options.auth !== undefined && options.auth !== 'service-account' && options.auth !== 'desktop') {
+      throw new Error('--auth must be "service-account" or "desktop".');
+    }
+    if (options.auth !== undefined && options.provider !== undefined && options.provider !== 'onepassword-sdk') {
+      throw new Error('--auth requires --provider onepassword-sdk.');
+    }
+    if (options.account !== undefined && options.auth !== 'desktop') {
+      throw new Error('--account requires --auth desktop.');
+    }
+    if (options.tokenEnv !== undefined && options.auth !== 'service-account') {
+      throw new Error('--token-env requires --auth service-account.');
+    }
+    if (options.tokenEnv !== undefined && !ENV_NAME_PATTERN.test(options.tokenEnv)) {
+      throw new Error('--token-env must be an environment variable name (OP_SERVICE_ACCOUNT_TOKEN by default).');
+    }
   }
   if (
     options.branch !== undefined &&

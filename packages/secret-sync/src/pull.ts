@@ -20,8 +20,10 @@ import {
 } from './journal';
 import {
   acquireStateLock,
+  assertIdentityMatches,
   computeFileHmac,
   initState,
+  normalizeOperationIdentity,
   readStateIfPresent,
   saveState,
   setBaseline,
@@ -52,10 +54,12 @@ export interface PullHooks {
 export interface PullOptions {
   store: SecretStore;
   rootAbsolute: string;
-  projectId: string;
+  projectId?: string;
   branch: string;
-  endpoint: string;
-  vaultId: string;
+  endpoint?: string;
+  vaultId?: string;
+  remote?: unknown;
+  identity?: unknown;
   selection?: string[];
   allowDelete?: boolean;
   concurrency?: number;
@@ -78,13 +82,6 @@ export interface PullResult {
   note: string;
   stateSaved: boolean;
   dryRun: boolean;
-}
-
-function assertProjectId(value: unknown): string {
-  if (typeof value !== 'string' || value.length === 0) {
-    throw new SecretSyncError('validation', 'Pull project id must be a non-empty string.');
-  }
-  return value;
 }
 
 function slotHmac(slot: LocalSlot, bytes: Uint8Array | undefined, localKey: string): string | undefined {
@@ -147,7 +144,14 @@ async function acknowledgeCleanPullPaths(
 
 export async function pullSecrets(options: PullOptions): Promise<PullResult> {
   const branch = validateBranchName(options.branch);
-  const projectId = assertProjectId(options.projectId);
+  const identity = normalizeOperationIdentity({
+    endpoint: options.endpoint,
+    vaultId: options.vaultId,
+    projectId: options.projectId,
+    remote: options.remote,
+    identity: options.identity,
+  });
+  const projectId = identity.projectId;
   const concurrency = resolveOperationConcurrency(options.concurrency);
   const bounds = validateSizeBounds(options.maxFileBytes, options.maxFiles);
   const allowDelete = options.allowDelete === true;
@@ -160,6 +164,9 @@ export async function pullSecrets(options: PullOptions): Promise<PullResult> {
 
   if (dryRun) {
     const state = await readStateIfPresent(options.rootAbsolute);
+    if (state !== undefined) {
+      assertIdentityMatches(identity, state);
+    }
     const loaded = await loadBranchHistory(options.store, projectId, branch, concurrency);
     requireSingleOperationHead(loaded.heads, branch);
     const remotePaths =
@@ -197,11 +204,7 @@ export async function pullSecrets(options: PullOptions): Promise<PullResult> {
 
   const lock = await acquireStateLock(options.rootAbsolute);
   try {
-    const state = await initState(
-      options.rootAbsolute,
-      { endpoint: options.endpoint, vaultId: options.vaultId, projectId },
-      { branch },
-    );
+    const state = await initState(options.rootAbsolute, identity, { branch });
     const loaded = await loadBranchHistory(options.store, projectId, branch, concurrency);
     const head = requireSingleOperationHead(loaded.heads, branch);
     const heads = loaded.headIds;

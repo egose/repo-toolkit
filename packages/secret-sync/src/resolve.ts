@@ -4,6 +4,7 @@ import { validateBranchName } from './config';
 import { SecretSyncError } from './errors';
 import { deriveBranchHeads } from './graph';
 import { loadValidatedHistory, publishCommit } from './history-store';
+import { validateRemoteIdentity, validateStateRemote } from './state';
 import type { SecretStore } from './store';
 import {
   createOperationId,
@@ -21,7 +22,7 @@ const UUID_PATTERN = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{
 export interface ResolveOptions {
   store: SecretStore;
   rootAbsolute: string;
-  projectId: string;
+  projectId?: string;
   branch: string;
   heads: string[];
   take: string;
@@ -31,6 +32,8 @@ export interface ResolveOptions {
   operationId?: string;
   commitId?: string;
   dryRun?: boolean;
+  remote?: unknown;
+  identity?: unknown;
 }
 
 export interface ResolveResult {
@@ -48,11 +51,29 @@ export interface ResolveResult {
   note: string;
 }
 
-function assertProjectId(value: unknown): string {
-  if (typeof value !== 'string' || value.length === 0) {
-    throw new SecretSyncError('validation', 'Resolve project id must be a non-empty string.');
+function resolveMetadataProjectId(
+  options: { projectId?: unknown; remote?: unknown; identity?: unknown },
+  what: string,
+): string {
+  const hasIdentity = options.identity !== undefined;
+  const hasRemote = options.remote !== undefined;
+  const hasProject = options.projectId !== undefined;
+  if (hasIdentity) {
+    if (hasRemote || hasProject) {
+      throw new SecretSyncError('validation', 'Operation identity mixes old and new identity forms.');
+    }
+    return validateRemoteIdentity(options.identity).projectId;
   }
-  return value;
+  if (hasRemote) {
+    if (hasProject === false) {
+      throw new SecretSyncError('validation', 'Operation remote binding requires a project id.');
+    }
+    validateStateRemote(options.remote);
+  }
+  if (typeof options.projectId !== 'string' || options.projectId.length === 0) {
+    throw new SecretSyncError('validation', `${what} project id must be a non-empty string.`);
+  }
+  return options.projectId;
 }
 
 function assertCommitIds(values: unknown): string[] {
@@ -71,7 +92,7 @@ function assertCommitIds(values: unknown): string[] {
 
 export async function resolveFork(options: ResolveOptions): Promise<ResolveResult> {
   const branch = validateBranchName(options.branch);
-  const projectId = assertProjectId(options.projectId);
+  const projectId = resolveMetadataProjectId(options, 'Resolve');
   const providedHeads = assertCommitIds(options.heads);
   if (typeof options.take !== 'string' || !UUID_PATTERN.test(options.take)) {
     throw new SecretSyncError('validation', 'Resolve --take must be a commit UUID string.');

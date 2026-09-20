@@ -2,7 +2,7 @@ import { isPlainObject } from '@repo-toolkit/publish-package';
 
 import { SecretSyncError } from './errors';
 
-export interface ConnectItemField {
+export interface SecretItemField {
   type: string;
   value: string;
   id?: string;
@@ -10,40 +10,45 @@ export interface ConnectItemField {
   purpose?: string;
 }
 
-export interface ConnectItemSummary {
+export interface SecretItemSummary {
   id: string;
   title: string;
   tags: string[];
   category?: string;
 }
 
-export interface ConnectItemDetail {
+export interface SecretItemDetail {
   id: string;
   title: string;
   tags: string[];
   category: string;
-  fields: ConnectItemField[];
+  fields: SecretItemField[];
 }
 
-export interface CreateConnectItemInput {
+export interface CreateSecretItemInput {
   title: string;
   category: string;
   tags: string[];
-  fields: ConnectItemField[];
+  fields: SecretItemField[];
 }
+
+export type ConnectItemField = SecretItemField;
+export type ConnectItemSummary = SecretItemSummary;
+export type ConnectItemDetail = SecretItemDetail;
+export type CreateConnectItemInput = CreateSecretItemInput;
 
 export interface ListItemsOptions {
   titleFilter?: string;
 }
 
 export type CreateItemResult =
-  | { status: 'created'; item: ConnectItemDetail }
+  | { status: 'created'; item: SecretItemDetail }
   | { status: 'uncertain'; attempts: number };
 
 export interface SecretStore {
-  listItems(options?: ListItemsOptions): Promise<ConnectItemSummary[]>;
-  getItem(id: string): Promise<ConnectItemDetail>;
-  createItem(input: CreateConnectItemInput): Promise<CreateItemResult>;
+  listItems(options?: ListItemsOptions): Promise<SecretItemSummary[]>;
+  getItem(id: string): Promise<SecretItemDetail>;
+  createItem(input: CreateSecretItemInput): Promise<CreateItemResult>;
 }
 
 function assertNonEmptyString(value: unknown, field: string, what: string): string {
@@ -77,7 +82,7 @@ export function validateItemId(value: unknown): string {
   return value;
 }
 
-export function validateConnectItemSummary(value: unknown): ConnectItemSummary {
+export function validateSecretItemSummary(value: unknown): SecretItemSummary {
   if (!isPlainObject(value)) {
     throw new SecretSyncError('schema', 'Provider list entry is not an object.');
   }
@@ -102,7 +107,7 @@ export function validateConnectItemSummary(value: unknown): ConnectItemSummary {
   };
 }
 
-export function validateConnectItemDetail(value: unknown): ConnectItemDetail {
+export function validateSecretItemDetail(value: unknown): SecretItemDetail {
   if (!isPlainObject(value)) {
     throw new SecretSyncError('schema', 'Provider item is not an object.');
   }
@@ -114,9 +119,9 @@ export function validateConnectItemDetail(value: unknown): ConnectItemDetail {
   if (!Array.isArray(record.fields)) {
     throw new SecretSyncError('schema', 'Provider item has invalid fields.');
   }
-  const fields: ConnectItemField[] = [];
+  const fields: SecretItemField[] = [];
   for (const entry of record.fields) {
-    fields.push(validateConnectItemField(entry));
+    fields.push(validateSecretItemField(entry));
   }
   if (id.length > 256 || title.length > 512 || category.length > 64) {
     throw new SecretSyncError('schema', 'Provider item exceeds structural length bounds.');
@@ -127,7 +132,7 @@ export function validateConnectItemDetail(value: unknown): ConnectItemDetail {
   return { id, title, tags, category, fields };
 }
 
-function validateConnectItemField(value: unknown): ConnectItemField {
+function validateSecretItemField(value: unknown): SecretItemField {
   if (!isPlainObject(value)) {
     throw new SecretSyncError('schema', 'Provider item has invalid fields.');
   }
@@ -140,7 +145,7 @@ function validateConnectItemField(value: unknown): ConnectItemField {
   if (type.length > 32) {
     throw new SecretSyncError('schema', 'Provider field exceeds structural length bounds.');
   }
-  const result: ConnectItemField = { type, value: fieldValue };
+  const result: SecretItemField = { type, value: fieldValue };
   if (typeof record.id === 'string') {
     result.id = record.id;
   }
@@ -153,7 +158,7 @@ function validateConnectItemField(value: unknown): ConnectItemField {
   return result;
 }
 
-export function validateCreateConnectItemInput(value: unknown): CreateConnectItemInput {
+export function validateCreateSecretItemInput(value: unknown): CreateSecretItemInput {
   if (!isPlainObject(value)) {
     throw new SecretSyncError('validation', 'Create payload must be an object.');
   }
@@ -164,7 +169,7 @@ export function validateCreateConnectItemInput(value: unknown): CreateConnectIte
   if (!Array.isArray(record.fields) || record.fields.length === 0) {
     throw new SecretSyncError('validation', 'Create payload needs at least one field.');
   }
-  const fields: ConnectItemField[] = [];
+  const fields: SecretItemField[] = [];
   for (const entry of record.fields) {
     if (!isPlainObject(entry)) {
       throw new SecretSyncError('validation', 'Create payload has an invalid field entry.');
@@ -176,7 +181,7 @@ export function validateCreateConnectItemInput(value: unknown): CreateConnectIte
     if (typeof fieldRecord.value !== 'string') {
       throw new SecretSyncError('validation', 'Create payload field needs a string value.');
     }
-    const validated: ConnectItemField = { type: fieldRecord.type, value: fieldRecord.value };
+    const validated: SecretItemField = { type: fieldRecord.type, value: fieldRecord.value };
     if (typeof fieldRecord.id === 'string') {
       validated.id = fieldRecord.id;
     }
@@ -194,9 +199,21 @@ export function validateCreateConnectItemInput(value: unknown): CreateConnectIte
   return { title, category, tags, fields };
 }
 
-export function validateListResponse(value: unknown): ConnectItemSummary[] {
+export function validateConnectItemSummary(value: unknown): ConnectItemSummary {
+  return validateSecretItemSummary(value);
+}
+
+export function validateConnectItemDetail(value: unknown): ConnectItemDetail {
+  return validateSecretItemDetail(value);
+}
+
+export function validateCreateConnectItemInput(value: unknown): CreateConnectItemInput {
+  return validateCreateSecretItemInput(value);
+}
+
+export function validateListResponse(value: unknown): SecretItemSummary[] {
   if (!Array.isArray(value)) {
     throw new SecretSyncError('schema', 'Provider list response is not an array.');
   }
-  return value.map((entry) => validateConnectItemSummary(entry));
+  return value.map((entry) => validateSecretItemSummary(entry));
 }

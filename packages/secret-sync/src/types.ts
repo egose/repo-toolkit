@@ -14,12 +14,32 @@ export type SecretSyncCommand =
 
 export type BranchSubcommand = 'list' | 'create';
 
-export interface SecretSyncRemoteConfig {
+export interface SecretSyncConnectRemoteConfig {
   type: 'onepassword-connect';
   vaultId: string;
   hostEnv: string;
   tokenEnv: string;
 }
+
+export interface SecretSyncSdkServiceAccountAuth {
+  type: 'service-account';
+  tokenEnv: string;
+}
+
+export interface SecretSyncSdkDesktopAuth {
+  type: 'desktop';
+  account: string;
+}
+
+export type SecretSyncSdkAuthConfig = SecretSyncSdkServiceAccountAuth | SecretSyncSdkDesktopAuth;
+
+export interface SecretSyncSdkRemoteConfig {
+  type: 'onepassword-sdk';
+  vaultId: string;
+  auth: SecretSyncSdkAuthConfig;
+}
+
+export type SecretSyncRemoteConfig = SecretSyncConnectRemoteConfig | SecretSyncSdkRemoteConfig;
 
 export interface SecretSyncLimits {
   maxFileBytes: number;
@@ -68,6 +88,10 @@ export interface SecretSyncCommandOptions {
   name?: string;
   from?: string;
   vault?: string;
+  provider?: string;
+  auth?: string;
+  account?: string;
+  tokenEnv?: string;
   branchSubcommand?: BranchSubcommand;
 }
 

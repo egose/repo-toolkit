@@ -12,7 +12,17 @@ import {
 } from './filesystem';
 import { loadValidatedHistory, publishCommit, type LoadedHistory } from './history-store';
 import { sha256Hex, type BlobEnvelope } from './records';
-import { acquireStateLock, computeFileHmac, initState, saveState, setBaseline, setObservedHeads } from './state';
+import {
+  acquireStateLock,
+  assertIdentityMatches,
+  computeFileHmac,
+  initState,
+  normalizeOperationIdentity,
+  readStateIfPresent,
+  saveState,
+  setBaseline,
+  setObservedHeads,
+} from './state';
 import { compareFile } from './status';
 import type { SecretStore } from './store';
 import {
@@ -38,7 +48,7 @@ export interface RollbackHooks {
 export interface RollbackOptions {
   store: SecretStore;
   rootAbsolute: string;
-  projectId: string;
+  projectId?: string;
   branch: string;
   path: string;
   revision: string;
@@ -49,8 +59,10 @@ export interface RollbackOptions {
   commitId?: string;
   dryRun?: boolean;
   maxFileBytes?: number;
-  endpoint: string;
-  vaultId: string;
+  endpoint?: string;
+  vaultId?: string;
+  remote?: unknown;
+  identity?: unknown;
   hooks?: RollbackHooks;
 }
 
@@ -71,13 +83,6 @@ export interface RollbackResult {
   localRecoveryError?: string;
   dryRun: boolean;
   note: string;
-}
-
-function assertProjectId(value: unknown): string {
-  if (typeof value !== 'string' || value.length === 0) {
-    throw new SecretSyncError('validation', 'Rollback project id must be a non-empty string.');
-  }
-  return value;
 }
 
 function assertRevision(value: unknown): string {
@@ -129,7 +134,14 @@ function requireReachableBlob(history: LoadedHistory, path: string, revision: st
 
 export async function rollbackFile(options: RollbackOptions): Promise<RollbackResult> {
   const branch = validateBranchName(options.branch);
-  const projectId = assertProjectId(options.projectId);
+  const identity = normalizeOperationIdentity({
+    endpoint: options.endpoint,
+    vaultId: options.vaultId,
+    projectId: options.projectId,
+    remote: options.remote,
+    identity: options.identity,
+  });
+  const projectId = identity.projectId;
   const path = normalizeProjectRelPath(options.path, '--file');
   const revision = assertRevision(options.revision);
   const concurrency = resolveOperationConcurrency(options.concurrency);
@@ -137,6 +149,10 @@ export async function rollbackFile(options: RollbackOptions): Promise<RollbackRe
   const dryRun = options.dryRun === true;
 
   if (dryRun) {
+    const persisted = await readStateIfPresent(options.rootAbsolute);
+    if (persisted !== undefined) {
+      assertIdentityMatches(identity, persisted);
+    }
     const history = await loadValidatedHistory(options.store, projectId, { concurrency });
     const loaded = await loadBranchHistory(options.store, projectId, branch, concurrency);
     const head = requireSingleOperationHead(loaded.heads, branch);
@@ -184,11 +200,7 @@ export async function rollbackFile(options: RollbackOptions): Promise<RollbackRe
 
   const lock = await acquireStateLock(options.rootAbsolute);
   try {
-    const state = await initState(
-      options.rootAbsolute,
-      { endpoint: options.endpoint, vaultId: options.vaultId, projectId },
-      { branch },
-    );
+    const state = await initState(options.rootAbsolute, identity, { branch });
     const history = await loadValidatedHistory(options.store, projectId, { concurrency });
     const loaded = await loadBranchHistory(options.store, projectId, branch, concurrency);
     const head = requireSingleOperationHead(loaded.heads, branch);

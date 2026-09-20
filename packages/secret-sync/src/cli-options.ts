@@ -1,13 +1,15 @@
 import type { ParseFlagsResult } from '@repo-toolkit/publish-package';
 
 import { createConnectStore, type FetchLike } from './connect';
+import { createSdkStore, type SdkClientFactory } from './sdk';
+import { remoteIdentityFromConfig, type RemoteIdentity } from './state';
 import type { SecretSyncPlan } from './types';
 import type { SecretStore } from './store';
 
 export const GLOBAL_FLAGS = new Set(['config', 'cwd', 'json']);
 
 const COMMAND_FLAGS: Record<string, ReadonlyArray<string>> = {
-  init: ['config', 'cwd', 'vault', 'json'],
+  init: ['config', 'cwd', 'vault', 'provider', 'auth', 'account', 'token-env', 'json'],
   doctor: ['config', 'cwd', 'branch', 'json'],
   status: ['config', 'cwd', 'branch', 'file', 'check', 'dry-run', 'json'],
   push: ['config', 'cwd', 'file', 'message', 'delete', 'dry-run', 'json'],
@@ -61,6 +63,7 @@ export function assertCommandFlags(
 export interface StoreOverrides {
   store?: SecretStore;
   fetchImpl?: FetchLike;
+  sdkClientFactory?: SdkClientFactory;
   env?: Record<string, string | undefined>;
 }
 
@@ -69,6 +72,9 @@ export function resolveStoreEnv(overrides: StoreOverrides = {}): Record<string, 
 }
 
 export function resolveEndpointForPlan(plan: SecretSyncPlan, env: Record<string, string | undefined>): string {
+  if (plan.remote.type !== 'onepassword-connect') {
+    throw new Error('Direct SDK backend does not use a Connect endpoint.');
+  }
   const raw = env[plan.remote.hostEnv];
   if (typeof raw !== 'string' || raw.trim() === '') {
     throw new Error(`Connect host is not configured (env ${plan.remote.hostEnv}).`);
@@ -76,7 +82,24 @@ export function resolveEndpointForPlan(plan: SecretSyncPlan, env: Record<string,
   return raw.trim();
 }
 
+export function resolveIdentityForPlan(plan: SecretSyncPlan, env: Record<string, string | undefined>): RemoteIdentity {
+  if (plan.remote.type === 'onepassword-sdk') {
+    return remoteIdentityFromConfig(plan.remote, plan.projectId);
+  }
+  return remoteIdentityFromConfig(plan.remote, plan.projectId, resolveEndpointForPlan(plan, env));
+}
+
 export function collectCliSecrets(plan: SecretSyncPlan, env: Record<string, string | undefined>): string[] {
+  if (plan.remote.type === 'onepassword-sdk') {
+    if (plan.remote.auth.type !== 'service-account') {
+      return [];
+    }
+    const token = env[plan.remote.auth.tokenEnv];
+    if (typeof token === 'string' && token.length > 0) {
+      return [token];
+    }
+    return [];
+  }
   const secrets: string[] = [];
   const token = env[plan.remote.tokenEnv];
   if (typeof token === 'string' && token.length > 0 && secrets.indexOf(token) < 0) {
@@ -92,6 +115,14 @@ export function collectCliSecrets(plan: SecretSyncPlan, env: Record<string, stri
 export function createSecretStoreForPlan(plan: SecretSyncPlan, overrides: StoreOverrides = {}): SecretStore {
   if (overrides.store !== undefined) {
     return overrides.store;
+  }
+  if (plan.remote.type === 'onepassword-sdk') {
+    return createSdkStore({
+      vaultId: plan.remote.vaultId,
+      auth: plan.remote.auth,
+      env: resolveStoreEnv(overrides),
+      ...(overrides.sdkClientFactory === undefined ? {} : { clientFactory: overrides.sdkClientFactory }),
+    });
   }
   const fetchImpl = overrides.fetchImpl ?? (globalThis.fetch as unknown as FetchLike);
   if (typeof fetchImpl !== 'function') {
