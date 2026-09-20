@@ -126,6 +126,13 @@ function _createMdxContent(props) {
             children: "@repo-toolkit/docker-publish"
           })
         }), ": plan, build, publish, and verify Docker/OCI container images to target registries."]
+      }), "\n", (0,jsx_runtime.jsxs)(_components.li, {
+        children: [(0,jsx_runtime.jsx)(_components.a, {
+          href: "./secret-sync",
+          children: (0,jsx_runtime.jsx)(_components.code, {
+            children: "@repo-toolkit/secret-sync"
+          })
+        }), ": synchronize explicitly selected local files with 1Password Connect."]
       }), "\n"]
     }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
       children: ["Package-local ", (0,jsx_runtime.jsx)(_components.code, {
