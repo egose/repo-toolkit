@@ -83,6 +83,10 @@ const toc = [{
   "id": "cli",
   "level": 2
 }, {
+  "value": "Listing vaults",
+  "id": "listing-vaults",
+  "level": 2
+}, {
   "value": "Fake-server example without a real vault",
   "id": "fake-server-example-without-a-real-vault",
   "level": 2
@@ -290,7 +294,7 @@ function _createMdxContent(props) {
     }), "\n", (0,jsx_runtime.jsx)(_components.pre, {
       children: (0,jsx_runtime.jsx)(_components.code, {
         className: "language-sh",
-        children: "repo-toolkit-secret-sync init --config secret-sync.config.json --vault <vault-id>\nrepo-toolkit-secret-sync doctor\nrepo-toolkit-secret-sync status --check --json\nrepo-toolkit-secret-sync push --file .env --message \"Rotate credentials\"\nrepo-toolkit-secret-sync pull --dry-run\nrepo-toolkit-secret-sync diff --file .env\nrepo-toolkit-secret-sync log --file .env --limit 20\nrepo-toolkit-secret-sync restore --file .env --revision <blob-id>\nrepo-toolkit-secret-sync rollback --file .env --revision <blob-id> --message \"Revert\"\nrepo-toolkit-secret-sync branch list\nrepo-toolkit-secret-sync branch create --name feature/demo --from main\nrepo-toolkit-secret-sync switch --branch feature/demo\nrepo-toolkit-secret-sync resolve --head <A> --head <B> --take <A>\n"
+        children: "repo-toolkit-secret-sync init --config secret-sync.config.json --vault <vault-id>\nrepo-toolkit-secret-sync doctor\nrepo-toolkit-secret-sync status --check --json\nrepo-toolkit-secret-sync push --file .env --message \"Rotate credentials\"\nrepo-toolkit-secret-sync pull --dry-run\nrepo-toolkit-secret-sync diff --file .env\nrepo-toolkit-secret-sync log --file .env --limit 20\nrepo-toolkit-secret-sync restore --file .env --revision <blob-id>\nrepo-toolkit-secret-sync rollback --file .env --revision <blob-id> --message \"Revert\"\nrepo-toolkit-secret-sync branch list\nrepo-toolkit-secret-sync branch create --name feature/demo --from main\nrepo-toolkit-secret-sync switch --branch feature/demo\nrepo-toolkit-secret-sync resolve --head <A> --head <B> --take <A>\nrepo-toolkit-secret-sync vault list\n"
       })
     }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
       children: ["The command is the first non-wrapper token (", (0,jsx_runtime.jsx)(_components.code, {
@@ -310,6 +314,21 @@ function _createMdxContent(props) {
       }), ". Mutating commands accept ", (0,jsx_runtime.jsx)(_components.code, {
         children: "--dry-run"
       }), " (reads only: no writes, locks, state, or temp files). JSON output is schema-versioned and discriminated with metadata only. Messages and paths are caller metadata and appear in output; do not put secret values in commit messages. Every failure exits 1."]
+    }), "\n", (0,jsx_runtime.jsx)(_components.h2, {
+      id: "listing-vaults",
+      children: "Listing vaults"
+    }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
+      children: [(0,jsx_runtime.jsx)(_components.code, {
+        children: "vault list"
+      }), " prints the ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "id"
+      }), " and ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "title"
+      }), " of every vault visible to the configured credential on either backend, for discovering ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "remote.vaultId"
+      }), ". It is read-only (no state, lock, or temp writes) and supports ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "--json"
+      }), ". Service accounts cannot see Personal/Private/Employee vaults."]
     }), "\n", (0,jsx_runtime.jsx)(_components.h2, {
       id: "fake-server-example-without-a-real-vault",
       children: "Fake-server example without a real vault"
