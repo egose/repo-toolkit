@@ -33,6 +33,7 @@ const SPECS: FlagSpec[] = [
 export interface ExtractedCommand {
   command?: string;
   branchSubcommand?: string;
+  vaultSubcommand?: string;
   rest: string[];
 }
 
@@ -49,7 +50,17 @@ export function extractCommand(argv: string[]): ExtractedCommand {
   if (!(SECRET_SYNC_COMMANDS as ReadonlyArray<string>).includes(first)) {
     throw new Error(`Unknown command: ${first}. Expected one of ${SECRET_SYNC_COMMANDS.join(', ')}.`);
   }
-  if (first !== 'branch') {
+  if (first !== 'branch' && first !== 'vault') {
+    return { command: first, rest: rest.slice(1) };
+  }
+  if (first === 'vault') {
+    const second = rest[1];
+    if (second === 'list') {
+      return { command: first, vaultSubcommand: second, rest: rest.slice(2) };
+    }
+    if (second !== undefined && !second.startsWith('-') && second !== '--') {
+      throw new Error(`Unknown vault subcommand: ${second}. Expected one of list.`);
+    }
     return { command: first, rest: rest.slice(1) };
   }
   const second = rest[1];
@@ -66,6 +77,7 @@ export function buildOptions(
   result: Exclude<ReturnType<typeof parseFlags>, null>,
   command?: string,
   branchSubcommand?: string,
+  vaultSubcommand?: string,
 ): SecretSyncOptions {
   const { values, repeat } = result;
   return {
@@ -73,6 +85,7 @@ export function buildOptions(
     ...(values.cwd === undefined ? {} : { cwd: values.cwd }),
     ...(command === undefined ? {} : { command }),
     ...(branchSubcommand === undefined ? {} : { branchSubcommand }),
+    ...(vaultSubcommand === undefined ? {} : { vaultSubcommand }),
     ...(values.branch === undefined ? {} : { branch: values.branch }),
     ...(repeat.file === undefined ? {} : { file: [...repeat.file] }),
     ...(values.message === undefined ? {} : { message: values.message }),
@@ -103,6 +116,7 @@ function printRootHelp(): void {
 Usage:
   repo-toolkit-secret-sync <command> [options]
   repo-toolkit-secret-sync branch <list|create> [options]
+  repo-toolkit-secret-sync vault <list> [options]
 
 Commands:
   init       Generate project UUID/config and protected local state
@@ -117,6 +131,7 @@ Commands:
   branch     List or create independent named branches
   switch     Switch the active branch through guarded pull machinery
   resolve    Join observed divergent heads by choosing one full snapshot
+  vault      List vaults visible to the configured credential
 
 Selection (exact paths; repeatable; never overrides excludes):
   --file <path>            Exact project-relative path (repeatable, no comma
@@ -142,6 +157,7 @@ Command options:
   rollback: --file <path> --revision <blob-id> [--message <text>]
   branch list:   (no extra flags)
   branch create: --name <branch> [--from <branch>]
+  vault list:    (no extra flags)
   switch:   --branch <name>
   resolve:  --head <commit-A> --head <commit-B> --take <commit-A>
   init:     --vault <vault-id> [--provider onepassword-connect | onepassword-sdk]
@@ -150,8 +166,13 @@ Command options:
 `);
 }
 
-function printCommandHelp(command: string, branchSubcommand?: string): void {
-  const key = command === 'branch' ? `branch ${branchSubcommand ?? 'list'}` : command;
+function printCommandHelp(command: string, branchSubcommand?: string, vaultSubcommand?: string): void {
+  const key =
+    command === 'branch'
+      ? `branch ${branchSubcommand ?? 'list'}`
+      : command === 'vault'
+        ? `vault ${vaultSubcommand ?? 'list'}`
+        : command;
   console.log(`repo-toolkit-secret-sync ${key}
 
 Usage:
@@ -185,7 +206,7 @@ async function main(): Promise<void> {
       if (extracted.command === undefined) {
         printRootHelp();
       } else {
-        printCommandHelp(extracted.command, extracted.branchSubcommand);
+        printCommandHelp(extracted.command, extracted.branchSubcommand, extracted.vaultSubcommand);
       }
       return;
     }
@@ -199,8 +220,8 @@ async function main(): Promise<void> {
   const json = parsed.values.json === 'true';
   const commandLabel = extracted.command ?? 'status';
   try {
-    assertCommandFlags(parsed, extracted.command, extracted.branchSubcommand);
-    const options = buildOptions(parsed, extracted.command, extracted.branchSubcommand);
+    assertCommandFlags(parsed, extracted.command, extracted.branchSubcommand, extracted.vaultSubcommand);
+    const options = buildOptions(parsed, extracted.command, extracted.branchSubcommand, extracted.vaultSubcommand);
     const outcome = await runSecretSync(options);
     const resultData = (outcome as { result: unknown }).result;
     if (json) {

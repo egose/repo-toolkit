@@ -10,12 +10,14 @@ import {
   validateItemId,
   validateSecretItemDetail,
   validateSecretItemSummary,
+  validateVaultListResponse,
   type CreateItemResult,
   type CreateSecretItemInput,
   type ListItemsOptions,
   type SecretItemDetail,
   type SecretItemSummary,
   type SecretStore,
+  type VaultSummary,
 } from './store';
 
 export const SDK_INTEGRATION_NAME = 'repo-toolkit-secret-sync';
@@ -80,8 +82,21 @@ export interface SdkItemsApiLike {
   create(params: SdkCreateParams): Promise<SdkItemLike>;
 }
 
+export interface SdkVaultLike {
+  id: unknown;
+  title: unknown;
+  description?: unknown;
+  vaultType?: unknown;
+  activeItemCount?: unknown;
+}
+
+export interface SdkVaultsApiLike {
+  list(): Promise<SdkVaultLike[]>;
+}
+
 export interface SdkClientLike {
   items: SdkItemsApiLike;
+  vaults?: SdkVaultsApiLike;
 }
 
 export type SdkFactoryAuth = { kind: 'service-account'; token: string } | { kind: 'desktop'; account: string };
@@ -705,6 +720,39 @@ export class SdkSecretStore implements SecretStore {
       result.push(mapped);
     }
     return result;
+  }
+
+  async listVaults(): Promise<VaultSummary[]> {
+    const path = 'sdk/vaults';
+    let raw: SdkVaultLike[];
+    try {
+      raw = await this.readWithRetries('list-vaults', (client) => {
+        if (client.vaults === undefined || typeof client.vaults.list !== 'function') {
+          throw new SecretSyncError('server', '1Password SDK client does not expose vault listing.');
+        }
+        return client.vaults.list();
+      });
+    } catch (error) {
+      throw error instanceof SecretSyncError ? error : mapSdkError(error, 'list-vaults', path);
+    }
+    if (!Array.isArray(raw)) {
+      throw new SecretSyncError('schema', 'Direct SDK vault list response is not an array.');
+    }
+    return validateVaultListResponse(
+      raw.map((entry) => {
+        if (!isPlainObject(entry)) {
+          return entry;
+        }
+        const record = entry as Record<string, unknown>;
+        return {
+          id: record.id,
+          title: record.title,
+          ...(record.description === undefined ? {} : { description: record.description }),
+          ...(record.vaultType === undefined ? {} : { vaultType: record.vaultType }),
+          ...(record.activeItemCount === undefined ? {} : { activeItemCount: record.activeItemCount }),
+        };
+      }),
+    );
   }
 
   async getItem(id: string): Promise<SecretItemDetail> {

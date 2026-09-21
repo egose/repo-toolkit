@@ -201,6 +201,8 @@ repo-toolkit-secret-sync branch list
 repo-toolkit-secret-sync branch create --name feature/demo --from main
 repo-toolkit-secret-sync switch --branch feature/demo
 repo-toolkit-secret-sync resolve --head <A> --head <B> --take <A>
+repo-toolkit-secret-sync vault list
+repo-toolkit-secret-sync vault list --json
 ```
 
 The command is the first non-wrapper token (`branch` takes a `list|create`
@@ -212,6 +214,15 @@ discriminated (`{ schemaVersion: 1, command, status: 'ok'|'error', ... }`)
 with metadata only — never authorization, response bodies, file bytes, or
 content fingerprints. Messages and paths are caller metadata and appear in
 output. Every failure exits 1.
+
+## Listing vaults
+
+`vault list` is read-only metadata (`id`, `title`, plus type/item count when the
+backend returns them) for discovering the exact `remote.vaultId` to put in
+config. It works with both backends — service-account (`OP_SERVICE_ACCOUNT_TOKEN`)
+or desktop approval for SDK, `OP_CONNECT_HOST`/`OP_CONNECT_TOKEN` for Connect —
+and never writes state, locks, or temp files. Service accounts cannot see
+Personal/Private/Employee vaults.
 
 ## Fake-server example without a real vault
 

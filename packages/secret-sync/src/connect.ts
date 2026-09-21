@@ -6,12 +6,14 @@ import {
   validateCreateConnectItemInput,
   validateItemId,
   validateListResponse,
+  validateVaultListResponse,
   type ConnectItemDetail,
   type ConnectItemSummary,
   type CreateConnectItemInput,
   type CreateItemResult,
   type ListItemsOptions,
   type SecretStore,
+  type VaultSummary,
 } from './store';
 
 export { mapWithConcurrency, validateConcurrency } from './concurrency';
@@ -660,6 +662,30 @@ export class ConnectSecretStore implements SecretStore {
     const url = this.buildUrl(endpoint.base, `/v1/vaults/${encodeURIComponent(endpoint.vaultId)}/items`, filter);
     const parsed = await this.getJson(url, endpoint.token, this.maxListBytes, path);
     return validateListResponse(parsed);
+  }
+
+  async listVaults(): Promise<VaultSummary[]> {
+    const endpoint = this.resolveEndpoint();
+    const path = '/v1/vaults';
+    const url = this.buildUrl(endpoint.base, '/v1/vaults');
+    const parsed = await this.getJson(url, endpoint.token, this.maxListBytes, path);
+    return validateVaultListResponse(
+      Array.isArray(parsed)
+        ? parsed.map((entry) => {
+            if (typeof entry !== 'object' || entry === null) {
+              return entry;
+            }
+            const record = entry as Record<string, unknown>;
+            return {
+              id: record.id,
+              title: record.name ?? record.title,
+              ...(record.description === undefined ? {} : { description: record.description }),
+              ...(record.type === undefined ? {} : { vaultType: record.type }),
+              ...(record.items === undefined ? {} : { activeItemCount: record.items }),
+            };
+          })
+        : parsed,
+    );
   }
 
   async getItem(id: string): Promise<ConnectItemDetail> {

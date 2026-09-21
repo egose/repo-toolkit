@@ -10,9 +10,12 @@ export type SecretSyncCommand =
   | 'rollback'
   | 'branch'
   | 'switch'
-  | 'resolve';
+  | 'resolve'
+  | 'vault';
 
 export type BranchSubcommand = 'list' | 'create';
+
+export type VaultSubcommand = 'list';
 
 export interface SecretSyncConnectRemoteConfig {
   type: 'onepassword-connect';
@@ -93,6 +96,7 @@ export interface SecretSyncCommandOptions {
   account?: string;
   tokenEnv?: string;
   branchSubcommand?: BranchSubcommand;
+  vaultSubcommand?: VaultSubcommand;
 }
 
 export interface SecretSyncPlan extends SecretSyncValidatedConfig {

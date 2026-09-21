@@ -20,16 +20,24 @@ const COMMAND_FLAGS: Record<string, ReadonlyArray<string>> = {
   rollback: ['config', 'cwd', 'file', 'revision', 'message', 'dry-run', 'json'],
   'branch list': ['config', 'cwd', 'dry-run', 'json'],
   'branch create': ['config', 'cwd', 'name', 'from', 'dry-run', 'json'],
+  'vault list': ['config', 'cwd', 'dry-run', 'json'],
   switch: ['config', 'cwd', 'branch', 'dry-run', 'json'],
   resolve: ['config', 'cwd', 'branch', 'head', 'take', 'dry-run', 'json'],
 };
 
-function commandKey(command: string | undefined, branchSubcommand: string | undefined): string {
+function commandKey(
+  command: string | undefined,
+  branchSubcommand: string | undefined,
+  vaultSubcommand?: string,
+): string {
   if (command === undefined) {
     return 'status';
   }
   if (command === 'branch') {
     return `branch ${branchSubcommand ?? 'list'}`;
+  }
+  if (command === 'vault') {
+    return `vault ${vaultSubcommand ?? 'list'}`;
   }
   return command;
 }
@@ -43,8 +51,9 @@ export function assertCommandFlags(
   result: ParseFlagsResult,
   command: string | undefined,
   branchSubcommand: string | undefined,
+  vaultSubcommand?: string,
 ): void {
-  const key = commandKey(command, branchSubcommand);
+  const key = commandKey(command, branchSubcommand, vaultSubcommand);
   const allowed = COMMAND_FLAGS[key];
   if (allowed === undefined) {
     return;

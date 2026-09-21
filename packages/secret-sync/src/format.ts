@@ -133,6 +133,27 @@ export function formatTextResult(command: string, result: unknown): string {
       }
       return entries.map((entry) => `${entry.changed ? 'changed' : 'unchanged'} ${entry.path}`).join('\n');
     }
+    case 'vault': {
+      const vaults = Array.isArray(data.vaults)
+        ? (data.vaults as Array<{ id: string; title: string; vaultType?: string; activeItemCount?: number }>)
+        : [];
+      if (vaults.length === 0) {
+        return 'no vaults';
+      }
+      return vaults
+        .map((entry) => {
+          const parts: string[] = [];
+          if (entry.vaultType !== undefined) {
+            parts.push(entry.vaultType);
+          }
+          if (entry.activeItemCount !== undefined) {
+            parts.push(`${entry.activeItemCount} items`);
+          }
+          const extra = parts.length === 0 ? '' : ` (${parts.join(', ')})`;
+          return `${entry.id} ${entry.title}${extra}`;
+        })
+        .join('\n');
+    }
     case 'log': {
       const entries = Array.isArray(data.entries)
         ? (data.entries as Array<{ commitId: string; blobId?: string; message?: string; deleted: boolean }>)

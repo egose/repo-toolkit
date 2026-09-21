@@ -127,9 +127,14 @@ repo-toolkit-secret-sync branch list
 repo-toolkit-secret-sync branch create --name feature/demo --from main
 repo-toolkit-secret-sync switch --branch feature/demo
 repo-toolkit-secret-sync resolve --head <A> --head <B> --take <A>
+repo-toolkit-secret-sync vault list
 ```
 
 The command is the first non-wrapper token (`branch` takes a `list|create` subcommand); leading wrapper `--` tokens are stripped and remaining arguments are strict flags. All commands accept `--config`, `--json`, and `-h`/`--help`. Mutating commands accept `--dry-run` (reads only: no writes, locks, state, or temp files). JSON output is schema-versioned and discriminated with metadata only. Messages and paths are caller metadata and appear in output; do not put secret values in commit messages. Every failure exits 1.
+
+## Listing vaults
+
+`vault list` prints the `id` and `title` of every vault visible to the configured credential on either backend, for discovering `remote.vaultId`. It is read-only (no state, lock, or temp writes) and supports `--json`. Service accounts cannot see Personal/Private/Employee vaults.
 
 ## Fake-server example without a real vault
 
