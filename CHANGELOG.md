@@ -1,3 +1,9 @@
+## [0.38.0](https://github.com/egose/repo-toolkit/compare/v0.37.0...v0.38.0) (2026-09-21)
+
+### Features
+
+* adopt byte-identical blobs after uncertain writes ([ce80a83](https://github.com/egose/repo-toolkit/commit/ce80a8354efaf6274a186f7e56bb04b50f0935ad))
+
 ## [0.37.0](https://github.com/egose/repo-toolkit/compare/v0.36.0...v0.37.0) (2026-09-21)
 
 ### Features
