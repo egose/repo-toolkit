@@ -76,10 +76,17 @@ describe('clipboard command resolution', () => {
     const writer = systemClipboardWriter(spawn, 'linux', { DISPLAY: ':0' });
     await expect(writer.write(new Uint8Array([1, 2, 3]))).resolves.toEqual({ command: 'xsel' });
     expect(seen).toEqual(['xclip', 'xsel']);
-    const failing: ClipboardSpawn = () => ({ ok: false, missing: false });
-    await expect(systemClipboardWriter(failing, 'darwin', {}).write(new Uint8Array([1]))).rejects.toMatchObject({
-      code: 'server',
-    });
+    const failing: ClipboardSpawn = () => ({ ok: false, missing: false, stderr: "Error: Can't open display: :0" });
+    const refused = await systemClipboardWriter(failing, 'darwin', {})
+      .write(new Uint8Array([1]))
+      .then(
+        () => {
+          throw new Error('expected refusal');
+        },
+        (error: unknown) => error as Error,
+      );
+    expect(refused).toMatchObject({ code: 'server' });
+    expect(refused.message).toContain("Can't open display");
     const absent: ClipboardSpawn = () => ({ ok: false, missing: true });
     await expect(systemClipboardWriter(absent, 'darwin', {}).write(new Uint8Array([1]))).rejects.toThrow('pbcopy');
     expect(() => systemClipboardWriter(absent, 'linux', {})).toThrow('graphical session');
