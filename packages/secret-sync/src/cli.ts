@@ -139,7 +139,8 @@ Selection (exact paths; repeatable; never overrides excludes):
                            e.g. --file=-leading-name)
 
 Common options (all commands):
-  --config <path>          Config file (JSON, .mjs, or .cjs default export)
+  --config <path>          Config file (JSON, .mjs, or .cjs default export;
+                           default: ./secret-sync.config.json in the working directory)
   --cwd <path>             Working directory (default: process.cwd())
   --branch <name>          Target branch for read-only commands and switch
   --json                   Emit schema-versioned JSON output
@@ -180,7 +181,8 @@ Usage:
   repo-toolkit-secret-sync ${key} [options]
 
 Common options:
-  --config <path>          Config file (JSON, .mjs, or .cjs default export)
+  --config <path>          Config file (JSON, .mjs, or .cjs default export;
+                           default: ./secret-sync.config.json in the working directory)
   --cwd <path>             Working directory (default: process.cwd())
   --json                   Emit schema-versioned JSON output
   -h, --help               Show this help message
