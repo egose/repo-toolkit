@@ -138,7 +138,13 @@ function _createMdxContent(props) {
         children: ".cjs"
       }), " via the shared ", (0,jsx_runtime.jsx)(_components.code, {
         children: "loadConfigFile"
-      }), " helper):"]
+      }), " helper). Every command loads ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "./secret-sync.config.json"
+      }), " from the working directory by default; pass ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "--config <path>"
+      }), " to use another file (", (0,jsx_runtime.jsx)(_components.code, {
+        children: "vault list --provider …"
+      }), " is the only command that runs without any config):"]
     }), "\n", (0,jsx_runtime.jsx)(_components.pre, {
       children: (0,jsx_runtime.jsx)(_components.code, {
         className: "language-json",
@@ -166,7 +172,11 @@ function _createMdxContent(props) {
         children: ".git/**"
       }), ", ", (0,jsx_runtime.jsx)(_components.code, {
         children: ".repo-toolkit-secret-sync/**"
-      }), ", plus the active config file are always excluded. ", (0,jsx_runtime.jsx)(_components.code, {
+      }), ", plus the active config file are always excluded. Directories matching a ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "/**"
+      }), "-suffixed ignore (e.g. ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "**/node_modules/**"
+      }), ") are pruned from traversal and don't count toward the 10,000-record scan bound. ", (0,jsx_runtime.jsx)(_components.code, {
         children: "--file <path>"
       }), " selects an exact path inside the allowed set, is repeatable without comma splitting, and never overrides excludes. Use ", (0,jsx_runtime.jsx)(_components.code, {
         children: "--file=<name>"
