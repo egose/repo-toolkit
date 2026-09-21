@@ -1,3 +1,9 @@
+## [0.40.0](https://github.com/egose/repo-toolkit/compare/v0.39.0...v0.40.0) (2026-09-21)
+
+### Features
+
+* **secret-sync:** surface clipboard tool stderr on write failures ([62d5582](https://github.com/egose/repo-toolkit/commit/62d558287a2a04538d82226753657ebe21de0445))
+
 ## [0.39.0](https://github.com/egose/repo-toolkit/compare/v0.38.0...v0.39.0) (2026-09-21)
 
 ### Features
