@@ -345,7 +345,7 @@ export async function loadSecretSyncConfigFile(configPath: string, cwd?: string)
   return { configPath: resolved, configDir: resolve(resolved, '..'), raw };
 }
 
-const READ_ONLY_COMMANDS: ReadonlySet<SecretSyncCommand> = new Set(['doctor', 'status', 'diff', 'log']);
+const READ_ONLY_COMMANDS: ReadonlySet<SecretSyncCommand> = new Set(['doctor', 'status', 'diff', 'log', 'vault']);
 const DELETION_COMMANDS: ReadonlySet<SecretSyncCommand> = new Set(['push', 'pull']);
 
 export function validateSecretSyncCommandOptions(
@@ -353,6 +353,32 @@ export function validateSecretSyncCommandOptions(
   options: SecretSyncCommandOptions,
   branchSubcommand: BranchSubcommand = 'list',
 ): void {
+  if (command === 'vault') {
+    if (
+      options.files !== undefined ||
+      options.check === true ||
+      options.remove === true ||
+      options.message !== undefined ||
+      options.revision !== undefined ||
+      options.limit !== undefined ||
+      options.overwrite === true ||
+      options.acknowledgeRemote === true ||
+      options.fromBranch !== undefined ||
+      options.heads !== undefined ||
+      options.take !== undefined ||
+      options.name !== undefined ||
+      options.from !== undefined ||
+      options.vault !== undefined ||
+      options.provider !== undefined ||
+      options.auth !== undefined ||
+      options.account !== undefined ||
+      options.tokenEnv !== undefined ||
+      options.branch !== undefined
+    ) {
+      throw new Error('vault list takes no selection, branch, or mutation flags.');
+    }
+    return;
+  }
   if (options.check === true && command !== 'status') {
     throw new Error('--check is only supported by the status command.');
   }

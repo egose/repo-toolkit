@@ -45,10 +45,52 @@ export type CreateItemResult =
   | { status: 'created'; item: SecretItemDetail }
   | { status: 'uncertain'; attempts: number };
 
+export interface VaultSummary {
+  id: string;
+  title: string;
+  description?: string;
+  vaultType?: string;
+  activeItemCount?: number;
+}
+
 export interface SecretStore {
   listItems(options?: ListItemsOptions): Promise<SecretItemSummary[]>;
   getItem(id: string): Promise<SecretItemDetail>;
   createItem(input: CreateSecretItemInput): Promise<CreateItemResult>;
+  listVaults?(): Promise<VaultSummary[]>;
+}
+
+export function validateVaultSummary(value: unknown): VaultSummary {
+  if (!isPlainObject(value)) {
+    throw new SecretSyncError('schema', 'Provider vault entry is not an object.');
+  }
+  const record = value as Record<string, unknown>;
+  const id = assertNonEmptyString(record.id, 'id', 'Provider vault entry');
+  const title = assertNonEmptyString(record.title, 'title', 'Provider vault entry');
+  if (id.length > 256 || title.length > 512) {
+    throw new SecretSyncError('schema', 'Provider vault entry exceeds structural length bounds.');
+  }
+  const result: VaultSummary = { id, title };
+  if (typeof record.description === 'string' && record.description.length > 0) {
+    result.description = record.description.slice(0, 1024);
+  }
+  if (typeof record.vaultType === 'string' && record.vaultType.length > 0) {
+    result.vaultType = record.vaultType.slice(0, 64);
+  }
+  if (typeof record.activeItemCount === 'number' && Number.isSafeInteger(record.activeItemCount)) {
+    result.activeItemCount = record.activeItemCount;
+  }
+  return result;
+}
+
+export function validateVaultListResponse(value: unknown): VaultSummary[] {
+  if (!Array.isArray(value)) {
+    throw new SecretSyncError('schema', 'Provider vault list response is not an array.');
+  }
+  if (value.length > 10000) {
+    throw new SecretSyncError('too-large', 'Provider vault list exceeds the record bound without truncation.');
+  }
+  return value.map((entry) => validateVaultSummary(entry));
 }
 
 function assertNonEmptyString(value: unknown, field: string, what: string): string {

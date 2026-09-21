@@ -15,9 +15,16 @@ import type {
   SecretSyncCommandOptions,
   SecretSyncPlan,
   SecretSyncRawConfig,
+  VaultSubcommand,
 } from './types';
 
-export type { BranchSubcommand, SecretSyncCommand, SecretSyncCommandOptions, SecretSyncPlan } from './types';
+export type {
+  BranchSubcommand,
+  SecretSyncCommand,
+  SecretSyncCommandOptions,
+  SecretSyncPlan,
+  VaultSubcommand,
+} from './types';
 export type {
   SecretSyncConnectRemoteConfig,
   SecretSyncLimits,
@@ -390,6 +397,8 @@ export {
   resolveIdentityForPlan,
 } from './cli-options';
 export type { StoreOverrides } from './cli-options';
+export { listVaults } from './vaults';
+export type { VaultListOptions, VaultListResult } from './vaults';
 export { pushSecrets } from './push';
 export type { PushHooks, PushOptions, PushResult } from './push';
 export { pullSecrets } from './pull';
@@ -426,6 +435,7 @@ export const SECRET_SYNC_COMMANDS: ReadonlyArray<SecretSyncCommand> = [
   'branch',
   'switch',
   'resolve',
+  'vault',
 ];
 
 export interface SecretSyncOptions {
@@ -433,6 +443,7 @@ export interface SecretSyncOptions {
   cwd?: string;
   command?: string;
   branchSubcommand?: string;
+  vaultSubcommand?: string;
   projectId?: string;
   root?: string;
   remote?: unknown;
@@ -478,7 +489,8 @@ export type SecretSyncResult =
   | { command: 'rollback'; result: import('./rollback').RollbackResult }
   | { command: 'branch'; result: BranchCommandResult }
   | { command: 'switch'; result: import('./branches').SwitchResult }
-  | { command: 'resolve'; result: import('./resolve').ResolveResult };
+  | { command: 'resolve'; result: import('./resolve').ResolveResult }
+  | { command: 'vault'; result: VaultCommandResult };
 
 export interface DiffCommandResult {
   branch: string;
@@ -491,6 +503,8 @@ export interface DiffCommandResult {
 export type BranchCommandResult =
   | ({ subcommand: 'list' } & import('./branches').BranchListResult)
   | ({ subcommand: 'create' } & import('./branches').BranchCreateResult);
+
+export type VaultCommandResult = { subcommand: 'list' } & import('./vaults').VaultListResult;
 
 function resolveCommand(value: string | undefined): SecretSyncCommand {
   const command = value ?? 'status';
@@ -514,6 +528,17 @@ function resolveBranchSubcommand(command: SecretSyncCommand, value: string | und
   return subcommand;
 }
 
+function resolveVaultSubcommand(command: SecretSyncCommand, value: string | undefined): VaultSubcommand | undefined {
+  if (command !== 'vault') {
+    return undefined;
+  }
+  const subcommand = value ?? 'list';
+  if (subcommand !== 'list') {
+    throw new Error(`Unknown vault subcommand: ${subcommand}. Expected one of list.`);
+  }
+  return subcommand;
+}
+
 function resolveLimit(value: number | string | undefined): number | undefined {
   if (value === undefined) {
     return undefined;
@@ -532,6 +557,10 @@ export async function resolveSecretSyncPlan(options: SecretSyncOptions = {}): Pr
   const cwd = resolve(options.cwd ?? process.cwd());
   const command = resolveCommand(options.command);
   const branchSubcommand = resolveBranchSubcommand(command, options.branchSubcommand);
+  const vaultSubcommand = resolveVaultSubcommand(command, options.vaultSubcommand);
+  if (command !== 'vault' && options.vaultSubcommand !== undefined) {
+    throw new Error('A vault subcommand is only accepted after the vault command.');
+  }
 
   let raw: SecretSyncRawConfig = {};
   let configPath: string | undefined;
@@ -602,6 +631,7 @@ export async function resolveSecretSyncPlan(options: SecretSyncOptions = {}): Pr
     ...(options.branch === undefined ? {} : { branch: activeBranch }),
     ...(selection.length === 0 ? {} : { files: selection }),
     ...(branchSubcommand === undefined ? {} : { branchSubcommand }),
+    ...(vaultSubcommand === undefined ? {} : { vaultSubcommand }),
   };
 
   validateSecretSyncCommandOptions(command, commandOptions, branchSubcommand ?? 'list');
@@ -620,6 +650,10 @@ export async function resolveSecretSyncPlan(options: SecretSyncOptions = {}): Pr
 export async function runSecretSync(options: SecretSyncOptions = {}): Promise<SecretSyncResult> {
   const command = resolveCommand(options.command);
   const branchSubcommand = resolveBranchSubcommand(command, options.branchSubcommand);
+  const vaultSubcommand = resolveVaultSubcommand(command, options.vaultSubcommand);
+  if (command !== 'vault' && options.vaultSubcommand !== undefined) {
+    throw new Error('A vault subcommand is only accepted after the vault command.');
+  }
   if (command === 'init') {
     const { initSecrets } = await import('./init');
     const result = await initSecrets({
@@ -828,6 +862,14 @@ export async function runSecretSync(options: SecretSyncOptions = {}): Promise<Se
         identity,
       });
       return { command: 'resolve', result };
+    }
+    case 'vault': {
+      if ((vaultSubcommand ?? plan.commandOptions.vaultSubcommand ?? 'list') !== 'list') {
+        throw new Error(`Unknown vault subcommand. Expected one of list.`);
+      }
+      const { listVaults } = await import('./vaults');
+      const listed = await listVaults({ store, ...(dryRun ? { dryRun: true } : {}) });
+      return { command: 'vault', result: { subcommand: 'list', ...listed } };
     }
     default: {
       throw new Error(`Command "${plan.command}" is not yet implemented (scaffold only).`);
