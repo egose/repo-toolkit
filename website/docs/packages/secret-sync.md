@@ -134,7 +134,15 @@ The command is the first non-wrapper token (`branch` takes a `list|create` subco
 
 ## Listing vaults
 
-`vault list` prints the `id` and `title` of every vault visible to the configured credential on either backend, for discovering `remote.vaultId`. It is read-only (no state, lock, or temp writes) and supports `--json`. Service accounts cannot see Personal/Private/Employee vaults.
+`vault list` prints the `id` and `title` of every vault visible to the credential on either backend, for discovering `remote.vaultId`. It is read-only (no state, lock, or temp writes) and supports `--json`. No config file is needed when the backend is given explicitly:
+
+```sh
+OP_SERVICE_ACCOUNT_TOKEN=<sa-token> repo-toolkit-secret-sync vault list --provider onepassword-sdk --auth service-account
+repo-toolkit-secret-sync vault list --provider onepassword-sdk --auth desktop --account <account-id-or-name>
+OP_CONNECT_HOST=http://127.0.0.1:8080 OP_CONNECT_TOKEN=<token> repo-toolkit-secret-sync vault list --provider onepassword-connect
+```
+
+Service accounts cannot see Personal/Private/Employee vaults.
 
 ## Fake-server example without a real vault
 

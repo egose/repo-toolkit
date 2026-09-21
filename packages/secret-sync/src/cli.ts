@@ -157,7 +157,8 @@ Command options:
   rollback: --file <path> --revision <blob-id> [--message <text>]
   branch list:   (no extra flags)
   branch create: --name <branch> [--from <branch>]
-  vault list:    (no extra flags)
+  vault list:    [--provider onepassword-connect | onepassword-sdk]
+                 [--auth service-account | desktop] [--account <selector>] [--token-env <name>]
   switch:   --branch <name>
   resolve:  --head <commit-A> --head <commit-B> --take <commit-A>
   init:     --vault <vault-id> [--provider onepassword-connect | onepassword-sdk]

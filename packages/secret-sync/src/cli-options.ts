@@ -20,7 +20,7 @@ const COMMAND_FLAGS: Record<string, ReadonlyArray<string>> = {
   rollback: ['config', 'cwd', 'file', 'revision', 'message', 'dry-run', 'json'],
   'branch list': ['config', 'cwd', 'dry-run', 'json'],
   'branch create': ['config', 'cwd', 'name', 'from', 'dry-run', 'json'],
-  'vault list': ['config', 'cwd', 'dry-run', 'json'],
+  'vault list': ['config', 'cwd', 'provider', 'auth', 'account', 'token-env', 'dry-run', 'json'],
   switch: ['config', 'cwd', 'branch', 'dry-run', 'json'],
   resolve: ['config', 'cwd', 'branch', 'head', 'take', 'dry-run', 'json'],
 };

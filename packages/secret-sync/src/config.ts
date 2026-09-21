@@ -369,13 +369,28 @@ export function validateSecretSyncCommandOptions(
       options.name !== undefined ||
       options.from !== undefined ||
       options.vault !== undefined ||
-      options.provider !== undefined ||
-      options.auth !== undefined ||
-      options.account !== undefined ||
-      options.tokenEnv !== undefined ||
       options.branch !== undefined
     ) {
       throw new Error('vault list takes no selection, branch, or mutation flags.');
+    }
+    if (
+      options.provider !== undefined &&
+      options.provider !== 'onepassword-connect' &&
+      options.provider !== 'onepassword-sdk'
+    ) {
+      throw new Error('--provider must be "onepassword-connect" or "onepassword-sdk".');
+    }
+    if (options.auth !== undefined && options.auth !== 'service-account' && options.auth !== 'desktop') {
+      throw new Error('--auth must be "service-account" or "desktop".');
+    }
+    if (options.account !== undefined && options.auth !== 'desktop') {
+      throw new Error('--account requires --auth desktop.');
+    }
+    if (options.tokenEnv !== undefined && options.auth !== 'service-account') {
+      throw new Error('--token-env requires --auth service-account.');
+    }
+    if (options.tokenEnv !== undefined && !ENV_NAME_PATTERN.test(options.tokenEnv)) {
+      throw new Error('--token-env must be an environment variable name (OP_SERVICE_ACCOUNT_TOKEN by default).');
     }
     return;
   }

@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { isAbsolute, relative, resolve } from 'node:path';
 
 import { isPlainObject } from '@repo-toolkit/publish-package';
@@ -539,6 +540,61 @@ function resolveVaultSubcommand(command: SecretSyncCommand, value: string | unde
   return subcommand;
 }
 
+const VAULT_DISCOVERY_VAULT_ID = 'vault-discovery';
+
+function buildVaultDiscoveryRemote(options: SecretSyncOptions): unknown {
+  if (options.remote !== undefined) {
+    return options.remote;
+  }
+  if (options.provider === undefined) {
+    throw new Error(
+      'vault list without a config file requires --provider <onepassword-connect|onepassword-sdk> to select a backend.',
+    );
+  }
+  if (options.provider !== 'onepassword-connect' && options.provider !== 'onepassword-sdk') {
+    throw new Error('--provider must be "onepassword-connect" or "onepassword-sdk".');
+  }
+  if (options.provider === 'onepassword-sdk') {
+    if (options.auth === undefined) {
+      throw new Error('vault list with --provider onepassword-sdk requires --auth <service-account|desktop>.');
+    }
+    if (options.auth !== 'service-account' && options.auth !== 'desktop') {
+      throw new Error('--auth must be "service-account" or "desktop".');
+    }
+    if (options.account !== undefined && options.auth !== 'desktop') {
+      throw new Error('--account requires --auth desktop.');
+    }
+    if (options.tokenEnv !== undefined && options.auth !== 'service-account') {
+      throw new Error('--token-env requires --auth service-account.');
+    }
+    if (options.tokenEnv !== undefined && !/^[A-Za-z_][A-Za-z0-9_]*$/.test(options.tokenEnv)) {
+      throw new Error('--token-env must be an environment variable name (OP_SERVICE_ACCOUNT_TOKEN by default).');
+    }
+    if (options.auth === 'desktop') {
+      if (options.account === undefined || options.account.length === 0) {
+        throw new Error('vault list with --auth desktop requires --account <selector>.');
+      }
+      return {
+        type: 'onepassword-sdk',
+        vaultId: VAULT_DISCOVERY_VAULT_ID,
+        auth: { type: 'desktop', account: options.account },
+      };
+    }
+    return {
+      type: 'onepassword-sdk',
+      vaultId: VAULT_DISCOVERY_VAULT_ID,
+      auth: {
+        type: 'service-account',
+        tokenEnv: options.tokenEnv ?? 'OP_SERVICE_ACCOUNT_TOKEN',
+      },
+    };
+  }
+  if (options.auth !== undefined || options.account !== undefined || options.tokenEnv !== undefined) {
+    throw new Error('--auth, --account, and --token-env are only supported with --provider onepassword-sdk.');
+  }
+  return { type: 'onepassword-connect', vaultId: VAULT_DISCOVERY_VAULT_ID };
+}
+
 function resolveLimit(value: number | string | undefined): number | undefined {
   if (value === undefined) {
     return undefined;
@@ -584,6 +640,34 @@ export async function resolveSecretSyncPlan(options: SecretSyncOptions = {}): Pr
   if (options.limits !== undefined) merged.limits = options.limits;
   if (options.config === undefined && merged.schemaVersion === undefined) {
     merged.schemaVersion = 1;
+  }
+  if (command === 'vault' && options.config === undefined) {
+    if (
+      options.provider !== undefined ||
+      options.auth !== undefined ||
+      options.account !== undefined ||
+      options.tokenEnv !== undefined ||
+      options.remote !== undefined
+    ) {
+      merged.remote = buildVaultDiscoveryRemote(options);
+    } else if (merged.remote === undefined) {
+      throw new Error(
+        'vault list without a config file requires --provider <onepassword-connect|onepassword-sdk> to select a backend.',
+      );
+    }
+    if (merged.projectId === undefined) {
+      merged.projectId = randomUUID();
+    }
+  } else if (
+    command === 'vault' &&
+    (options.provider !== undefined ||
+      options.auth !== undefined ||
+      options.account !== undefined ||
+      options.tokenEnv !== undefined)
+  ) {
+    throw new Error(
+      'vault list with a config file takes no --provider/--auth/--account/--token-env; the config already selects the backend.',
+    );
   }
 
   const validated = validateSecretSyncConfig(merged);
