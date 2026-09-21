@@ -213,6 +213,7 @@ repo-toolkit-secret-sync resolve --head <A> --head <B> --take <A>
 repo-toolkit-secret-sync vault list
 repo-toolkit-secret-sync vault list --json
 repo-toolkit-secret-sync show --file .env --revision <blob-id>
+repo-toolkit-secret-sync show --file .env --export /tmp/out.env
 ```
 
 The command is the first non-wrapper token (`branch` takes a `list|create`
@@ -257,6 +258,11 @@ picker aborts with a non-zero exit and prints nothing. With `--copy`, the bytes
 go to the system clipboard (`pbcopy` on macOS, `clip` on Windows, `wl-copy` /
 `xclip` / `xsel` on Linux) and stdout gets only a confirmation; `--copy --json`
 emits metadata without bytes. Clipboard contents linger — clear them when done.
+With `--export <path>`, the bytes are written atomically with `0600`
+permissions instead of printed — a safer `>` that refuses symlinks, special
+files, directories, and symlinked ancestors, and overwrites an existing plain
+file. Relative destinations resolve against the invocation directory. `--export`
+composes with `--copy`, `--revision`, `--branch`, and `--interactive`.
 
 ## Fake-server example without a real vault
 

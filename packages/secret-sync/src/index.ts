@@ -461,6 +461,7 @@ export interface SecretSyncOptions {
   vaultSubcommand?: string;
   interactive?: boolean;
   copy?: boolean;
+  export?: string;
   clipboard?: import('./clipboard').ClipboardWriter;
   projectId?: string;
   root?: string;
@@ -770,6 +771,7 @@ export async function resolveSecretSyncPlan(options: SecretSyncOptions = {}): Pr
     ...(vaultSubcommand === undefined ? {} : { vaultSubcommand }),
     ...(options.interactive === undefined ? {} : { interactive: options.interactive }),
     ...(options.copy === undefined ? {} : { copy: options.copy }),
+    ...(options.export === undefined ? {} : { export: options.export }),
   };
 
   validateSecretSyncCommandOptions(command, commandOptions, branchSubcommand ?? 'list');
@@ -1038,6 +1040,7 @@ export async function runSecretSync(options: SecretSyncOptions = {}): Promise<Se
         }
         path = files[0] as string;
       }
+      const exportRaw = plan.commandOptions.export;
       const shown = await showFile({
         store,
         branch,
@@ -1046,7 +1049,11 @@ export async function runSecretSync(options: SecretSyncOptions = {}): Promise<Se
         concurrency: plan.limits.concurrency,
         ...(dryRun ? { dryRun: true } : {}),
         ...(plan.commandOptions.copy === true ? { copy: true as const } : {}),
+        ...(exportRaw === undefined
+          ? {}
+          : { exportPath: isAbsolute(exportRaw) ? exportRaw : resolve(plan.cwd, exportRaw) }),
         ...(options.clipboard === undefined ? {} : { clipboard: options.clipboard }),
+        maxFileBytes: plan.limits.maxFileBytes,
         identity,
       });
       return { command: 'show', result: shown.result, bytes: shown.bytes };

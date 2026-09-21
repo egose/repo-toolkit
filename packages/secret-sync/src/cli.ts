@@ -24,6 +24,7 @@ const SPECS: FlagSpec[] = [
   { name: 'token-env' },
   { name: 'interactive', boolean: true },
   { name: 'copy', boolean: true },
+  { name: 'export' },
   { name: 'json', boolean: true },
   { name: 'dry-run', boolean: true },
   { name: 'check', boolean: true },
@@ -111,6 +112,7 @@ export function buildOptions(
     ...(values['acknowledge-remote'] === undefined ? {} : { acknowledgeRemote: true }),
     ...(values.interactive === undefined ? {} : { interactive: true }),
     ...(values.copy === undefined ? {} : { copy: true }),
+    ...(values.export === undefined ? {} : { export: values.export }),
   };
 }
 
@@ -165,7 +167,7 @@ Command options:
   branch create: --name <branch> [--from <branch>]
   vault list:    [--provider onepassword-connect | onepassword-sdk]
                  [--auth service-account | desktop] [--account <selector>] [--token-env <name>]
-  show:     --file <path> [--revision <blob-id>] [--interactive] [--copy]
+  show:     --file <path> [--revision <blob-id>] [--interactive] [--copy] [--export <path>]
   switch:   --branch <name>
   resolve:  --head <commit-A> --head <commit-B> --take <commit-A>
   init:     --vault <vault-id> [--provider onepassword-connect | onepassword-sdk]
@@ -233,12 +235,12 @@ async function main(): Promise<void> {
     const options = buildOptions(parsed, extracted.command, extracted.branchSubcommand, extracted.vaultSubcommand);
     const outcome = await runSecretSync(options);
     if (outcome.command === 'show') {
-      const shown = outcome as { result: { copied: boolean }; bytes: Uint8Array };
-      if (shown.result.copied && json) {
+      const shown = outcome as { result: { copied: boolean; exported?: string }; bytes: Uint8Array };
+      if ((shown.result.copied || shown.result.exported !== undefined) && json) {
         console.log(formatJsonResult(outcome.command, shown.result));
         return;
       }
-      if (shown.result.copied) {
+      if (shown.result.copied || shown.result.exported !== undefined) {
         console.log(formatTextResult(outcome.command, shown.result));
         return;
       }
