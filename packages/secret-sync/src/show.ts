@@ -1,6 +1,7 @@
 import { systemClipboardWriter, type ClipboardWriter } from './clipboard';
 import { normalizeProjectRelPath, validateBranchName } from './config';
 import { SecretSyncError } from './errors';
+import { writeExportFileAtomically } from './filesystem';
 import { loadValidatedHistory, type LoadedHistory } from './history-store';
 import { sha256Hex, type BlobEnvelope } from './records';
 import { normalizeOperationIdentity } from './state';
@@ -18,6 +19,8 @@ export interface ShowOptions {
   dryRun?: boolean;
   copy?: boolean;
   clipboard?: ClipboardWriter;
+  exportPath?: string;
+  maxFileBytes?: number;
   concurrency?: number;
   endpoint?: string;
   vaultId?: string;
@@ -34,6 +37,7 @@ export interface ShowResult {
   dryRun: boolean;
   copied: boolean;
   clipboardCommand?: string;
+  exported?: string;
   note: string;
 }
 
@@ -126,9 +130,18 @@ export async function showFile(options: ShowOptions): Promise<{ result: ShowResu
     sourceCommitId = head.logicalId;
   }
   const bytes = decodeBlobBytes(blob);
-  if (options.copy === true) {
+  const sinks: string[] = [];
+  if (!dryRun && options.exportPath !== undefined) {
+    await writeExportFileAtomically(options.exportPath, bytes, { maxFileBytes: options.maxFileBytes });
+    sinks.push(`exported to ${JSON.stringify(options.exportPath)}`);
+  }
+  let clipboardCommand: string | undefined;
+  if (!dryRun && options.copy === true) {
     const writer = options.clipboard ?? systemClipboardWriter();
-    const written = await writer.write(bytes);
+    clipboardCommand = (await writer.write(bytes)).command;
+    sinks.push(`copied to the system clipboard via ${JSON.stringify(clipboardCommand)}`);
+  }
+  if (sinks.length > 0) {
     return {
       result: {
         path,
@@ -137,9 +150,10 @@ export async function showFile(options: ShowOptions): Promise<{ result: ShowResu
         sourceCommitId,
         byteLength: bytes.byteLength,
         dryRun,
-        copied: true,
-        clipboardCommand: written.command,
-        note: `Copied ${JSON.stringify(path)} (${bytes.byteLength} bytes) to the system clipboard via ${JSON.stringify(written.command)}; worktree, state, and baselines are unchanged.`,
+        copied: clipboardCommand !== undefined,
+        ...(clipboardCommand === undefined ? {} : { clipboardCommand }),
+        ...(options.exportPath === undefined ? {} : { exported: options.exportPath }),
+        note: `Showed ${JSON.stringify(path)} (${bytes.byteLength} bytes) ${sinks.join(' and ')}; worktree, state, and baselines are unchanged.`,
       },
       bytes,
     };
@@ -153,7 +167,9 @@ export async function showFile(options: ShowOptions): Promise<{ result: ShowResu
       byteLength: bytes.byteLength,
       dryRun,
       copied: false,
-      note: `Showing ${JSON.stringify(path)} from ${JSON.stringify(sourceCommitId)} on branch ${JSON.stringify(branch)}; worktree, state, and baselines are unchanged.`,
+      note: dryRun
+        ? `Dry run: reads permitted; ${JSON.stringify(path)} was not exported, copied, or printed.`
+        : `Showing ${JSON.stringify(path)} from ${JSON.stringify(sourceCommitId)} on branch ${JSON.stringify(branch)}; worktree, state, and baselines are unchanged.`,
     },
     bytes,
   };

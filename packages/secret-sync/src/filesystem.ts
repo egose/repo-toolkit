@@ -1,6 +1,6 @@
 import { createHmac } from 'node:crypto';
 import { chmod, lstat, mkdir, open, readFile, readdir, rename, unlink, writeFile } from 'node:fs/promises';
-import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { dirname, isAbsolute, join, parse, relative, resolve, sep } from 'node:path';
 
 import { MAX_FILE_BYTES_HARD_CEILING, normalizeProjectRelPath } from './config';
 import { SECRET_SYNC_STATE_DIR } from './discovery';
@@ -187,30 +187,40 @@ async function removeTempQuietly(tempPath: string): Promise<void> {
   }
 }
 
-export async function writeFileAtomically(
-  rootAbsolute: string,
-  relPath: string,
+export async function assertAbsoluteAncestorDirsSafe(absolutePath: string): Promise<void> {
+  const absolute = resolve(absolutePath);
+  const root = parse(absolute).root;
+  let current = dirname(absolute);
+  for (;;) {
+    let stats;
+    try {
+      stats = await lstat(current);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+        throw error;
+      }
+    }
+    if (stats !== undefined) {
+      if (stats.isSymbolicLink()) {
+        throw new SecretSyncError('unsafe-path', 'Refusing a destination below a symlinked ancestor.');
+      }
+      if (!stats.isDirectory()) {
+        throw new SecretSyncError('unsafe-path', 'Refusing a destination whose ancestor is not a directory.');
+      }
+    }
+    if (current === root) {
+      break;
+    }
+    current = dirname(current);
+  }
+}
+
+async function replaceAtomically(
+  absolute: string,
   bytes: Uint8Array,
-  options: SafeWriteOptions = {},
+  options: SafeWriteOptions,
+  recheck: () => Promise<void>,
 ): Promise<{ byteLength: number }> {
-  const maxBytes = resolveMaxBytes(options.maxFileBytes);
-  if (!(bytes instanceof Uint8Array)) {
-    throw new SecretSyncError('validation', 'Write bytes must be a Uint8Array.');
-  }
-  if (bytes.byteLength > maxBytes) {
-    throw new SecretSyncError('too-large', 'Refusing to write bytes beyond the per-file bound.');
-  }
-  const absolute = resolveSafeDestination(rootAbsolute, relPath);
-  assertNoCaseCollision([relPath]);
-  await assertAncestorDirsSafe(rootAbsolute, relPath);
-  await assertSiblingCaseFree(absolute);
-  const before = await checkDestinationKind(absolute);
-  if (before === 'symlink' || before === 'special') {
-    throw new SecretSyncError('unsafe-path', 'Refusing to replace a symlink or special file.');
-  }
-  if (before === 'directory') {
-    throw new SecretSyncError('unsafe-path', 'Refusing to replace a directory with a file.');
-  }
   await mkdir(dirname(absolute), { recursive: true });
   const tempName = `${SAFE_WRITE_TEMP_PREFIX}${process.pid}-${Date.now()}-${Math.floor(Math.random() * 0xffffffff).toString(16)}.tmp`;
   const tempPath = join(dirname(absolute), tempName);
@@ -238,7 +248,7 @@ export async function writeFileAtomically(
       throw error;
     }
   }
-  await assertAncestorDirsSafe(rootAbsolute, relPath);
+  await recheck();
   const rechecked = await checkDestinationKind(absolute);
   if (rechecked === 'symlink' || rechecked === 'special') {
     await removeTempQuietly(tempPath);
@@ -260,6 +270,68 @@ export async function writeFileAtomically(
   await chmod(absolute, SAFE_WRITE_FILE_MODE);
   await fsyncDir(dirname(absolute));
   return { byteLength: bytes.byteLength };
+}
+
+export async function writeFileAtomically(
+  rootAbsolute: string,
+  relPath: string,
+  bytes: Uint8Array,
+  options: SafeWriteOptions = {},
+): Promise<{ byteLength: number }> {
+  const maxBytes = resolveMaxBytes(options.maxFileBytes);
+  if (!(bytes instanceof Uint8Array)) {
+    throw new SecretSyncError('validation', 'Write bytes must be a Uint8Array.');
+  }
+  if (bytes.byteLength > maxBytes) {
+    throw new SecretSyncError('too-large', 'Refusing to write bytes beyond the per-file bound.');
+  }
+  const absolute = resolveSafeDestination(rootAbsolute, relPath);
+  assertNoCaseCollision([relPath]);
+  await assertAncestorDirsSafe(rootAbsolute, relPath);
+  await assertSiblingCaseFree(absolute);
+  const before = await checkDestinationKind(absolute);
+  if (before === 'symlink' || before === 'special') {
+    throw new SecretSyncError('unsafe-path', 'Refusing to replace a symlink or special file.');
+  }
+  if (before === 'directory') {
+    throw new SecretSyncError('unsafe-path', 'Refusing to replace a directory with a file.');
+  }
+  return replaceAtomically(absolute, bytes, options, async () => {
+    await assertAncestorDirsSafe(rootAbsolute, relPath);
+  });
+}
+
+export async function writeExportFileAtomically(
+  absolutePath: string,
+  bytes: Uint8Array,
+  options: SafeWriteOptions = {},
+): Promise<{ byteLength: number }> {
+  const maxBytes = resolveMaxBytes(options.maxFileBytes);
+  if (!(bytes instanceof Uint8Array)) {
+    throw new SecretSyncError('validation', 'Write bytes must be a Uint8Array.');
+  }
+  if (bytes.byteLength > maxBytes) {
+    throw new SecretSyncError('too-large', 'Refusing to write bytes beyond the per-file bound.');
+  }
+  if (typeof absolutePath !== 'string' || absolutePath.length === 0 || absolutePath.includes('\0')) {
+    throw new SecretSyncError('validation', 'Export path must be a non-empty absolute path.');
+  }
+  const absolute = resolve(absolutePath);
+  if (absolute === parse(absolute).root) {
+    throw new SecretSyncError('unsafe-path', 'Refusing to overwrite a filesystem root.');
+  }
+  await assertAbsoluteAncestorDirsSafe(absolute);
+  await assertSiblingCaseFree(absolute);
+  const before = await checkDestinationKind(absolute);
+  if (before === 'symlink' || before === 'special') {
+    throw new SecretSyncError('unsafe-path', 'Refusing to export over a symlink or special file.');
+  }
+  if (before === 'directory') {
+    throw new SecretSyncError('unsafe-path', 'Refusing to export over a directory.');
+  }
+  return replaceAtomically(absolute, bytes, options, async () => {
+    await assertAbsoluteAncestorDirsSafe(absolute);
+  });
 }
 
 export async function readFileBounded(

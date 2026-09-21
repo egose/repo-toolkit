@@ -129,6 +129,7 @@ repo-toolkit-secret-sync switch --branch feature/demo
 repo-toolkit-secret-sync resolve --head <A> --head <B> --take <A>
 repo-toolkit-secret-sync vault list
 repo-toolkit-secret-sync show --file .env --revision <blob-id>
+repo-toolkit-secret-sync show --file .env --export /tmp/out.env
 ```
 
 The command is the first non-wrapper token (`branch` takes a `list|create` subcommand); leading wrapper `--` tokens are stripped and remaining arguments are strict flags. All commands accept `--config`, `--json`, and `-h`/`--help`. Mutating commands accept `--dry-run` (reads only: no writes, locks, state, or temp files). JSON output is schema-versioned and discriminated with metadata only. Messages and paths are caller metadata and appear in output; do not put secret values in commit messages. Every failure exits 1.
@@ -147,7 +148,7 @@ Service accounts cannot see Personal/Private/Employee vaults.
 
 ## Viewing file content without pulling
 
-`show --file <path>` prints one tracked file's verified bytes (length- and SHA-256-checked) to stdout without touching the worktree, state, or baselines. Add `--revision <blob-id>` for a historical version or `--branch <name>` to read another branch. `show` prints raw bytes only and does not support `--json` (except with `--copy`, which emits metadata without bytes); redirect to a file instead of scrolling secrets, and beware shell history. With `--interactive`, `show` walks file, revision, then branch pickers instead of requiring `--file` up front; cancelling aborts with a non-zero exit and prints nothing. With `--copy`, the bytes go to the system clipboard and stdout gets only a confirmation; clipboard contents linger, so clear them when done.
+`show --file <path>` prints one tracked file's verified bytes (length- and SHA-256-checked) to stdout without touching the worktree, state, or baselines. Add `--revision <blob-id>` for a historical version or `--branch <name>` to read another branch. `show` prints raw bytes only and does not support `--json` (except with `--copy` or `--export`, which emit metadata without bytes); redirect to a file instead of scrolling secrets, and beware shell history. With `--interactive`, `show` walks file, revision, then branch pickers instead of requiring `--file` up front; cancelling aborts with a non-zero exit and prints nothing. With `--copy`, the bytes go to the system clipboard and stdout gets only a confirmation; clipboard contents linger, so clear them when done. With `--export <path>`, the bytes are written atomically with `0600` permissions instead of printed — it refuses symlinks, special files, directories, and symlinked ancestors, overwrites an existing plain file, and resolves relative destinations against the invocation directory.
 
 ## Fake-server example without a real vault
 

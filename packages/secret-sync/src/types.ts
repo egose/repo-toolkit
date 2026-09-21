@@ -100,6 +100,7 @@ export interface SecretSyncCommandOptions {
   vaultSubcommand?: VaultSubcommand;
   interactive?: boolean;
   copy?: boolean;
+  export?: string;
 }
 
 export interface SecretSyncPlan extends SecretSyncValidatedConfig {

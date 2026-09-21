@@ -134,8 +134,17 @@ export function formatTextResult(command: string, result: unknown): string {
       return entries.map((entry) => `${entry.changed ? 'changed' : 'unchanged'} ${entry.path}`).join('\n');
     }
     case 'show': {
-      if (data.copied === true) {
-        return `copied ${String(data.path ?? '')} (${String((data as { byteLength?: unknown }).byteLength ?? '')} bytes) to clipboard${typeof data.clipboardCommand === 'string' ? ` via ${data.clipboardCommand}` : ''}`;
+      if (data.copied === true || typeof data.exported === 'string') {
+        const parts: string[] = [];
+        if (data.copied === true) {
+          parts.push(
+            `copied to clipboard${typeof data.clipboardCommand === 'string' ? ` via ${data.clipboardCommand}` : ''}`,
+          );
+        }
+        if (typeof data.exported === 'string') {
+          parts.push(`exported to ${data.exported}`);
+        }
+        return `${String(data.path ?? '')} (${String((data as { byteLength?: unknown }).byteLength ?? '')} bytes) ${parts.join(' and ')}`;
       }
       if (typeof data.note === 'string' && data.note.length > 0) {
         return data.note;

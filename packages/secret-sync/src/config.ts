@@ -541,6 +541,12 @@ export function validateSecretSyncCommandOptions(
   if (options.copy === true && command !== 'show') {
     throw new Error('--copy is only supported by the show command.');
   }
+  if (options.export !== undefined && command !== 'show') {
+    throw new Error('--export is only supported by the show command.');
+  }
+  if (typeof options.export === 'string' && (options.export.length === 0 || options.export.includes('\0'))) {
+    throw new Error('--export must be a non-empty output path without NUL bytes.');
+  }
   if (command === 'show') {
     if (options.interactive !== true && (!options.files || options.files.length === 0)) {
       throw new Error('show requires exactly one --file <path> without --interactive.');
@@ -548,8 +554,10 @@ export function validateSecretSyncCommandOptions(
     if (options.files !== undefined && options.files.length > 1) {
       throw new Error('show accepts exactly one --file <path>.');
     }
-    if (options.json === true && options.copy !== true) {
-      throw new Error('show prints raw file bytes and does not support --json without --copy; omit it for content.');
+    if (options.json === true && options.copy !== true && options.export === undefined) {
+      throw new Error(
+        'show prints raw file bytes and does not support --json without --copy or --export; omit it for content.',
+      );
     }
   }
   if (command === 'switch' && options.branch === undefined) {
