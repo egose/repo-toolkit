@@ -1,3 +1,13 @@
+## [0.37.0](https://github.com/egose/repo-toolkit/compare/v0.36.0...v0.37.0) (2026-09-21)
+
+### Features
+
+* stat literal file selections directly ([40eaab3](https://github.com/egose/repo-toolkit/commit/40eaab3895c80f71f882eaf2a8464b357240b6f5))
+
+### Documentation
+
+* describe direct literal file discovery ([d53ea11](https://github.com/egose/repo-toolkit/commit/d53ea11cfff89d6a819a419d6ee74a38af0f50f6))
+
 ## [0.36.0](https://github.com/egose/repo-toolkit/compare/v0.35.0...v0.36.0) (2026-09-21)
 
 ### Features
