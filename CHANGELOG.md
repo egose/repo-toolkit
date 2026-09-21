@@ -1,3 +1,9 @@
+## [0.36.0](https://github.com/egose/repo-toolkit/compare/v0.35.0...v0.36.0) (2026-09-21)
+
+### Features
+
+* load the default config file and improve discovery pruning ([edd17e9](https://github.com/egose/repo-toolkit/commit/edd17e97e593b9bc7304e905379b7d58ef747c50))
+
 ## [0.35.0](https://github.com/egose/repo-toolkit/compare/v0.34.0...v0.35.0) (2026-09-21)
 
 ### Features
