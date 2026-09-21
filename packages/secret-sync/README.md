@@ -219,10 +219,18 @@ output. Every failure exits 1.
 
 `vault list` is read-only metadata (`id`, `title`, plus type/item count when the
 backend returns them) for discovering the exact `remote.vaultId` to put in
-config. It works with both backends — service-account (`OP_SERVICE_ACCOUNT_TOKEN`)
-or desktop approval for SDK, `OP_CONNECT_HOST`/`OP_CONNECT_TOKEN` for Connect —
-and never writes state, locks, or temp files. Service accounts cannot see
-Personal/Private/Employee vaults.
+config. It works with both backends and never writes state, locks, or temp files.
+No config file is needed — select the backend explicitly:
+
+```sh
+OP_SERVICE_ACCOUNT_TOKEN=<sa-token> repo-toolkit-secret-sync vault list --provider onepassword-sdk --auth service-account
+repo-toolkit-secret-sync vault list --provider onepassword-sdk --auth desktop --account <account-id-or-name>
+OP_CONNECT_HOST=http://127.0.0.1:8080 OP_CONNECT_TOKEN=<token> repo-toolkit-secret-sync vault list --provider onepassword-connect
+```
+
+With a config file, the backend comes from the config and no provider flags are
+needed: `repo-toolkit-secret-sync vault list --config secret-sync.config.json`.
+Service accounts cannot see Personal/Private/Employee vaults.
 
 ## Fake-server example without a real vault
 

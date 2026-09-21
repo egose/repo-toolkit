@@ -215,6 +215,72 @@ describe('vault list command wiring', () => {
     }
   });
 
+  it('lists vaults with no config file using provider flags (both backends)', async () => {
+    const sdkFactory = async () => sdkClientWithVaults([{ id: 'v-9', title: 'Solo' }]);
+    const sdkOutcome = await runSecretSync({
+      cwd: tmpdir(),
+      command: 'vault',
+      vaultSubcommand: 'list',
+      provider: 'onepassword-sdk',
+      auth: 'service-account',
+      sdkClientFactory: sdkFactory,
+      env: { [TOKEN_ENV]: 'token-ok' },
+    });
+    expect(sdkOutcome.command).toBe('vault');
+    if (sdkOutcome.command !== 'vault') {
+      throw new Error('expected vault result');
+    }
+    expect(sdkOutcome.result.vaults).toEqual([{ id: 'v-9', title: 'Solo' }]);
+    const connectOutcome = await runSecretSync({
+      cwd: tmpdir(),
+      command: 'vault',
+      vaultSubcommand: 'list',
+      provider: 'onepassword-connect',
+      fetchImpl: async (url) => {
+        expect(url.endsWith('/v1/vaults')).toBe(true);
+        return jsonResponse(200, [{ id: 'v-7', name: 'Main' }]);
+      },
+      env: { OP_CONNECT_HOST: 'http://127.0.0.1:8080', OP_CONNECT_TOKEN: 'token-ok' },
+    });
+    if (connectOutcome.command !== 'vault') {
+      throw new Error('expected vault result');
+    }
+    expect(connectOutcome.result.vaults).toEqual([{ id: 'v-7', title: 'Main' }]);
+  });
+
+  it('rejects config-less vault list without a provider and provider flags with a config file', async () => {
+    await expect(runSecretSync({ cwd: tmpdir(), command: 'vault', vaultSubcommand: 'list', env: {} })).rejects.toThrow(
+      '--provider',
+    );
+    await expect(
+      runSecretSync({
+        cwd: tmpdir(),
+        command: 'vault',
+        vaultSubcommand: 'list',
+        provider: 'onepassword-sdk',
+        env: { [TOKEN_ENV]: 'token-ok' },
+      }),
+    ).rejects.toThrow('--auth');
+    const dir = await mkdtemp(join(tmpdir(), 'secsync-vault-flags-'));
+    try {
+      const config = await writeSdkConfig(dir);
+      await expect(
+        runSecretSync({
+          cwd: dir,
+          config,
+          command: 'vault',
+          vaultSubcommand: 'list',
+          provider: 'onepassword-sdk',
+          auth: 'service-account',
+          store: new MemoryFakeStore(),
+          env: {},
+        }),
+      ).rejects.toThrow('already selects the backend');
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   it('rejects stores without vault listing support', async () => {
     const bare = {
       async listItems() {
