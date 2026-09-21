@@ -281,6 +281,40 @@ describe('vault list command wiring', () => {
     }
   });
 
+  it('discovers ./secret-sync.config.json without --config and prefers inline identity', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'secsync-vault-implicit-'));
+    try {
+      const config = await writeSdkConfig(dir);
+      void config;
+      const store = new MemoryFakeStore([{ id: 'v-d', title: 'Discovered' }]);
+      const discovered = await runSecretSync({ cwd: dir, command: 'vault', vaultSubcommand: 'list', store, env: {} });
+      if (discovered.command !== 'vault') {
+        throw new Error('expected vault result');
+      }
+      expect(discovered.result.vaults).toEqual([{ id: 'v-d', title: 'Discovered' }]);
+      const inline = await runSecretSync({
+        cwd: dir,
+        command: 'status',
+        projectId: PROJECT_ID,
+        remote: { type: 'onepassword-connect', vaultId: 'vault-inline' },
+        store: new MemoryFakeStore(),
+        env: { OP_CONNECT_HOST: 'https://connect.example', OP_CONNECT_TOKEN: 'test-token' },
+      });
+      expect(inline.command).toBe('status');
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('reports a clear error when no config file exists', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'secsync-vault-noconfig-'));
+    try {
+      await expect(runSecretSync({ cwd: dir, command: 'status', env: {} })).rejects.toThrow(/No config file found/);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   it('rejects stores without vault listing support', async () => {
     const bare = {
       async listItems() {
