@@ -22,6 +22,8 @@ const SPECS: FlagSpec[] = [
   { name: 'auth' },
   { name: 'account' },
   { name: 'token-env' },
+  { name: 'interactive', boolean: true },
+  { name: 'copy', boolean: true },
   { name: 'json', boolean: true },
   { name: 'dry-run', boolean: true },
   { name: 'check', boolean: true },
@@ -107,6 +109,8 @@ export function buildOptions(
     ...(values.delete === undefined ? {} : { remove: true }),
     ...(values.overwrite === undefined ? {} : { overwrite: true }),
     ...(values['acknowledge-remote'] === undefined ? {} : { acknowledgeRemote: true }),
+    ...(values.interactive === undefined ? {} : { interactive: true }),
+    ...(values.copy === undefined ? {} : { copy: true }),
   };
 }
 
@@ -132,6 +136,7 @@ Commands:
   switch     Switch the active branch through guarded pull machinery
   resolve    Join observed divergent heads by choosing one full snapshot
   vault      List vaults visible to the configured credential
+  show       Print one tracked file's verified bytes to stdout
 
 Selection (exact paths; repeatable; never overrides excludes):
   --file <path>            Exact project-relative path (repeatable, no comma
@@ -160,6 +165,7 @@ Command options:
   branch create: --name <branch> [--from <branch>]
   vault list:    [--provider onepassword-connect | onepassword-sdk]
                  [--auth service-account | desktop] [--account <selector>] [--token-env <name>]
+  show:     --file <path> [--revision <blob-id>] [--interactive] [--copy]
   switch:   --branch <name>
   resolve:  --head <commit-A> --head <commit-B> --take <commit-A>
   init:     --vault <vault-id> [--provider onepassword-connect | onepassword-sdk]
@@ -226,6 +232,19 @@ async function main(): Promise<void> {
     assertCommandFlags(parsed, extracted.command, extracted.branchSubcommand, extracted.vaultSubcommand);
     const options = buildOptions(parsed, extracted.command, extracted.branchSubcommand, extracted.vaultSubcommand);
     const outcome = await runSecretSync(options);
+    if (outcome.command === 'show') {
+      const shown = outcome as { result: { copied: boolean }; bytes: Uint8Array };
+      if (shown.result.copied && json) {
+        console.log(formatJsonResult(outcome.command, shown.result));
+        return;
+      }
+      if (shown.result.copied) {
+        console.log(formatTextResult(outcome.command, shown.result));
+        return;
+      }
+      process.stdout.write(shown.bytes);
+      return;
+    }
     const resultData = (outcome as { result: unknown }).result;
     if (json) {
       console.log(formatJsonResult(outcome.command, resultData));

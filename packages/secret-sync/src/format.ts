@@ -133,6 +133,15 @@ export function formatTextResult(command: string, result: unknown): string {
       }
       return entries.map((entry) => `${entry.changed ? 'changed' : 'unchanged'} ${entry.path}`).join('\n');
     }
+    case 'show': {
+      if (data.copied === true) {
+        return `copied ${String(data.path ?? '')} (${String((data as { byteLength?: unknown }).byteLength ?? '')} bytes) to clipboard${typeof data.clipboardCommand === 'string' ? ` via ${data.clipboardCommand}` : ''}`;
+      }
+      if (typeof data.note === 'string' && data.note.length > 0) {
+        return data.note;
+      }
+      return 'show: ok';
+    }
     case 'vault': {
       const vaults = Array.isArray(data.vaults)
         ? (data.vaults as Array<{ id: string; title: string; vaultType?: string; activeItemCount?: number }>)

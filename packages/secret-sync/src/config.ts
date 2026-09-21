@@ -345,7 +345,14 @@ export async function loadSecretSyncConfigFile(configPath: string, cwd?: string)
   return { configPath: resolved, configDir: resolve(resolved, '..'), raw };
 }
 
-const READ_ONLY_COMMANDS: ReadonlySet<SecretSyncCommand> = new Set(['doctor', 'status', 'diff', 'log', 'vault']);
+const READ_ONLY_COMMANDS: ReadonlySet<SecretSyncCommand> = new Set([
+  'doctor',
+  'status',
+  'diff',
+  'log',
+  'vault',
+  'show',
+]);
 const DELETION_COMMANDS: ReadonlySet<SecretSyncCommand> = new Set(['push', 'pull']);
 
 export function validateSecretSyncCommandOptions(
@@ -403,8 +410,8 @@ export function validateSecretSyncCommandOptions(
   if (options.message !== undefined && command !== 'push' && command !== 'rollback') {
     throw new Error('--message is only supported by the push and rollback commands.');
   }
-  if (options.revision !== undefined && command !== 'restore' && command !== 'rollback') {
-    throw new Error('--revision is only supported by the restore and rollback commands.');
+  if (options.revision !== undefined && command !== 'restore' && command !== 'rollback' && command !== 'show') {
+    throw new Error('--revision is only supported by the restore, rollback, and show commands.');
   }
   if (options.limit !== undefined && command !== 'log') {
     throw new Error('--limit is only supported by the log command.');
@@ -527,6 +534,23 @@ export function validateSecretSyncCommandOptions(
     (options.name !== undefined || options.from !== undefined)
   ) {
     throw new Error('branch list takes no --name or --from.');
+  }
+  if (options.interactive === true && command !== 'show') {
+    throw new Error('--interactive is only supported by the show command.');
+  }
+  if (options.copy === true && command !== 'show') {
+    throw new Error('--copy is only supported by the show command.');
+  }
+  if (command === 'show') {
+    if (options.interactive !== true && (!options.files || options.files.length === 0)) {
+      throw new Error('show requires exactly one --file <path> without --interactive.');
+    }
+    if (options.files !== undefined && options.files.length > 1) {
+      throw new Error('show accepts exactly one --file <path>.');
+    }
+    if (options.json === true && options.copy !== true) {
+      throw new Error('show prints raw file bytes and does not support --json without --copy; omit it for content.');
+    }
   }
   if (command === 'switch' && options.branch === undefined) {
     throw new Error('switch requires --branch <name>.');

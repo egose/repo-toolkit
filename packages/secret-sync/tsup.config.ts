@@ -8,7 +8,7 @@ export default defineConfig([
     target: 'node20',
     outDir: 'dist',
     clean: true,
-    external: ['@1password/sdk', '@1password/sdk-core'],
+    external: ['@1password/sdk', '@1password/sdk-core', '@clack/prompts'],
   },
   {
     entry: {
@@ -19,7 +19,7 @@ export default defineConfig([
     target: 'node20',
     outDir: 'dist',
     clean: false,
-    external: ['@1password/sdk', '@1password/sdk-core'],
+    external: ['@1password/sdk', '@1password/sdk-core', '@clack/prompts'],
     banner: {
       js: '#!/usr/bin/env node',
     },
