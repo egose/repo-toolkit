@@ -1,3 +1,9 @@
+## [0.34.0](https://github.com/egose/repo-toolkit/compare/v0.33.0...v0.34.0) (2026-09-21)
+
+### Features
+
+* add vault listing support across cli and stores ([2390c1f](https://github.com/egose/repo-toolkit/commit/2390c1f626d1f3d8db0814639aa341d441ce42a5))
+
 ## [0.33.0](https://github.com/egose/repo-toolkit/compare/v0.32.0...v0.33.0) (2026-09-21)
 
 ### Features
