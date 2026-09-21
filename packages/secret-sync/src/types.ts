@@ -11,7 +11,8 @@ export type SecretSyncCommand =
   | 'branch'
   | 'switch'
   | 'resolve'
-  | 'vault';
+  | 'vault'
+  | 'show';
 
 export type BranchSubcommand = 'list' | 'create';
 
@@ -97,6 +98,8 @@ export interface SecretSyncCommandOptions {
   tokenEnv?: string;
   branchSubcommand?: BranchSubcommand;
   vaultSubcommand?: VaultSubcommand;
+  interactive?: boolean;
+  copy?: boolean;
 }
 
 export interface SecretSyncPlan extends SecretSyncValidatedConfig {

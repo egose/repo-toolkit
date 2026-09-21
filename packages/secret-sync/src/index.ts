@@ -402,6 +402,17 @@ export {
 export type { StoreOverrides } from './cli-options';
 export { listVaults } from './vaults';
 export type { VaultListOptions, VaultListResult } from './vaults';
+export { showFile } from './show';
+export type { ShowOptions, ShowResult } from './show';
+export { defaultClipboardSpawn, resolveClipboardCandidates, systemClipboardWriter } from './clipboard';
+export type { ClipboardCommand, ClipboardSpawn, ClipboardWriter } from './clipboard';
+export { INTERACTIVE_CURRENT_REVISION, resolveInteractiveShowTarget } from './show-interactive';
+export type {
+  InteractiveRevisionEntry,
+  InteractiveShowTarget,
+  ResolveInteractiveShowTargetOptions,
+  ShowPicker,
+} from './show-interactive';
 export { pushSecrets } from './push';
 export type { PushHooks, PushOptions, PushResult } from './push';
 export { pullSecrets } from './pull';
@@ -439,6 +450,7 @@ export const SECRET_SYNC_COMMANDS: ReadonlyArray<SecretSyncCommand> = [
   'switch',
   'resolve',
   'vault',
+  'show',
 ];
 
 export interface SecretSyncOptions {
@@ -447,6 +459,9 @@ export interface SecretSyncOptions {
   command?: string;
   branchSubcommand?: string;
   vaultSubcommand?: string;
+  interactive?: boolean;
+  copy?: boolean;
+  clipboard?: import('./clipboard').ClipboardWriter;
   projectId?: string;
   root?: string;
   remote?: unknown;
@@ -493,7 +508,8 @@ export type SecretSyncResult =
   | { command: 'branch'; result: BranchCommandResult }
   | { command: 'switch'; result: import('./branches').SwitchResult }
   | { command: 'resolve'; result: import('./resolve').ResolveResult }
-  | { command: 'vault'; result: VaultCommandResult };
+  | { command: 'vault'; result: VaultCommandResult }
+  | { command: 'show'; result: import('./show').ShowResult; bytes: Uint8Array };
 
 export interface DiffCommandResult {
   branch: string;
@@ -752,6 +768,8 @@ export async function resolveSecretSyncPlan(options: SecretSyncOptions = {}): Pr
     ...(selection.length === 0 ? {} : { files: selection }),
     ...(branchSubcommand === undefined ? {} : { branchSubcommand }),
     ...(vaultSubcommand === undefined ? {} : { vaultSubcommand }),
+    ...(options.interactive === undefined ? {} : { interactive: options.interactive }),
+    ...(options.copy === undefined ? {} : { copy: options.copy }),
   };
 
   validateSecretSyncCommandOptions(command, commandOptions, branchSubcommand ?? 'list');
@@ -990,6 +1008,48 @@ export async function runSecretSync(options: SecretSyncOptions = {}): Promise<Se
       const { listVaults } = await import('./vaults');
       const listed = await listVaults({ store, ...(dryRun ? { dryRun: true } : {}) });
       return { command: 'vault', result: { subcommand: 'list', ...listed } };
+    }
+    case 'show': {
+      const { showFile } = await import('./show');
+      let path: string;
+      let revision = plan.commandOptions.revision;
+      let branch = resolveTargetBranch(plan);
+      if (plan.commandOptions.interactive === true) {
+        const { resolveInteractiveShowTarget } = await import('./show-interactive');
+        const files = plan.commandOptions.files;
+        if (files !== undefined && files.length > 1) {
+          throw new Error('show accepts exactly one --file <path>.');
+        }
+        const target = await resolveInteractiveShowTarget({
+          store,
+          branch,
+          ...(files?.[0] === undefined ? {} : { path: files[0] as string }),
+          ...(revision === undefined ? {} : { revision }),
+          concurrency: plan.limits.concurrency,
+          identity,
+        });
+        path = target.path;
+        revision = target.revision;
+        branch = target.branch;
+      } else {
+        const files = plan.commandOptions.files;
+        if (files === undefined || files.length !== 1) {
+          throw new Error('show requires exactly one --file <path>.');
+        }
+        path = files[0] as string;
+      }
+      const shown = await showFile({
+        store,
+        branch,
+        path,
+        ...(revision === undefined ? {} : { revision }),
+        concurrency: plan.limits.concurrency,
+        ...(dryRun ? { dryRun: true } : {}),
+        ...(plan.commandOptions.copy === true ? { copy: true as const } : {}),
+        ...(options.clipboard === undefined ? {} : { clipboard: options.clipboard }),
+        identity,
+      });
+      return { command: 'show', result: shown.result, bytes: shown.bytes };
     }
     default: {
       throw new Error(`Command "${plan.command}" is not yet implemented (scaffold only).`);

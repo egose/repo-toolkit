@@ -212,6 +212,7 @@ repo-toolkit-secret-sync switch --branch feature/demo
 repo-toolkit-secret-sync resolve --head <A> --head <B> --take <A>
 repo-toolkit-secret-sync vault list
 repo-toolkit-secret-sync vault list --json
+repo-toolkit-secret-sync show --file .env --revision <blob-id>
 ```
 
 The command is the first non-wrapper token (`branch` takes a `list|create`
@@ -240,6 +241,22 @@ OP_CONNECT_HOST=http://127.0.0.1:8080 OP_CONNECT_TOKEN=<token> repo-toolkit-secr
 With a config file, the backend comes from the config and no provider flags are
 needed: `repo-toolkit-secret-sync vault list --config secret-sync.config.json`.
 Service accounts cannot see Personal/Private/Employee vaults.
+
+## Viewing file content without pulling
+
+`show --file <path>` prints one tracked file's verified bytes (length- and
+SHA-256-checked) to stdout without touching the worktree, state, or baselines.
+Add `--revision <blob-id>` for a historical version (it must have been
+associated with that path) or `--branch <name>` to read another branch.
+`show` prints raw bytes only and does not support `--json`; redirect to a file
+(`show … > /tmp/out`) instead of scrolling secrets, and beware shell history.
+With `--interactive`, `show` walks file, revision, then branch pickers
+(`@clack/prompts`; already used elsewhere in this repo) instead of requiring
+`--file` up front — any flag you do pass pre-answers its step. Cancelling any
+picker aborts with a non-zero exit and prints nothing. With `--copy`, the bytes
+go to the system clipboard (`pbcopy` on macOS, `clip` on Windows, `wl-copy` /
+`xclip` / `xsel` on Linux) and stdout gets only a confirmation; `--copy --json`
+emits metadata without bytes. Clipboard contents linger — clear them when done.
 
 ## Fake-server example without a real vault
 

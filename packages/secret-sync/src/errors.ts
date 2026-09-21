@@ -1,4 +1,5 @@
 export type SecretSyncErrorCode =
+  | 'aborted'
   | 'invalid-url'
   | 'redirect-blocked'
   | 'auth'
