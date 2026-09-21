@@ -12,22 +12,34 @@ export interface ClipboardWriter {
   write(bytes: Uint8Array): Promise<{ command: string }>;
 }
 
-export type ClipboardSpawn = (command: string, args: string[], bytes: Uint8Array) => { ok: boolean; missing: boolean };
+export interface ClipboardSpawnResult {
+  ok: boolean;
+  missing: boolean;
+  stderr?: string;
+}
 
-export function defaultClipboardSpawn(
-  command: string,
-  args: string[],
-  bytes: Uint8Array,
-): { ok: boolean; missing: boolean } {
+export type ClipboardSpawn = (command: string, args: string[], bytes: Uint8Array) => ClipboardSpawnResult;
+
+function truncateDetail(text: string): string {
+  const cleaned = text.replace(/[^\p{L}\p{N}\p{P}\p{S}\p{Z} \t\n]+/gu, ' ').trim();
+  return cleaned.length > 300 ? `${cleaned.slice(0, 297)}...` : cleaned;
+}
+
+export function defaultClipboardSpawn(command: string, args: string[], bytes: Uint8Array): ClipboardSpawnResult {
   try {
     const completed = spawnSync(command, args, {
       input: Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength),
-      stdio: ['pipe', 'ignore', 'ignore'],
+      stdio: ['pipe', 'ignore', 'pipe'],
+      encoding: 'utf8',
     });
     if (completed.error !== undefined) {
       return { ok: false, missing: true };
     }
-    return { ok: completed.status === 0, missing: false };
+    if (completed.status === 0) {
+      return { ok: true, missing: false };
+    }
+    const detail = typeof completed.stderr === 'string' ? truncateDetail(completed.stderr) : '';
+    return { ok: false, missing: false, ...(detail.length === 0 ? {} : { stderr: detail }) };
   } catch {
     return { ok: false, missing: true };
   }
@@ -80,9 +92,11 @@ export function systemClipboardWriter(
           missing.push(`${candidate.command} (${candidate.installHint})`);
           continue;
         }
+        const detail =
+          result.stderr !== undefined && result.stderr.length > 0 ? ` Tool reported: ${result.stderr}` : '';
         throw new SecretSyncError(
           'server',
-          `Clipboard tool ${JSON.stringify(candidate.command)} refused the write; nothing was printed instead.`,
+          `Clipboard tool ${JSON.stringify(candidate.command)} refused the write; nothing was printed instead.${detail}`,
         );
       }
       throw new SecretSyncError('validation', `No clipboard tool found (tried ${missing.join(', ')}).`);
