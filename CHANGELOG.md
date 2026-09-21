@@ -1,3 +1,9 @@
+## [0.35.0](https://github.com/egose/repo-toolkit/compare/v0.34.0...v0.35.0) (2026-09-21)
+
+### Features
+
+* allow vault listing to select a backend without config ([d71c6d1](https://github.com/egose/repo-toolkit/commit/d71c6d13c52df0b7f8acc34d7770d72cef7464c7))
+
 ## [0.34.0](https://github.com/egose/repo-toolkit/compare/v0.33.0...v0.34.0) (2026-09-21)
 
 ### Features
