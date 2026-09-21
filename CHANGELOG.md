@@ -1,3 +1,9 @@
+## [0.33.0](https://github.com/egose/repo-toolkit/compare/v0.32.0...v0.33.0) (2026-09-21)
+
+### Features
+
+* add direct 1Password SDK backend for secret sync ([146463d](https://github.com/egose/repo-toolkit/commit/146463d63346a7307d5ed75eba5f66c8c91304b6))
+
 ## [0.32.0](https://github.com/egose/repo-toolkit/compare/v0.31.0...v0.32.0) (2026-09-20)
 
 ### Features
