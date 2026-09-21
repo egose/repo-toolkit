@@ -1,3 +1,9 @@
+## [0.39.0](https://github.com/egose/repo-toolkit/compare/v0.38.0...v0.39.0) (2026-09-21)
+
+### Features
+
+* add interactive file viewing with clipboard copy support ([02e1b1d](https://github.com/egose/repo-toolkit/commit/02e1b1d40b098f0b45a8b72b726e26629045eb31))
+
 ## [0.38.0](https://github.com/egose/repo-toolkit/compare/v0.37.0...v0.38.0) (2026-09-21)
 
 ### Features
