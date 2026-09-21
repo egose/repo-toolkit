@@ -89,6 +89,66 @@ function isPrunedDir(relPath: string, prune: ReadonlyArray<(value: string) => bo
   return false;
 }
 
+function isLiteralPattern(pattern: string): boolean {
+  try {
+    const scanned = (picomatch as unknown as { scan: (input: string, options?: unknown) => { isGlob?: unknown } }).scan(
+      pattern,
+      { dot: true },
+    );
+    return scanned.isGlob !== true;
+  } catch {
+    return false;
+  }
+}
+
+async function statLiteralFiles(
+  root: string,
+  literals: string[],
+  matches: (relPath: string) => boolean,
+  maxRecords: number,
+): Promise<{ paths: string[]; skippedSymlinks: string[]; skippedSpecial: string[]; scanned: number }> {
+  const paths: string[] = [];
+  const skippedSymlinks: string[] = [];
+  const skippedSpecial: string[] = [];
+  const seen = new Set<string>();
+  let scanned = 0;
+  for (const pattern of literals) {
+    const rel = toSlashPath(pattern);
+    if (seen.has(rel)) {
+      continue;
+    }
+    seen.add(rel);
+    scanned += 1;
+    if (scanned > maxRecords) {
+      throw new Error(`Refusing to scan more than ${maxRecords} directory records under the sync root.`);
+    }
+    let stats;
+    try {
+      stats = await lstat(join(root, ...rel.split('/')));
+    } catch {
+      continue;
+    }
+    if (stats.isSymbolicLink()) {
+      skippedSymlinks.push(rel);
+      continue;
+    }
+    if (stats.isDirectory()) {
+      continue;
+    }
+    if (!stats.isFile()) {
+      skippedSpecial.push(rel);
+      continue;
+    }
+    if (matches(rel)) {
+      paths.push(rel);
+    }
+  }
+  paths.sort();
+  skippedSymlinks.sort();
+  skippedSpecial.sort();
+  return { paths, skippedSymlinks, skippedSpecial, scanned };
+}
+
 export interface DiscoveryOptions {
   root: string;
   files: string[];
@@ -108,6 +168,9 @@ export async function discoverLocalFiles(options: DiscoveryOptions): Promise<Dis
   const maxRecords = options.maxRecords ?? MAX_SCAN_RECORDS;
   const extra = options.configRelPath ? [options.configRelPath] : [];
   const matches = createSelectionMatcher({ files: options.files, ignore: options.ignore, extraExcludes: extra });
+  if (options.files.length > 0 && options.files.every(isLiteralPattern)) {
+    return statLiteralFiles(options.root, options.files, matches, maxRecords);
+  }
   const prune = compileDirPruneMatchers(options.ignore);
   const paths: string[] = [];
   const skippedSymlinks: string[] = [];

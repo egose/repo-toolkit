@@ -43,8 +43,10 @@ case-sensitive): `files` is an inclusion union, `ignore` always wins, and
 `.git/**`, `.repo-toolkit-secret-sync/**`, plus the active config file are
 always excluded. Directories matching a `/**`-suffixed ignore (e.g.
 `**/node_modules/**`) are pruned from traversal and don't count toward the
-10,000-record scan bound; other ignores filter results only. Leading `!`
-patterns, RegExp values, absolute paths, and traversal segments are rejected. `--file <path>` selects an exact path inside
+10,000-record scan bound; other ignores filter results only. When every `files`
+entry is a literal path with no glob characters, discovery stats those paths
+directly instead of walking the root. Leading `!` patterns, RegExp values,
+absolute paths, and traversal segments are rejected. `--file <path>` selects an exact path inside
 the allowed set, is repeatable without comma splitting, and never overrides
 excludes. Use `--file=<name>` for dash-leading paths
 (e.g. `--file=-leading-name`).

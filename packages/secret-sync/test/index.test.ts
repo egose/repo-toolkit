@@ -232,6 +232,52 @@ describe('discovery', () => {
     });
   });
 
+  it('stats literal files directly without walking nested directories', async () => {
+    await withTempDir(async (dir) => {
+      await writeFixtureFile(dir, 'aiproxy/config.hcl', 'x');
+      for (let i = 0; i < 25; i += 1) {
+        await writeFixtureFile(dir, `node_modules/pkg/f${i}.json`, '{}');
+      }
+      const result = await discoverLocalFiles({ root: dir, files: ['aiproxy/config.hcl'], ignore: [] });
+      expect(result.paths).toEqual(['aiproxy/config.hcl']);
+      expect(result.scanned).toBe(1);
+    });
+  });
+
+  it('handles missing files, directories, and symlinks on the literal path', async () => {
+    await withTempDir(async (dir) => {
+      const outside = await mkdtemp(join(tmpdir(), 'secret-sync-outside-'));
+      try {
+        await writeFixtureFile(dir, 'real.env', 'IN=1');
+        await writeFixtureFile(dir, 'data/inner.txt', 'x');
+        await symlink(join(outside, 'secret.env'), join(dir, 'link.env'));
+        await writeFixtureFile(outside, 'secret.env', 'OUT=1');
+        const result = await discoverLocalFiles({
+          root: dir,
+          files: ['real.env', 'missing.env', 'data', 'link.env', 'real.env'],
+          ignore: [],
+        });
+        expect(result.paths).toEqual(['real.env']);
+        expect(result.skippedSymlinks).toEqual(['link.env']);
+        expect(result.scanned).toBe(4);
+      } finally {
+        await rm(outside, { recursive: true, force: true });
+      }
+    });
+  });
+
+  it('still filters literal files through ignore and falls back to walking on mixed patterns', async () => {
+    await withTempDir(async (dir) => {
+      await writeFixtureFile(dir, 'keep.env', 'A=1');
+      await writeFixtureFile(dir, 'skip.env', 'B=1');
+      const ignored = await discoverLocalFiles({ root: dir, files: ['keep.env', 'skip.env'], ignore: ['skip.env'] });
+      expect(ignored.paths).toEqual(['keep.env']);
+      const mixed = await discoverLocalFiles({ root: dir, files: ['keep.env', '*.env'], ignore: [] });
+      expect(mixed.paths).toEqual(['keep.env', 'skip.env']);
+      expect(mixed.scanned).toBe(2);
+    });
+  });
+
   it('does not prune directories on exact-file ignores', async () => {
     await withTempDir(async (dir) => {
       await writeFixtureFile(dir, 'data/inner.json', '{}');

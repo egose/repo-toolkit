@@ -43,7 +43,7 @@ Branch names match `[A-Za-z0-9][A-Za-z0-9._/-]{0,127}` with empty, `.`, and `..`
 
 ## Selection
 
-Selection is glob matching via `picomatch` (dotfiles enabled, case-sensitive): `files` is an inclusion union, `ignore` always wins, and `.git/**`, `.repo-toolkit-secret-sync/**`, plus the active config file are always excluded. Directories matching a `/**`-suffixed ignore (e.g. `**/node_modules/**`) are pruned from traversal and don't count toward the 10,000-record scan bound. `--file <path>` selects an exact path inside the allowed set, is repeatable without comma splitting, and never overrides excludes. Use `--file=<name>` for dash-leading paths (e.g. `--file=-leading-name`).
+Selection is glob matching via `picomatch` (dotfiles enabled, case-sensitive): `files` is an inclusion union, `ignore` always wins, and `.git/**`, `.repo-toolkit-secret-sync/**`, plus the active config file are always excluded. Directories matching a `/**`-suffixed ignore (e.g. `**/node_modules/**`) are pruned from traversal and don't count toward the 10,000-record scan bound. When every `files` entry is a literal path with no glob characters, discovery stats those paths directly instead of walking the root. `--file <path>` selects an exact path inside the allowed set, is repeatable without comma splitting, and never overrides excludes. Use `--file=<name>` for dash-leading paths (e.g. `--file=-leading-name`).
 
 ## Connect deployment and auth
 
