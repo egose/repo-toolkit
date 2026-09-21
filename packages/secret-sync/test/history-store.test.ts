@@ -12,7 +12,7 @@ import {
   publishSnapshot,
   validateHistoryDependencies,
 } from '../src/history-store';
-import { createBlobRecord, createCommitRecord } from '../src/records';
+import { createBlobRecord, createCommitRecord, sha256Hex } from '../src/records';
 import type {
   ConnectItemDetail,
   ConnectItemSummary,
@@ -402,6 +402,35 @@ describe('uncertain writes', () => {
     expect(second.envelope.logicalId).toBe(first.envelope.logicalId);
     const history = await loadRawHistory(store, PROJECT_ID);
     expect(history.blobs.size).toBe(1);
+  });
+
+  it('adopts a byte-identical orphan from a prior run when the new write is uncertain', async () => {
+    const store = new FakeSecretStore({ delayed: true, uncertainNext: 1 });
+    const bytes = Buffer.from('cross-run-bytes');
+    await expect(publishBlob(store, PROJECT_ID, bytes, { logicalId: testUuid(72) })).rejects.toMatchObject({
+      code: 'uncertain-write',
+    });
+    store.flush();
+    store.setUncertainNext(1);
+    const retry = await publishBlob(store, PROJECT_ID, bytes, { logicalId: testUuid(73) });
+    expect(retry.reconciled).toBe(true);
+    expect(retry.envelope.logicalId).toBe(testUuid(72));
+    expect(retry.envelope.sha256).toBe(sha256Hex(bytes));
+    store.flush();
+    const history = await loadRawHistory(store, PROJECT_ID);
+    expect(history.blobs.size).toBe(2);
+    expect(history.blobs.has(testUuid(72))).toBe(true);
+  });
+
+  it('still reports uncertain-write when no byte-identical blob exists', async () => {
+    const store = new FakeSecretStore({ delayed: true });
+    const seeded = await publishBlob(store, PROJECT_ID, Buffer.from('seeded-bytes'), { logicalId: testUuid(74) });
+    expect(seeded.reconciled).toBe(false);
+    store.flush();
+    store.setUncertainNext(1);
+    await expect(
+      publishBlob(store, PROJECT_ID, Buffer.from('different-bytes'), { logicalId: testUuid(75) }),
+    ).rejects.toMatchObject({ code: 'uncertain-write' });
   });
 });
 

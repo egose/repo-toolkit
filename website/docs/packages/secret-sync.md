@@ -109,7 +109,7 @@ Tool bounds (not claimed 1Password limits): 32 KiB per file, 100 files, 64 KiB s
 
 ## Identity, state, retention, branches, recovery, visibility
 
-Remote identity (endpoint plus vault ID plus project ID) is pinned in `.repo-toolkit-secret-sync/state.json` (0700 dir, 0600 files, generated HMAC key; no bodies, tokens, or diffs). Changing identity requires reinitialization. History is retained in v1; deletion is a tombstone and pruning is deferred. Branches are organizational within one vault, not authorization boundaries; use separate vaults for access separation. Push checks observed heads before and after publication; delayed synchronization can reveal another head later, so success means verification on the configured endpoint, not global durability. Local writes are per-file atomic with journaled resume and same-host locks.
+Remote identity (endpoint plus vault ID plus project ID) is pinned in `.repo-toolkit-secret-sync/state.json` (0700 dir, 0600 files, generated HMAC key; no bodies, tokens, or diffs). Changing identity requires reinitialization. History is retained in v1; deletion is a tombstone and pruning is deferred. Branches are organizational within one vault, not authorization boundaries; use separate vaults for access separation. Push checks observed heads before and after publication; delayed synchronization can reveal another head later, so success means verification on the configured endpoint, not global durability. An ambiguous blob write is first re-found by logical id, then by byte-identical content, so retrying a push adopts an orphaned blob from an earlier attempt instead of failing forever. Local writes are per-file atomic with journaled resume and same-host locks.
 
 ## CLI
 
