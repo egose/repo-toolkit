@@ -310,7 +310,7 @@ function _createMdxContent(props) {
     }), "\n", (0,jsx_runtime.jsx)(_components.pre, {
       children: (0,jsx_runtime.jsx)(_components.code, {
         className: "language-sh",
-        children: "repo-toolkit-secret-sync init --config secret-sync.config.json --vault <vault-id>\nrepo-toolkit-secret-sync doctor\nrepo-toolkit-secret-sync status --check --json\nrepo-toolkit-secret-sync push --file .env --message \"Rotate credentials\"\nrepo-toolkit-secret-sync pull --dry-run\nrepo-toolkit-secret-sync diff --file .env\nrepo-toolkit-secret-sync log --file .env --limit 20\nrepo-toolkit-secret-sync restore --file .env --revision <blob-id>\nrepo-toolkit-secret-sync rollback --file .env --revision <blob-id> --message \"Revert\"\nrepo-toolkit-secret-sync branch list\nrepo-toolkit-secret-sync branch create --name feature/demo --from main\nrepo-toolkit-secret-sync switch --branch feature/demo\nrepo-toolkit-secret-sync resolve --head <A> --head <B> --take <A>\nrepo-toolkit-secret-sync vault list\nrepo-toolkit-secret-sync show --file .env --revision <blob-id>\n"
+        children: "repo-toolkit-secret-sync init --config secret-sync.config.json --vault <vault-id>\nrepo-toolkit-secret-sync doctor\nrepo-toolkit-secret-sync status --check --json\nrepo-toolkit-secret-sync push --file .env --message \"Rotate credentials\"\nrepo-toolkit-secret-sync pull --dry-run\nrepo-toolkit-secret-sync diff --file .env\nrepo-toolkit-secret-sync log --file .env --limit 20\nrepo-toolkit-secret-sync restore --file .env --revision <blob-id>\nrepo-toolkit-secret-sync rollback --file .env --revision <blob-id> --message \"Revert\"\nrepo-toolkit-secret-sync branch list\nrepo-toolkit-secret-sync branch create --name feature/demo --from main\nrepo-toolkit-secret-sync switch --branch feature/demo\nrepo-toolkit-secret-sync resolve --head <A> --head <B> --take <A>\nrepo-toolkit-secret-sync vault list\nrepo-toolkit-secret-sync show --file .env --revision <blob-id>\nrepo-toolkit-secret-sync show --file .env --export /tmp/out.env\n"
       })
     }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
       children: ["The command is the first non-wrapper token (", (0,jsx_runtime.jsx)(_components.code, {
@@ -368,7 +368,9 @@ function _createMdxContent(props) {
         children: "--json"
       }), " (except with ", (0,jsx_runtime.jsx)(_components.code, {
         children: "--copy"
-      }), ", which emits metadata without bytes); redirect to a file instead of scrolling secrets, and beware shell history. With ", (0,jsx_runtime.jsx)(_components.code, {
+      }), " or ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "--export"
+      }), ", which emit metadata without bytes); redirect to a file instead of scrolling secrets, and beware shell history. With ", (0,jsx_runtime.jsx)(_components.code, {
         children: "--interactive"
       }), ", ", (0,jsx_runtime.jsx)(_components.code, {
         children: "show"
@@ -376,7 +378,11 @@ function _createMdxContent(props) {
         children: "--file"
       }), " up front; cancelling aborts with a non-zero exit and prints nothing. With ", (0,jsx_runtime.jsx)(_components.code, {
         children: "--copy"
-      }), ", the bytes go to the system clipboard and stdout gets only a confirmation; clipboard contents linger, so clear them when done."]
+      }), ", the bytes go to the system clipboard and stdout gets only a confirmation; clipboard contents linger, so clear them when done. With ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "--export <path>"
+      }), ", the bytes are written atomically with ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "0600"
+      }), " permissions instead of printed — it refuses symlinks, special files, directories, and symlinked ancestors, overwrites an existing plain file, and resolves relative destinations against the invocation directory."]
     }), "\n", (0,jsx_runtime.jsx)(_components.h2, {
       id: "fake-server-example-without-a-real-vault",
       children: "Fake-server example without a real vault"
