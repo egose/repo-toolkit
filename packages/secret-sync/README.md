@@ -186,9 +186,12 @@ identity requires explicit reinitialization. All history is retained in v1;
 deletion is a tombstone and pruning is deferred. Branches are organizational
 within one vault, not authorization boundaries; use separate vaults for
 access separation. Push verifies observed heads before and after
-publication; delayed Connect synchronization can reveal another head later,
+publication; delayed synchronization can reveal another head later,
 so success means the commit was verified on the configured endpoint, not
-global durability. Local writes are per-file atomic with same-directory temp
+global durability. An ambiguous blob write is first re-found by logical id,
+then by byte-identical content, so retrying a push adopts an orphaned blob
+from an earlier attempt instead of failing forever or duplicating it.
+Local writes are per-file atomic with same-directory temp
 files, journaled resume, and exclusive local locks (same-host only).
 
 ## CLI

@@ -266,6 +266,54 @@ export async function reconcileRecordByLogicalId(
   return undefined;
 }
 
+export async function reconcileBlobByContent(
+  store: SecretStore,
+  projectId: string,
+  expected: BlobEnvelope,
+): Promise<{ envelope: BlobEnvelope; providerId: string } | undefined> {
+  const summaries = await store.listItems();
+  if (summaries.length > HISTORY_MAX_RECORDS) {
+    throw new SecretSyncError('too-large', 'Remote record scan exceeds the 10000-record bound.');
+  }
+  const candidates = [];
+  for (const summary of summaries) {
+    let parsed: { projectId: string; kind: string; logicalId: string };
+    try {
+      parsed = parseRecordTitle(summary.title);
+    } catch {
+      continue;
+    }
+    if (parsed.projectId !== projectId || parsed.kind !== 'blob' || parsed.logicalId === expected.logicalId) {
+      continue;
+    }
+    candidates.push(summary);
+  }
+  candidates.sort((left, right) => (left.id < right.id ? -1 : left.id > right.id ? 1 : 0));
+  for (const candidate of candidates) {
+    const detail = await store.getItem(candidate.id);
+    let envelope: RecordEnvelope;
+    try {
+      envelope = decodeRecordEnvelope(detail, projectId);
+    } catch (error) {
+      if (error instanceof SecretSyncError && error.code === 'validation') {
+        continue;
+      }
+      throw error;
+    }
+    if (envelope.kind !== 'blob') {
+      continue;
+    }
+    if (
+      envelope.byteLength === expected.byteLength &&
+      envelope.sha256 === expected.sha256 &&
+      envelope.contentBase64 === expected.contentBase64
+    ) {
+      return { envelope, providerId: detail.id };
+    }
+  }
+  return undefined;
+}
+
 export async function publishBlob(
   store: SecretStore,
   projectId: string,
@@ -288,10 +336,14 @@ export async function publishBlob(
     record.envelope.logicalId,
     record.envelope,
   );
-  if (reconciled === undefined) {
-    throw new SecretSyncError('uncertain-write', 'Blob write outcome is uncertain; retry with the same logical id.');
+  if (reconciled !== undefined) {
+    return { envelope: record.envelope, providerId: reconciled.id, reconciled: true };
   }
-  return { envelope: record.envelope, providerId: reconciled.id, reconciled: true };
+  const adopted = await reconcileBlobByContent(store, projectId, record.envelope);
+  if (adopted !== undefined) {
+    return { envelope: adopted.envelope, providerId: adopted.providerId, reconciled: true };
+  }
+  throw new SecretSyncError('uncertain-write', 'Blob write outcome is uncertain; retry with the same logical id.');
 }
 
 export async function publishCommit(

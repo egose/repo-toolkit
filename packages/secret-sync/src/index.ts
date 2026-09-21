@@ -197,6 +197,7 @@ export {
   publishBlob,
   publishCommit,
   publishSnapshot,
+  reconcileBlobByContent,
   reconcileRecordByLogicalId,
   validateHistoryDependencies,
 } from './history-store';
