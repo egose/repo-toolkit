@@ -217,6 +217,29 @@ describe('discovery', () => {
     });
   });
 
+  it('prunes directories matching /**-suffixed ignores without counting their contents', async () => {
+    await withTempDir(async (dir) => {
+      await writeFixtureFile(dir, 'keep.json', '{}');
+      for (let i = 0; i < 25; i += 1) {
+        await writeFixtureFile(dir, `node_modules/pkg/f${i}.json`, '{}');
+      }
+      const pruned = await discoverLocalFiles({ root: dir, files: ['**/*.json'], ignore: ['**/node_modules/**'] });
+      expect(pruned.paths).toEqual(['keep.json']);
+      expect(pruned.scanned).toBe(2);
+      const full = await discoverLocalFiles({ root: dir, files: ['**/*.json'], ignore: [] });
+      expect(full.paths).toHaveLength(26);
+      expect(full.scanned).toBe(28);
+    });
+  });
+
+  it('does not prune directories on exact-file ignores', async () => {
+    await withTempDir(async (dir) => {
+      await writeFixtureFile(dir, 'data/inner.json', '{}');
+      const result = await discoverLocalFiles({ root: dir, files: ['**/*.json'], ignore: ['data'] });
+      expect(result.paths).toEqual(['data/inner.json']);
+    });
+  });
+
   it('matches remote paths even with zero local matches', async () => {
     await withTempDir(async (dir) => {
       const local = await discoverLocalFiles({ root: dir, files: ['apps/**/.env*'], ignore: [] });

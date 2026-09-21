@@ -74,6 +74,21 @@ export function createSelectionMatcher(options: SelectionMatcherOptions): (relPa
   };
 }
 
+function compileDirPruneMatchers(ignore: string[]): Array<(value: string) => boolean> {
+  const prunable = ignore.filter((pattern) => pattern === '**' || pattern.endsWith('/**'));
+  return compileMatchers(prunable);
+}
+
+function isPrunedDir(relPath: string, prune: ReadonlyArray<(value: string) => boolean>): boolean {
+  const slashed = toSlashPath(relPath);
+  for (const matches of prune) {
+    if (matches(slashed)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 export interface DiscoveryOptions {
   root: string;
   files: string[];
@@ -93,6 +108,7 @@ export async function discoverLocalFiles(options: DiscoveryOptions): Promise<Dis
   const maxRecords = options.maxRecords ?? MAX_SCAN_RECORDS;
   const extra = options.configRelPath ? [options.configRelPath] : [];
   const matches = createSelectionMatcher({ files: options.files, ignore: options.ignore, extraExcludes: extra });
+  const prune = compileDirPruneMatchers(options.ignore);
   const paths: string[] = [];
   const skippedSymlinks: string[] = [];
   const skippedSpecial: string[] = [];
@@ -124,7 +140,7 @@ export async function discoverLocalFiles(options: DiscoveryOptions): Promise<Dis
         continue;
       }
       if (entry.isDirectory()) {
-        if (!isAlwaysExcluded(rel)) {
+        if (!isAlwaysExcluded(rel) && !isPrunedDir(rel, prune)) {
           pending.push(rel);
         }
         continue;

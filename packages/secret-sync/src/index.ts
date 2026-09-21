@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { readFile } from 'node:fs/promises';
 import { isAbsolute, relative, resolve } from 'node:path';
 
 import { isPlainObject } from '@repo-toolkit/publish-package';
@@ -621,6 +622,7 @@ export async function resolveSecretSyncPlan(options: SecretSyncOptions = {}): Pr
   let raw: SecretSyncRawConfig = {};
   let configPath: string | undefined;
   let configDir = cwd;
+  let configLoaded = false;
   if (options.config !== undefined) {
     const loaded = await loadSecretSyncConfigFile(options.config, cwd);
     if (!isPlainObject(loaded.raw)) {
@@ -629,6 +631,34 @@ export async function resolveSecretSyncPlan(options: SecretSyncOptions = {}): Pr
     raw = loaded.raw;
     configPath = loaded.configPath;
     configDir = loaded.configDir;
+    configLoaded = true;
+  }
+  if (
+    options.config === undefined &&
+    options.remote === undefined &&
+    options.projectId === undefined &&
+    options.root === undefined &&
+    options.branch === undefined &&
+    options.files === undefined &&
+    options.ignore === undefined &&
+    options.limits === undefined
+  ) {
+    const implicitPath = resolve(cwd, 'secret-sync.config.json');
+    try {
+      const text = await readFile(implicitPath, 'utf8');
+      const parsed: unknown = JSON.parse(text);
+      if (!isPlainObject(parsed)) {
+        throw new Error(`Config file must export an object: ${implicitPath}`);
+      }
+      raw = parsed as SecretSyncRawConfig;
+      configPath = implicitPath;
+      configDir = cwd;
+      configLoaded = true;
+    } catch (error) {
+      if (error instanceof Error && error.message.startsWith('Config file must export an object')) {
+        throw error;
+      }
+    }
   }
   const merged: SecretSyncRawConfig = { ...raw };
   if (options.projectId !== undefined) merged.projectId = options.projectId;
@@ -641,7 +671,12 @@ export async function resolveSecretSyncPlan(options: SecretSyncOptions = {}): Pr
   if (options.config === undefined && merged.schemaVersion === undefined) {
     merged.schemaVersion = 1;
   }
-  if (command === 'vault' && options.config === undefined) {
+  if (!configLoaded && command !== 'vault' && merged.remote === undefined && merged.projectId === undefined) {
+    throw new Error(
+      `No config file found. Pass --config <path> (default: ./secret-sync.config.json in the working directory) or run 'repo-toolkit-secret-sync init --vault <vault-id>' to create one.`,
+    );
+  }
+  if (command === 'vault' && !configLoaded) {
     if (
       options.provider !== undefined ||
       options.auth !== undefined ||
