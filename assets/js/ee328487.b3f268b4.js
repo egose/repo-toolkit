@@ -18,7 +18,7 @@ __webpack_require__.d(__webpack_exports__, {
 });
 
 ;// ./.docusaurus/docusaurus-plugin-content-docs/default/site-docs-packages-secret-sync-md-ee3.json
-const site_docs_packages_secret_sync_md_ee3_namespaceObject = /*#__PURE__*/JSON.parse('{"id":"packages/secret-sync","title":"@repo-toolkit/secret-sync","description":"@repo-toolkit/secret-sync synchronizes explicitly selected local files with 1Password Connect, preserving exact bytes including binary data and line endings.","source":"@site/docs/packages/secret-sync.md","sourceDirName":"packages","slug":"/packages/secret-sync","permalink":"/docs/packages/secret-sync","draft":false,"unlisted":false,"tags":[],"version":"current","sidebarPosition":8,"frontMatter":{"sidebar_label":"Secret Sync","sidebar_position":8},"sidebar":"packagesSidebar","previous":{"title":"Docker Publish","permalink":"/docs/packages/docker-publish"}}');
+const site_docs_packages_secret_sync_md_ee3_namespaceObject = /*#__PURE__*/JSON.parse('{"id":"packages/secret-sync","title":"@repo-toolkit/secret-sync","description":"@repo-toolkit/secret-sync synchronizes explicitly selected local files with 1Password Connect or directly with the official 1Password SDK, preserving exact bytes including binary data and line endings.","source":"@site/docs/packages/secret-sync.md","sourceDirName":"packages","slug":"/packages/secret-sync","permalink":"/docs/packages/secret-sync","draft":false,"unlisted":false,"tags":[],"version":"current","sidebarPosition":8,"frontMatter":{"sidebar_label":"Secret Sync","sidebar_position":8},"sidebar":"packagesSidebar","previous":{"title":"Docker Publish","permalink":"/docs/packages/docker-publish"}}');
 // EXTERNAL MODULE: ./node_modules/.pnpm/react@19.2.6/node_modules/react/jsx-runtime.js
 var jsx_runtime = __webpack_require__(1325);
 // EXTERNAL MODULE: ./node_modules/.pnpm/@mdx-js+react@3.1.1_@types+react@19.2.14_react@19.2.6/node_modules/@mdx-js/react/lib/index.js
@@ -55,6 +55,22 @@ const toc = [{
   "id": "connect-deployment-and-auth",
   "level": 2
 }, {
+  "value": "Direct SDK setup (no Connect server)",
+  "id": "direct-sdk-setup-no-connect-server",
+  "level": 2
+}, {
+  "value": "Moving a Connect worktree to direct access",
+  "id": "moving-a-connect-worktree-to-direct-access",
+  "level": 2
+}, {
+  "value": "Permissions, vault scope, and limits",
+  "id": "permissions-vault-scope-and-limits",
+  "level": 2
+}, {
+  "value": "Runtime and platform support",
+  "id": "runtime-and-platform-support",
+  "level": 2
+}, {
   "value": "Limits: proposed tool bounds vs verified ceilings",
   "id": "limits-proposed-tool-bounds-vs-verified-ceilings",
   "level": 2
@@ -69,6 +85,10 @@ const toc = [{
 }, {
   "value": "Fake-server example without a real vault",
   "id": "fake-server-example-without-a-real-vault",
+  "level": 2
+}, {
+  "value": "Fake-SDK example without a real vault",
+  "id": "fake-sdk-example-without-a-real-vault",
   "level": 2
 }];
 function _createMdxContent(props) {
@@ -93,7 +113,7 @@ function _createMdxContent(props) {
     }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
       children: [(0,jsx_runtime.jsx)(_components.code, {
         children: "@repo-toolkit/secret-sync"
-      }), " synchronizes explicitly selected local files with 1Password Connect, preserving exact bytes including binary data and line endings."]
+      }), " synchronizes explicitly selected local files with 1Password Connect or directly with the official 1Password SDK, preserving exact bytes including binary data and line endings."]
     }), "\n", (0,jsx_runtime.jsx)(_components.h2, {
       id: "install",
       children: "Install"
@@ -153,7 +173,7 @@ function _createMdxContent(props) {
       id: "connect-deployment-and-auth",
       children: "Connect deployment and auth"
     }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
-      children: ["A deployed 1Password Connect server is required. The endpoint comes from ", (0,jsx_runtime.jsx)(_components.code, {
+      children: ["A deployed 1Password Connect server is required for the Connect backend. The endpoint comes from ", (0,jsx_runtime.jsx)(_components.code, {
         children: "OP_CONNECT_HOST"
       }), " and the token from ", (0,jsx_runtime.jsx)(_components.code, {
         children: "OP_CONNECT_TOKEN"
@@ -172,6 +192,86 @@ function _createMdxContent(props) {
       }), " need write access. ", (0,jsx_runtime.jsx)(_components.code, {
         children: "doctor"
       }), " reports observed read capability only and never claims write access without a write probe."]
+    }), "\n", (0,jsx_runtime.jsx)(_components.h2, {
+      id: "direct-sdk-setup-no-connect-server",
+      children: "Direct SDK setup (no Connect server)"
+    }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
+      children: ["Select the direct backend per config with ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "remote.type: \"onepassword-sdk\""
+      }), ". The backend is never inferred from whichever token happens to be set, and direct operation needs no Connect variables, Docker, the ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "op"
+      }), " CLI, or a running Connect endpoint. Two explicit auth modes are supported."]
+    }), "\n", (0,jsx_runtime.jsx)(_components.p, {
+      children: "Service-account mode (CI/headless):"
+    }), "\n", (0,jsx_runtime.jsx)(_components.pre, {
+      children: (0,jsx_runtime.jsx)(_components.code, {
+        className: "language-json",
+        children: "{\n  \"remote\": {\n    \"type\": \"onepassword-sdk\",\n    \"vaultId\": \"<1password-vault-id>\",\n    \"auth\": { \"type\": \"service-account\", \"tokenEnv\": \"OP_SERVICE_ACCOUNT_TOKEN\" }\n  }\n}\n"
+      })
+    }), "\n", (0,jsx_runtime.jsx)(_components.pre, {
+      children: (0,jsx_runtime.jsx)(_components.code, {
+        className: "language-sh",
+        children: "repo-toolkit-secret-sync init --config secret-sync.config.json --vault <vault-id> \\\n  --provider onepassword-sdk --auth service-account --token-env OP_SERVICE_ACCOUNT_TOKEN\n"
+      })
+    }), "\n", (0,jsx_runtime.jsx)(_components.p, {
+      children: "Desktop mode (local use, approval prompts come from 1Password itself):"
+    }), "\n", (0,jsx_runtime.jsx)(_components.pre, {
+      children: (0,jsx_runtime.jsx)(_components.code, {
+        className: "language-json",
+        children: "{\n  \"remote\": {\n    \"type\": \"onepassword-sdk\",\n    \"vaultId\": \"<1password-vault-id>\",\n    \"auth\": { \"type\": \"desktop\", \"account\": \"<1password-account-id-or-name>\" }\n  }\n}\n"
+      })
+    }), "\n", (0,jsx_runtime.jsx)(_components.pre, {
+      children: (0,jsx_runtime.jsx)(_components.code, {
+        className: "language-sh",
+        children: "repo-toolkit-secret-sync init --config secret-sync.config.json --vault <vault-id> \\\n  --provider onepassword-sdk --auth desktop --account <1password-account-id-or-name>\n"
+      })
+    }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
+      children: ["Prefer a stable account ID where supported; the account selector is passed through to the SDK and only its non-secret value appears in diagnostics. Tokens are read from the environment during execution only and never persisted in config, plans, state, results, errors, or diagnostic JSON. A denied or cancelled desktop prompt is an authentication error with no fallback to another account, token, or Connect. Planning, validation, help, and local-only ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "init"
+      }), " never initialize or authenticate the SDK; an online dry run may read but never creates items or changes worktree/state. One SDK client is created lazily per command execution and shared by concurrent store calls."]
+    }), "\n", (0,jsx_runtime.jsx)(_components.h2, {
+      id: "moving-a-connect-worktree-to-direct-access",
+      children: "Moving a Connect worktree to direct access"
+    }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
+      children: ["A config-only provider change refuses to reuse existing state: backend, vault, or project changes are identity mismatches. Transition with a fresh worktree and state directory using the same vault and project IDs, then reconcile preexisting local files through the existing unbased-conflict rules. The tool never auto-deletes journals, resets a dirty worktree, or offers an in-place backend-rebind command. Service-account token rotation and switching auth mode for the same vault/project keep baselines; local state is ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "0600"
+      }), " files under a ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "0700"
+      }), " directory with no tokens, endpoint credentials, payloads, or sessions."]
+    }), "\n", (0,jsx_runtime.jsx)(_components.h2, {
+      id: "permissions-vault-scope-and-limits",
+      children: "Permissions, vault scope, and limits"
+    }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
+      children: ["Service accounts are vault/permission scoped: read-only access covers ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "status"
+      }), "/", (0,jsx_runtime.jsx)(_components.code, {
+        children: "pull"
+      }), "/", (0,jsx_runtime.jsx)(_components.code, {
+        children: "log"
+      }), ", while ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "push"
+      }), ", ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "rollback"
+      }), ", branch creation, and ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "resolve"
+      }), " need write access, and ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "doctor"
+      }), " reports observed read capability only. Service accounts cannot access built-in Personal/Private/Employee vaults. Desktop approval grants temporary access to the authorized account, which is broader than the configured vault filter — the tool still lists only the configured vault. An account lacking the configured vault fails access checks instead of selecting a similarly named vault."]
+    }), "\n", (0,jsx_runtime.jsx)(_components.p, {
+      children: "The file/record bounds are unchanged across backends: 32 KiB per file, 100 files, 64 KiB serialized record, 10,000 records per scan, 256 KiB detail responses, 30 s timeouts, concurrency default 4 (max 8). Direct reads retry up to three times with bounded backoff; creates are never retried, and a timeout around a create is an uncertain write reconciled by logical ID, not evidence of failure. Service-account quotas differ from Connect: the SDK surfaces rate limiting as an error with no documented quota numbers, and an incomplete listing never implies deletion. Live-vault verification of ceilings, visibility latency, quota numbers, and permission behavior is still required before any storage-compatibility claim."
+    }), "\n", (0,jsx_runtime.jsx)(_components.h2, {
+      id: "runtime-and-platform-support",
+      children: "Runtime and platform support"
+    }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
+      children: ["Direct mode needs ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "@1password/sdk@0.5.0"
+      }), " (MIT) with ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "@1password/sdk-core@0.5.0"
+      }), " (MIT, ~14 MB unpacked wasm). The SDK stays external to the built bundle and ships through the package manager's production dependency closure; a missing wasm asset fails with an explicit runtime-assets error that is never disguised as a credential failure. ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "engines"
+      }), " requires Node >= 20. The SDK targets Node.js only; desktop IPC is supported on darwin/linux/win32, and other platform combinations are unverified against live accounts. Selecting Connect never initializes the SDK, and ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "--help"
+      }), " plus every Connect workflow run without SDK initialization."]
     }), "\n", (0,jsx_runtime.jsx)(_components.h2, {
       id: "limits-proposed-tool-bounds-vs-verified-ceilings",
       children: "Limits: proposed tool bounds vs verified ceilings"
@@ -218,8 +318,18 @@ function _createMdxContent(props) {
         className: "language-sh",
         children: "node examples/fake-server.mjs\n"
       })
+    }), "\n", (0,jsx_runtime.jsx)(_components.p, {
+      children: "The example starts a loopback fake Connect server, then runs init, push, status, and pull with exact-byte verification."
+    }), "\n", (0,jsx_runtime.jsx)(_components.h2, {
+      id: "fake-sdk-example-without-a-real-vault",
+      children: "Fake-SDK example without a real vault"
+    }), "\n", (0,jsx_runtime.jsx)(_components.pre, {
+      children: (0,jsx_runtime.jsx)(_components.code, {
+        className: "language-sh",
+        children: "node examples/fake-sdk.mjs\n"
+      })
     }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
-      children: ["The example starts a loopback fake Connect server, then runs init, push, status, and pull with exact-byte verification. The config examples above are executed in ", (0,jsx_runtime.jsx)(_components.code, {
+      children: ["The example runs service-account and desktop round trips (push, status, pull) through the real SDK adapter against an in-memory fake SDK client with exact-byte verification. No vault, credentials, desktop software, or network access is required. The config examples above are executed in ", (0,jsx_runtime.jsx)(_components.code, {
         children: "test/examples.test.ts"
       }), " against an in-memory fake store, and the shipped record format is a versioned JSON envelope (Secure Note with a concealed ", (0,jsx_runtime.jsx)(_components.code, {
         children: "payload"
