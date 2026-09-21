@@ -176,7 +176,9 @@ function _createMdxContent(props) {
         children: "/**"
       }), "-suffixed ignore (e.g. ", (0,jsx_runtime.jsx)(_components.code, {
         children: "**/node_modules/**"
-      }), ") are pruned from traversal and don't count toward the 10,000-record scan bound. ", (0,jsx_runtime.jsx)(_components.code, {
+      }), ") are pruned from traversal and don't count toward the 10,000-record scan bound. When every ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "files"
+      }), " entry is a literal path with no glob characters, discovery stats those paths directly instead of walking the root. ", (0,jsx_runtime.jsx)(_components.code, {
         children: "--file <path>"
       }), " selects an exact path inside the allowed set, is repeatable without comma splitting, and never overrides excludes. Use ", (0,jsx_runtime.jsx)(_components.code, {
         children: "--file=<name>"
