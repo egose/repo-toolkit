@@ -87,6 +87,10 @@ const toc = [{
   "id": "listing-vaults",
   "level": 2
 }, {
+  "value": "Viewing file content without pulling",
+  "id": "viewing-file-content-without-pulling",
+  "level": 2
+}, {
   "value": "Fake-server example without a real vault",
   "id": "fake-server-example-without-a-real-vault",
   "level": 2
@@ -306,7 +310,7 @@ function _createMdxContent(props) {
     }), "\n", (0,jsx_runtime.jsx)(_components.pre, {
       children: (0,jsx_runtime.jsx)(_components.code, {
         className: "language-sh",
-        children: "repo-toolkit-secret-sync init --config secret-sync.config.json --vault <vault-id>\nrepo-toolkit-secret-sync doctor\nrepo-toolkit-secret-sync status --check --json\nrepo-toolkit-secret-sync push --file .env --message \"Rotate credentials\"\nrepo-toolkit-secret-sync pull --dry-run\nrepo-toolkit-secret-sync diff --file .env\nrepo-toolkit-secret-sync log --file .env --limit 20\nrepo-toolkit-secret-sync restore --file .env --revision <blob-id>\nrepo-toolkit-secret-sync rollback --file .env --revision <blob-id> --message \"Revert\"\nrepo-toolkit-secret-sync branch list\nrepo-toolkit-secret-sync branch create --name feature/demo --from main\nrepo-toolkit-secret-sync switch --branch feature/demo\nrepo-toolkit-secret-sync resolve --head <A> --head <B> --take <A>\nrepo-toolkit-secret-sync vault list\n"
+        children: "repo-toolkit-secret-sync init --config secret-sync.config.json --vault <vault-id>\nrepo-toolkit-secret-sync doctor\nrepo-toolkit-secret-sync status --check --json\nrepo-toolkit-secret-sync push --file .env --message \"Rotate credentials\"\nrepo-toolkit-secret-sync pull --dry-run\nrepo-toolkit-secret-sync diff --file .env\nrepo-toolkit-secret-sync log --file .env --limit 20\nrepo-toolkit-secret-sync restore --file .env --revision <blob-id>\nrepo-toolkit-secret-sync rollback --file .env --revision <blob-id> --message \"Revert\"\nrepo-toolkit-secret-sync branch list\nrepo-toolkit-secret-sync branch create --name feature/demo --from main\nrepo-toolkit-secret-sync switch --branch feature/demo\nrepo-toolkit-secret-sync resolve --head <A> --head <B> --take <A>\nrepo-toolkit-secret-sync vault list\nrepo-toolkit-secret-sync show --file .env --revision <blob-id>\n"
       })
     }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
       children: ["The command is the first non-wrapper token (", (0,jsx_runtime.jsx)(_components.code, {
@@ -348,6 +352,31 @@ function _createMdxContent(props) {
       })
     }), "\n", (0,jsx_runtime.jsx)(_components.p, {
       children: "Service accounts cannot see Personal/Private/Employee vaults."
+    }), "\n", (0,jsx_runtime.jsx)(_components.h2, {
+      id: "viewing-file-content-without-pulling",
+      children: "Viewing file content without pulling"
+    }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
+      children: [(0,jsx_runtime.jsx)(_components.code, {
+        children: "show --file <path>"
+      }), " prints one tracked file's verified bytes (length- and SHA-256-checked) to stdout without touching the worktree, state, or baselines. Add ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "--revision <blob-id>"
+      }), " for a historical version or ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "--branch <name>"
+      }), " to read another branch. ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "show"
+      }), " prints raw bytes only and does not support ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "--json"
+      }), " (except with ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "--copy"
+      }), ", which emits metadata without bytes); redirect to a file instead of scrolling secrets, and beware shell history. With ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "--interactive"
+      }), ", ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "show"
+      }), " walks file, revision, then branch pickers instead of requiring ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "--file"
+      }), " up front; cancelling aborts with a non-zero exit and prints nothing. With ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "--copy"
+      }), ", the bytes go to the system clipboard and stdout gets only a confirmation; clipboard contents linger, so clear them when done."]
     }), "\n", (0,jsx_runtime.jsx)(_components.h2, {
       id: "fake-server-example-without-a-real-vault",
       children: "Fake-server example without a real vault"
