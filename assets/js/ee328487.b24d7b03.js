@@ -324,11 +324,18 @@ function _createMdxContent(props) {
         children: "id"
       }), " and ", (0,jsx_runtime.jsx)(_components.code, {
         children: "title"
-      }), " of every vault visible to the configured credential on either backend, for discovering ", (0,jsx_runtime.jsx)(_components.code, {
+      }), " of every vault visible to the credential on either backend, for discovering ", (0,jsx_runtime.jsx)(_components.code, {
         children: "remote.vaultId"
       }), ". It is read-only (no state, lock, or temp writes) and supports ", (0,jsx_runtime.jsx)(_components.code, {
         children: "--json"
-      }), ". Service accounts cannot see Personal/Private/Employee vaults."]
+      }), ". No config file is needed when the backend is given explicitly:"]
+    }), "\n", (0,jsx_runtime.jsx)(_components.pre, {
+      children: (0,jsx_runtime.jsx)(_components.code, {
+        className: "language-sh",
+        children: "OP_SERVICE_ACCOUNT_TOKEN=<sa-token> repo-toolkit-secret-sync vault list --provider onepassword-sdk --auth service-account\nrepo-toolkit-secret-sync vault list --provider onepassword-sdk --auth desktop --account <account-id-or-name>\nOP_CONNECT_HOST=http://127.0.0.1:8080 OP_CONNECT_TOKEN=<token> repo-toolkit-secret-sync vault list --provider onepassword-connect\n"
+      })
+    }), "\n", (0,jsx_runtime.jsx)(_components.p, {
+      children: "Service accounts cannot see Personal/Private/Employee vaults."
     }), "\n", (0,jsx_runtime.jsx)(_components.h2, {
       id: "fake-server-example-without-a-real-vault",
       children: "Fake-server example without a real vault"
