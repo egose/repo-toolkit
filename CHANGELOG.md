@@ -1,3 +1,9 @@
+## [0.41.0](https://github.com/egose/repo-toolkit/compare/v0.40.0...v0.41.0) (2026-09-21)
+
+### Features
+
+* add secure file export for show ([dc26c5c](https://github.com/egose/repo-toolkit/commit/dc26c5ca7e9363d783df073c84a1cf486b2a4967))
+
 ## [0.40.0](https://github.com/egose/repo-toolkit/compare/v0.39.0...v0.40.0) (2026-09-21)
 
 ### Features
