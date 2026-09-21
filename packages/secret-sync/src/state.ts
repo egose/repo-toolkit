@@ -8,7 +8,7 @@ import { normalizeProjectRelPath, validateBranchName } from './config';
 import { SECRET_SYNC_STATE_DIR } from './discovery';
 import { SecretSyncError } from './errors';
 
-export const SECRET_SYNC_STATE_SCHEMA_VERSION = 1;
+export const SECRET_SYNC_STATE_SCHEMA_VERSION = 2;
 export const SECRET_SYNC_STATE_FILE_NAME = 'state.json';
 export const SECRET_SYNC_LOCK_FILE_NAME = 'state.lock';
 export const SECRET_SYNC_JOURNAL_FILE_NAME = 'journal.jsonl';
@@ -28,11 +28,40 @@ const UUID_PATTERN = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{
 const HEX64_PATTERN = /^[0-9a-f]{64}$/;
 const HMAC_PATTERN = /^[0-9a-f]{64}$/;
 
-export interface RemoteIdentity {
+export interface ConnectStateRemote {
+  type: 'onepassword-connect';
+  endpoint: string;
+  vaultId: string;
+}
+
+export interface SdkStateRemote {
+  type: 'onepassword-sdk';
+  vaultId: string;
+}
+
+export type StateRemote = ConnectStateRemote | SdkStateRemote;
+export type RemoteBinding = StateRemote;
+
+export interface ConnectRemoteIdentity {
+  type: 'onepassword-connect';
   endpoint: string;
   vaultId: string;
   projectId: string;
 }
+
+export interface SdkRemoteIdentity {
+  type: 'onepassword-sdk';
+  vaultId: string;
+  projectId: string;
+}
+
+export type RemoteIdentity = ConnectRemoteIdentity | SdkRemoteIdentity;
+
+export type LegacyRemoteIdentity = {
+  endpoint: string;
+  vaultId: string;
+  projectId: string;
+};
 
 export interface AbsentBaseline {
   state: 'absent';
@@ -49,9 +78,9 @@ export interface PresentBaseline {
 export type FileBaseline = AbsentBaseline | PresentBaseline;
 
 export interface SecretSyncState {
-  schemaVersion: 1;
+  schemaVersion: 2;
   projectId: string;
-  remote: { endpoint: string; vaultId: string };
+  remote: StateRemote;
   activeBranch: string;
   materializedBranch?: string;
   localKey: string;
@@ -153,19 +182,156 @@ export function validateRemoteEndpoint(value: unknown): string {
   return trimmed;
 }
 
+function assertVaultId(value: unknown, code: 'validation' | 'state-corrupt', what: string): string {
+  if (typeof value !== 'string' || value.length === 0 || value.length > 256) {
+    throw new SecretSyncError(code, `${what} carries an invalid vault id.`);
+  }
+  if (value.includes('\0') || value.includes('/') || value.includes('\n') || value.includes('\r')) {
+    throw new SecretSyncError(code, `${what} carries an invalid vault id.`);
+  }
+  return value;
+}
+
+function assertProjectUuid(value: unknown, code: 'validation' | 'state-corrupt', what: string): string {
+  if (typeof value !== 'string' || !UUID_PATTERN.test(value)) {
+    throw new SecretSyncError(code, `${what} carries an invalid project id.`);
+  }
+  return value;
+}
+
+function rejectUnknownFields(record: Record<string, unknown>, allowed: ReadonlySet<string>, what: string): void {
+  for (const key of Object.keys(record)) {
+    if (!allowed.has(key)) {
+      throw new SecretSyncError('validation', `${what} carries an unknown field ${JSON.stringify(key)}.`);
+    }
+  }
+}
+
+const CONNECT_IDENTITY_FIELDS = new Set(['type', 'endpoint', 'vaultId', 'projectId']);
+const SDK_IDENTITY_FIELDS = new Set(['type', 'vaultId', 'projectId']);
+const CONNECT_REMOTE_FIELDS = new Set(['type', 'endpoint', 'vaultId']);
+const SDK_REMOTE_FIELDS = new Set(['type', 'vaultId']);
+const SDK_FORBIDDEN_IDENTITY_FIELDS = new Set(['endpoint', 'auth', 'token', 'tokenEnv', 'account', 'session']);
+
+export function validateStateRemote(value: unknown): StateRemote {
+  if (!isPlainObject(value)) {
+    throw new SecretSyncError('validation', 'Remote binding must be an object.');
+  }
+  const record = value as Record<string, unknown>;
+  if (record.type === 'onepassword-connect') {
+    rejectUnknownFields(record, CONNECT_REMOTE_FIELDS, 'Remote binding');
+    return {
+      type: 'onepassword-connect',
+      endpoint: validateRemoteEndpoint(record.endpoint),
+      vaultId: assertVaultId(record.vaultId, 'validation', 'Remote binding'),
+    };
+  }
+  if (record.type === 'onepassword-sdk') {
+    rejectUnknownFields(record, SDK_REMOTE_FIELDS, 'Remote binding');
+    return { type: 'onepassword-sdk', vaultId: assertVaultId(record.vaultId, 'validation', 'Remote binding') };
+  }
+  throw new SecretSyncError('validation', 'Remote binding carries an unknown type.');
+}
+
 export function validateRemoteIdentity(value: unknown): RemoteIdentity {
   if (!isPlainObject(value)) {
     throw new SecretSyncError('validation', 'Remote identity must be an object.');
   }
   const record = value as Record<string, unknown>;
-  const endpoint = validateRemoteEndpoint(record.endpoint);
-  if (typeof record.vaultId !== 'string' || record.vaultId.length === 0) {
-    throw new SecretSyncError('validation', 'Remote identity carries an invalid vault id.');
+  if (record.type === undefined) {
+    rejectUnknownFields(record, CONNECT_IDENTITY_FIELDS, 'Remote identity');
+    const endpoint = validateRemoteEndpoint(record.endpoint);
+    const vaultId = assertVaultId(record.vaultId, 'validation', 'Remote identity');
+    const projectId = assertProjectUuid(record.projectId, 'validation', 'Remote identity');
+    return { type: 'onepassword-connect', endpoint, vaultId, projectId };
   }
-  if (typeof record.projectId !== 'string' || !UUID_PATTERN.test(record.projectId)) {
-    throw new SecretSyncError('validation', 'Remote identity carries an invalid project id.');
+  if (record.type === 'onepassword-connect') {
+    rejectUnknownFields(record, CONNECT_IDENTITY_FIELDS, 'Remote identity');
+    return {
+      type: 'onepassword-connect',
+      endpoint: validateRemoteEndpoint(record.endpoint),
+      vaultId: assertVaultId(record.vaultId, 'validation', 'Remote identity'),
+      projectId: assertProjectUuid(record.projectId, 'validation', 'Remote identity'),
+    };
   }
-  return { endpoint, vaultId: record.vaultId, projectId: record.projectId };
+  if (record.type === 'onepassword-sdk') {
+    rejectUnknownFields(record, SDK_IDENTITY_FIELDS, 'Remote identity');
+    for (const forbidden of SDK_FORBIDDEN_IDENTITY_FIELDS) {
+      if (Object.prototype.hasOwnProperty.call(record, forbidden)) {
+        throw new SecretSyncError('validation', 'Remote identity mixes Connect and SDK identity forms.');
+      }
+    }
+    return {
+      type: 'onepassword-sdk',
+      vaultId: assertVaultId(record.vaultId, 'validation', 'Remote identity'),
+      projectId: assertProjectUuid(record.projectId, 'validation', 'Remote identity'),
+    };
+  }
+  throw new SecretSyncError('validation', 'Remote identity carries an unknown type.');
+}
+
+export interface OperationIdentityInput {
+  endpoint?: unknown;
+  vaultId?: unknown;
+  projectId?: unknown;
+  remote?: unknown;
+  identity?: unknown;
+}
+
+export function normalizeOperationIdentity(input: OperationIdentityInput): RemoteIdentity {
+  const hasIdentity = input.identity !== undefined;
+  const hasRemote = input.remote !== undefined;
+  const hasEndpoint = input.endpoint !== undefined;
+  const hasVault = input.vaultId !== undefined;
+  const hasProject = input.projectId !== undefined;
+  if (hasIdentity) {
+    if (hasRemote || hasEndpoint || hasVault || hasProject) {
+      throw new SecretSyncError('validation', 'Operation identity mixes old and new identity forms.');
+    }
+    return validateRemoteIdentity(input.identity);
+  }
+  if (hasRemote) {
+    if (hasEndpoint || hasVault) {
+      throw new SecretSyncError('validation', 'Operation identity mixes old and new identity forms.');
+    }
+    if (!hasProject) {
+      throw new SecretSyncError('validation', 'Operation remote binding requires a project id.');
+    }
+    const remote = validateStateRemote(input.remote);
+    const projectId = assertProjectUuid(input.projectId, 'validation', 'Remote identity');
+    if (remote.type === 'onepassword-connect') {
+      return { type: 'onepassword-connect', endpoint: remote.endpoint, vaultId: remote.vaultId, projectId };
+    }
+    return { type: 'onepassword-sdk', vaultId: remote.vaultId, projectId };
+  }
+  return validateRemoteIdentity({ endpoint: input.endpoint, vaultId: input.vaultId, projectId: input.projectId });
+}
+
+export function remoteIdentityFromConfig(
+  remote: { type: string; vaultId: string },
+  projectId: string,
+  endpoint?: string,
+): RemoteIdentity {
+  const resolvedProject = assertProjectUuid(projectId, 'validation', 'Remote identity');
+  if (remote.type === 'onepassword-sdk') {
+    return {
+      type: 'onepassword-sdk',
+      vaultId: assertVaultId(remote.vaultId, 'validation', 'Remote identity'),
+      projectId: resolvedProject,
+    };
+  }
+  if (remote.type === 'onepassword-connect') {
+    if (typeof endpoint !== 'string' || endpoint.length === 0) {
+      throw new SecretSyncError('validation', 'Connect identity requires a resolved endpoint.');
+    }
+    return {
+      type: 'onepassword-connect',
+      endpoint: validateRemoteEndpoint(endpoint),
+      vaultId: assertVaultId(remote.vaultId, 'validation', 'Remote identity'),
+      projectId: resolvedProject,
+    };
+  }
+  throw new SecretSyncError('validation', 'Remote identity carries an unknown type.');
 }
 
 function assertUuidField(value: unknown, field: string): string {
@@ -228,6 +394,58 @@ function assertBaseline(path: string, value: unknown): FileBaseline {
   throw new SecretSyncError('state-corrupt', `State baseline for ${JSON.stringify(path)} carries an unknown state.`);
 }
 
+function assertStateRemoteRecord(value: unknown): StateRemote {
+  if (!isPlainObject(value)) {
+    throw new SecretSyncError('state-corrupt', 'State file carries an invalid remote identity.');
+  }
+  const record = value as Record<string, unknown>;
+  if (record.type === undefined) {
+    for (const key of Object.keys(record)) {
+      if (key !== 'endpoint' && key !== 'vaultId') {
+        throw new SecretSyncError('state-corrupt', 'State file carries an unknown remote field.');
+      }
+    }
+    if (typeof record.endpoint !== 'string' || record.endpoint.length === 0) {
+      throw new SecretSyncError('state-corrupt', 'State file carries an invalid remote endpoint.');
+    }
+    let endpoint: string;
+    try {
+      endpoint = validateRemoteEndpoint(record.endpoint);
+    } catch {
+      throw new SecretSyncError('state-corrupt', 'State file carries an invalid remote endpoint.');
+    }
+    const vaultId = assertVaultId(record.vaultId, 'state-corrupt', 'State file');
+    return { type: 'onepassword-connect', endpoint, vaultId };
+  }
+  if (record.type === 'onepassword-connect') {
+    for (const key of Object.keys(record)) {
+      if (key !== 'type' && key !== 'endpoint' && key !== 'vaultId') {
+        throw new SecretSyncError('state-corrupt', 'State file carries an unknown remote field.');
+      }
+    }
+    let endpoint: string;
+    try {
+      endpoint = validateRemoteEndpoint(record.endpoint);
+    } catch {
+      throw new SecretSyncError('state-corrupt', 'State file carries an invalid remote endpoint.');
+    }
+    return {
+      type: 'onepassword-connect',
+      endpoint,
+      vaultId: assertVaultId(record.vaultId, 'state-corrupt', 'State file'),
+    };
+  }
+  if (record.type === 'onepassword-sdk') {
+    for (const key of Object.keys(record)) {
+      if (key !== 'type' && key !== 'vaultId') {
+        throw new SecretSyncError('state-corrupt', 'State file carries an unknown remote field.');
+      }
+    }
+    return { type: 'onepassword-sdk', vaultId: assertVaultId(record.vaultId, 'state-corrupt', 'State file') };
+  }
+  throw new SecretSyncError('state-corrupt', 'State file carries an unknown remote type.');
+}
+
 export function assertSecretSyncState(value: unknown): SecretSyncState {
   if (!isPlainObject(value)) {
     throw new SecretSyncError('state-corrupt', 'State file is not a JSON object.');
@@ -249,25 +467,11 @@ export function assertSecretSyncState(value: unknown): SecretSyncState {
       throw new SecretSyncError('state-corrupt', 'State file carries an unknown field.');
     }
   }
-  if (record.schemaVersion !== SECRET_SYNC_STATE_SCHEMA_VERSION) {
+  if (record.schemaVersion !== SECRET_SYNC_STATE_SCHEMA_VERSION && record.schemaVersion !== 1) {
     throw new SecretSyncError('state-corrupt', 'State file carries an unsupported schema version.');
   }
   const projectId = assertUuidField(record.projectId, 'project id');
-  if (!isPlainObject(record.remote)) {
-    throw new SecretSyncError('state-corrupt', 'State file carries an invalid remote identity.');
-  }
-  const remoteRecord = record.remote as Record<string, unknown>;
-  if (typeof remoteRecord.endpoint !== 'string' || remoteRecord.endpoint.length === 0) {
-    throw new SecretSyncError('state-corrupt', 'State file carries an invalid remote endpoint.');
-  }
-  if (typeof remoteRecord.vaultId !== 'string' || remoteRecord.vaultId.length === 0) {
-    throw new SecretSyncError('state-corrupt', 'State file carries an invalid vault id.');
-  }
-  for (const key of Object.keys(remoteRecord)) {
-    if (key !== 'endpoint' && key !== 'vaultId') {
-      throw new SecretSyncError('state-corrupt', 'State file carries an unknown remote field.');
-    }
-  }
+  const remote = assertStateRemoteRecord(record.remote);
   let activeBranch: string;
   let materializedBranch: string | undefined;
   try {
@@ -318,7 +522,7 @@ export function assertSecretSyncState(value: unknown): SecretSyncState {
   const state: SecretSyncState = {
     schemaVersion: SECRET_SYNC_STATE_SCHEMA_VERSION,
     projectId,
-    remote: { endpoint: remoteRecord.endpoint as string, vaultId: remoteRecord.vaultId as string },
+    remote,
     activeBranch,
     localKey: record.localKey as string,
     baselines,
@@ -332,18 +536,23 @@ export function assertSecretSyncState(value: unknown): SecretSyncState {
 }
 
 export function identitiesMatch(left: RemoteIdentity, state: SecretSyncState): boolean {
-  return (
-    left.endpoint === state.remote.endpoint &&
-    left.vaultId === state.remote.vaultId &&
-    left.projectId === state.projectId
-  );
+  if (left.projectId !== state.projectId || left.vaultId !== state.remote.vaultId) {
+    return false;
+  }
+  if (left.type !== state.remote.type) {
+    return false;
+  }
+  if (left.type === 'onepassword-connect' && state.remote.type === 'onepassword-connect') {
+    return left.endpoint === state.remote.endpoint;
+  }
+  return true;
 }
 
 export function assertIdentityMatches(identity: RemoteIdentity, state: SecretSyncState): void {
   if (!identitiesMatch(identity, state)) {
     throw new SecretSyncError(
       'identity-mismatch',
-      'Configured remote identity differs from local state; reinitialize explicitly instead of reusing this baseline.',
+      'Configured remote identity differs from local state; use a fresh worktree and state directory with the same vault and project ids, then reconcile local files through unbased-conflict rules instead of reusing this baseline.',
     );
   }
 }
@@ -413,10 +622,13 @@ export async function loadStateFile(rootAbsolute: string): Promise<SecretSyncSta
   return assertSecretSyncState(parsed);
 }
 
-export async function loadState(rootAbsolute: string, expectedIdentity?: RemoteIdentity): Promise<SecretSyncState> {
+export async function loadState(
+  rootAbsolute: string,
+  expectedIdentity?: RemoteIdentity | LegacyRemoteIdentity,
+): Promise<SecretSyncState> {
   const state = await loadStateFile(rootAbsolute);
   if (expectedIdentity !== undefined) {
-    assertIdentityMatches(expectedIdentity, state);
+    assertIdentityMatches(validateRemoteIdentity({ ...(expectedIdentity as Record<string, unknown>) }), state);
   }
   return state;
 }
@@ -442,20 +654,30 @@ export async function readStateIfPresent(rootAbsolute: string): Promise<SecretSy
 
 export async function initState(
   rootAbsolute: string,
-  identity: RemoteIdentity,
+  identity: RemoteIdentity | LegacyRemoteIdentity | OperationIdentityInput,
   options: InitStateOptions = {},
 ): Promise<SecretSyncState> {
-  const validatedIdentity = validateRemoteIdentity({ ...identity });
+  const candidate = identity as Record<string, unknown>;
+  const normalized =
+    Object.prototype.hasOwnProperty.call(candidate, 'identity') ||
+    Object.prototype.hasOwnProperty.call(candidate, 'remote')
+      ? normalizeOperationIdentity(candidate as OperationIdentityInput)
+      : validateRemoteIdentity({ ...candidate });
+  const validatedIdentity = normalized;
   const branch = options.branch === undefined ? 'main' : validateBranchName(options.branch);
   const existing = await readStateIfPresent(rootAbsolute);
   if (existing !== undefined) {
     assertIdentityMatches(validatedIdentity, existing);
     return existing;
   }
+  const remote: StateRemote =
+    validatedIdentity.type === 'onepassword-connect'
+      ? { type: 'onepassword-connect', endpoint: validatedIdentity.endpoint, vaultId: validatedIdentity.vaultId }
+      : { type: 'onepassword-sdk', vaultId: validatedIdentity.vaultId };
   const state: SecretSyncState = {
     schemaVersion: SECRET_SYNC_STATE_SCHEMA_VERSION,
     projectId: validatedIdentity.projectId,
-    remote: { endpoint: validatedIdentity.endpoint, vaultId: validatedIdentity.vaultId },
+    remote,
     activeBranch: branch,
     materializedBranch: branch,
     localKey: createFingerprintKey(),

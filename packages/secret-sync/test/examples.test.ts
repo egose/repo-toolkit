@@ -70,4 +70,12 @@ describe('documented secret-sync examples', () => {
     expect(result.status).toBe(0);
     expect(result.stdout).toContain('fake-server round trip ok');
   });
+
+  it('runs the fake-sdk example without a real vault or credentials', () => {
+    const result = spawnSync(process.execPath, [join(packageRoot, 'examples', 'fake-sdk.mjs')], {
+      encoding: 'utf8',
+    });
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain('fake-sdk round trip ok');
+  });
 });

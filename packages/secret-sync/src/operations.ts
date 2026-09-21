@@ -9,7 +9,7 @@ import {
   normalizeProjectRelPath,
   validateBranchName,
 } from './config';
-import { mapWithConcurrency, validateConcurrency } from './connect';
+import { mapWithConcurrency, validateConcurrency } from './concurrency';
 import { SECRET_SYNC_STATE_DIR } from './discovery';
 import { SecretSyncError } from './errors';
 import { deriveBranchHeads } from './graph';

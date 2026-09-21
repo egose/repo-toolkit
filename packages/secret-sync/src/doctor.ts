@@ -13,16 +13,23 @@ import {
   MAX_SCAN_RECORDS,
 } from './config';
 import { discoverLocalFiles } from './discovery';
-import { readStateIfPresent } from './state';
+import { SecretSyncError } from './errors';
+import { identitiesMatch, readStateIfPresent, validateRemoteIdentity, type RemoteIdentity } from './state';
+import { SDK_MAX_DETAIL_BYTES, SDK_MAX_GET_RETRIES, SDK_MAX_RECORDS, SDK_TIMEOUT_MS } from './sdk';
 import type { SecretStore } from './store';
+
+export type DoctorProvider = 'onepassword-connect' | 'onepassword-sdk';
+export type DoctorAuthMode = 'token' | 'service-account' | 'desktop';
 
 export interface DoctorOptions {
   store: SecretStore;
   rootAbsolute: string;
-  projectId: string;
+  projectId?: string;
   branch: string;
-  endpoint: string;
-  vaultId: string;
+  endpoint?: string;
+  vaultId?: string;
+  remote?: unknown;
+  identity?: unknown;
   files: string[];
   ignore: string[];
   configRelPath?: string;
@@ -42,7 +49,10 @@ export interface DoctorResult {
   branch: string;
   projectId: string;
   vaultId: string;
-  endpointHost: string;
+  provider: DoctorProvider;
+  authMode: DoctorAuthMode;
+  endpointHost?: string;
+  account?: string;
   checks: DoctorCheck[];
   recordCount: number;
   localMatchCount: number;
@@ -59,7 +69,62 @@ function endpointHost(endpoint: string): string {
   }
 }
 
+function resolveDoctorIdentity(options: DoctorOptions): RemoteIdentity {
+  if (options.identity !== undefined) {
+    if (options.endpoint !== undefined || options.vaultId !== undefined || options.projectId !== undefined) {
+      throw new SecretSyncError('validation', 'Operation identity mixes old and new identity forms.');
+    }
+    return validateRemoteIdentity(options.identity);
+  }
+  if (options.remote !== undefined) {
+    if (options.endpoint !== undefined || options.vaultId !== undefined) {
+      throw new SecretSyncError('validation', 'Operation identity mixes old and new identity forms.');
+    }
+    if (options.projectId === undefined) {
+      throw new SecretSyncError('validation', 'Operation remote binding requires a project id.');
+    }
+    const remote = options.remote as Record<string, unknown>;
+    if (remote.type === 'onepassword-sdk') {
+      return validateRemoteIdentity({
+        type: 'onepassword-sdk',
+        vaultId: remote.vaultId,
+        projectId: options.projectId,
+      });
+    }
+    return validateRemoteIdentity({
+      endpoint: options.endpoint,
+      vaultId: remote.vaultId,
+      projectId: options.projectId,
+    });
+  }
+  return validateRemoteIdentity({
+    endpoint: options.endpoint,
+    vaultId: options.vaultId,
+    projectId: options.projectId,
+  });
+}
+
+function resolveDoctorAuth(identity: RemoteIdentity, remote: unknown): { mode: DoctorAuthMode; account?: string } {
+  if (identity.type === 'onepassword-sdk') {
+    const record = (remote ?? {}) as { auth?: { type?: unknown; account?: unknown } };
+    const auth = record.auth as { type?: unknown; account?: unknown } | undefined;
+    if (auth !== undefined && auth.type === 'desktop') {
+      return {
+        mode: 'desktop',
+        ...(typeof auth.account === 'string' && auth.account.length > 0 ? { account: auth.account } : {}),
+      };
+    }
+    return { mode: 'service-account' };
+  }
+  return { mode: 'token' };
+}
+
 export async function doctorSecrets(options: DoctorOptions): Promise<DoctorResult> {
+  const identity = resolveDoctorIdentity(options);
+  const auth = resolveDoctorAuth(identity, options.remote);
+  const provider: DoctorProvider = identity.type;
+  const vaultId = identity.vaultId;
+  const projectId = identity.projectId;
   const checks: DoctorCheck[] = [];
   checks.push({
     name: 'config',
@@ -99,13 +164,12 @@ export async function doctorSecrets(options: DoctorOptions): Promise<DoctorResul
     checks.push({
       name: 'state',
       status: 'warn',
-      detail: 'No local state yet; it is created on the first push and pinned to endpoint, vault, and project.',
+      detail:
+        provider === 'onepassword-sdk'
+          ? 'No local state yet; it is created on the first push and pinned to vault and project.'
+          : 'No local state yet; it is created on the first push and pinned to endpoint, vault, and project.',
     });
-  } else if (
-    state.remote.endpoint !== options.endpoint ||
-    state.remote.vaultId !== options.vaultId ||
-    state.projectId !== options.projectId
-  ) {
+  } else if (!identitiesMatch(identity, state)) {
     checks.push({
       name: 'state',
       status: 'fail',
@@ -135,11 +199,23 @@ export async function doctorSecrets(options: DoctorOptions): Promise<DoctorResul
     });
   }
 
-  checks.push({
-    name: 'endpoint',
-    status: 'pass',
-    detail: `Endpoint ${endpointHost(options.endpoint)} with vault ${options.vaultId}; token comes from the environment only.`,
-  });
+  if (provider === 'onepassword-sdk') {
+    checks.push({
+      name: 'backend',
+      status: 'pass',
+      detail:
+        auth.mode === 'desktop'
+          ? `Direct SDK backend for vault ${vaultId}; desktop approval is granted interactively for the configured account.`
+          : `Direct SDK backend for vault ${vaultId}; service-account token comes from the environment only.`,
+    });
+  } else {
+    const host = endpointHost((identity as { endpoint: string }).endpoint);
+    checks.push({
+      name: 'endpoint',
+      status: 'pass',
+      detail: `Endpoint ${host} with vault ${vaultId}; token comes from the environment only.`,
+    });
+  }
 
   let recordCount = 0;
   try {
@@ -162,17 +238,30 @@ export async function doctorSecrets(options: DoctorOptions): Promise<DoctorResul
     checks.push({ name: 'read', status: 'fail', detail: error instanceof Error ? error.message : String(error) });
   }
 
-  checks.push({
-    name: 'bounds',
-    status: 'pass',
-    detail: `Tool bounds are ${options.maxFileBytes}/${MAX_FILE_BYTES_HARD_CEILING} bytes per file and ${options.maxFiles}/${MAX_FILES_HARD_CEILING} files; list ${CONNECT_MAX_LIST_BYTES}, detail ${CONNECT_MAX_DETAIL_BYTES}, timeout ${CONNECT_TIMEOUT_MS}ms with ${CONNECT_MAX_GET_RETRIES} GET retries.`,
-  });
+  if (provider === 'onepassword-sdk') {
+    checks.push({
+      name: 'bounds',
+      status: 'pass',
+      detail: `Tool bounds are ${options.maxFileBytes}/${MAX_FILE_BYTES_HARD_CEILING} bytes per file and ${options.maxFiles}/${MAX_FILES_HARD_CEILING} files; SDK detail ${SDK_MAX_DETAIL_BYTES} bytes, record scan ${SDK_MAX_RECORDS}, timeout ${SDK_TIMEOUT_MS}ms with ${SDK_MAX_GET_RETRIES} read retries and no create retries.`,
+    });
+  } else {
+    checks.push({
+      name: 'bounds',
+      status: 'pass',
+      detail: `Tool bounds are ${options.maxFileBytes}/${MAX_FILE_BYTES_HARD_CEILING} bytes per file and ${options.maxFiles}/${MAX_FILES_HARD_CEILING} files; list ${CONNECT_MAX_LIST_BYTES}, detail ${CONNECT_MAX_DETAIL_BYTES}, timeout ${CONNECT_TIMEOUT_MS}ms with ${CONNECT_MAX_GET_RETRIES} GET retries.`,
+    });
+  }
 
   return {
     branch: options.branch,
-    projectId: options.projectId,
-    vaultId: options.vaultId,
-    endpointHost: endpointHost(options.endpoint),
+    projectId,
+    vaultId,
+    provider,
+    authMode: auth.mode,
+    ...(provider === 'onepassword-connect'
+      ? { endpointHost: endpointHost((identity as { endpoint: string }).endpoint) }
+      : {}),
+    ...(auth.account === undefined ? {} : { account: auth.account }),
     checks,
     recordCount,
     localMatchCount,

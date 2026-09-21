@@ -12,7 +12,17 @@ import {
 import { deriveBranchHeads } from './graph';
 import { loadValidatedHistory, type LoadedHistory } from './history-store';
 import { sha256Hex, type BlobEnvelope } from './records';
-import { acquireStateLock, computeFileHmac, initState, saveState, setBaseline, setObservedHeads } from './state';
+import {
+  acquireStateLock,
+  assertIdentityMatches,
+  computeFileHmac,
+  initState,
+  normalizeOperationIdentity,
+  readStateIfPresent,
+  saveState,
+  setBaseline,
+  setObservedHeads,
+} from './state';
 import type { SecretStore } from './store';
 import { loadBranchHistory, resolveOperationConcurrency } from './operations';
 
@@ -26,7 +36,7 @@ export interface RestoreHooks {
 export interface RestoreOptions {
   store: SecretStore;
   rootAbsolute: string;
-  projectId: string;
+  projectId?: string;
   branch: string;
   path: string;
   revision?: string;
@@ -36,8 +46,10 @@ export interface RestoreOptions {
   dryRun?: boolean;
   maxFileBytes?: number;
   concurrency?: number;
-  endpoint: string;
-  vaultId: string;
+  endpoint?: string;
+  vaultId?: string;
+  remote?: unknown;
+  identity?: unknown;
   hooks?: RestoreHooks;
 }
 
@@ -54,13 +66,6 @@ export interface RestoreResult {
   heads: string[];
   dryRun: boolean;
   note: string;
-}
-
-function assertProjectId(value: unknown): string {
-  if (typeof value !== 'string' || value.length === 0) {
-    throw new SecretSyncError('validation', 'Restore project id must be a non-empty string.');
-  }
-  return value;
 }
 
 function assertRevision(value: string): string {
@@ -170,7 +175,14 @@ function bytesEqual(left: Uint8Array | undefined, right: Uint8Array | undefined)
 
 export async function restoreFile(options: RestoreOptions): Promise<RestoreResult> {
   const branch = validateBranchName(options.branch);
-  const projectId = assertProjectId(options.projectId);
+  const identity = normalizeOperationIdentity({
+    endpoint: options.endpoint,
+    vaultId: options.vaultId,
+    projectId: options.projectId,
+    remote: options.remote,
+    identity: options.identity,
+  });
+  const projectId = identity.projectId;
   const path = normalizeProjectRelPath(options.path, '--file');
   const overwrite = options.overwrite === true;
   const acknowledgeRemote = options.acknowledgeRemote === true;
@@ -199,6 +211,10 @@ export async function restoreFile(options: RestoreOptions): Promise<RestoreResul
   const loaded = await loadBranchHistory(options.store, projectId, branch, concurrency);
 
   if (dryRun) {
+    const persisted = await readStateIfPresent(options.rootAbsolute);
+    if (persisted !== undefined) {
+      assertIdentityMatches(identity, persisted);
+    }
     const current = await readFileBounded(options.rootAbsolute, path, { maxFileBytes: options.maxFileBytes });
     const same = bytesEqual(current, target.bytes);
     if (acknowledgeRemote) {
@@ -233,11 +249,7 @@ export async function restoreFile(options: RestoreOptions): Promise<RestoreResul
 
   const lock = await acquireStateLock(options.rootAbsolute);
   try {
-    const state = await initState(
-      options.rootAbsolute,
-      { endpoint: options.endpoint, vaultId: options.vaultId, projectId },
-      { branch },
-    );
+    const state = await initState(options.rootAbsolute, identity, { branch });
     const current = await readFileBounded(options.rootAbsolute, path, { maxFileBytes: options.maxFileBytes });
     if (current !== undefined && !bytesEqual(current, target.bytes)) {
       if (!overwrite) {

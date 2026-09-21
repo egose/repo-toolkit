@@ -9,7 +9,7 @@ import {
   validateBranchName,
 } from './config';
 import { SecretSyncError } from './errors';
-import type { ConnectItemDetail, CreateConnectItemInput } from './store';
+import type { CreateSecretItemInput, SecretItemDetail } from './store';
 
 export const RECORD_MARKER = 'repo-toolkit-secret-sync';
 export const RECORD_SCHEMA_VERSION = 1;
@@ -60,13 +60,13 @@ export type RecordEnvelope = BlobEnvelope | CommitEnvelope;
 export interface BlobRecord {
   envelope: BlobEnvelope;
   serialized: string;
-  input: CreateConnectItemInput;
+  input: CreateSecretItemInput;
 }
 
 export interface CommitRecord {
   envelope: CommitEnvelope;
   serialized: string;
-  input: CreateConnectItemInput;
+  input: CreateSecretItemInput;
 }
 
 function byteLengthUtf8(text: string): number {
@@ -323,7 +323,7 @@ export function buildCreateInput(
   kind: string,
   logicalId: string,
   serialized: string,
-): CreateConnectItemInput {
+): CreateSecretItemInput {
   assertSerializedFits(serialized);
   return {
     title: buildRecordTitle(projectId, kind, logicalId),
@@ -450,7 +450,7 @@ export function createCommitRecord(args: CreateCommitArgs): CommitRecord {
   return { envelope, serialized, input };
 }
 
-function findPayloadValue(detail: ConnectItemDetail): string {
+function findPayloadValue(detail: SecretItemDetail): string {
   const matches = detail.fields.filter((field) => field.label === 'payload');
   if (matches.length !== 1) {
     throw new SecretSyncError('remote-corrupt', 'Record does not carry exactly one concealed payload field.');
@@ -624,7 +624,7 @@ function decodeCommitEnvelope(record: Record<string, unknown>): CommitEnvelope {
   };
 }
 
-export function decodeRecordEnvelope(detail: ConnectItemDetail, expectedProjectId: string): RecordEnvelope {
+export function decodeRecordEnvelope(detail: SecretItemDetail, expectedProjectId: string): RecordEnvelope {
   assertUuidInput(expectedProjectId, 'projectId');
   const title = parseRecordTitle(detail.title);
   const tags = detail.tags;
@@ -727,7 +727,7 @@ export function deduplicateDecodedEnvelopes(envelopes: RecordEnvelope[]): Dedupl
 }
 
 export function deduplicateRecordDetails(
-  details: Array<{ detail: ConnectItemDetail; envelope: RecordEnvelope }>,
+  details: Array<{ detail: SecretItemDetail; envelope: RecordEnvelope }>,
 ): DeduplicatedDetails {
   const blobs = new Map<string, BlobEnvelope>();
   const commits = new Map<string, CommitEnvelope>();

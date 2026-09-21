@@ -1,6 +1,6 @@
 {
   "name": "@repo-toolkit/secret-sync",
-  "description": "Synchronize explicitly selected local files with 1Password Connect",
+  "description": "Synchronize explicitly selected local files with 1Password Connect or directly with the 1Password SDK",
   "version": "0.0.0-PLACEHOLDER",
   "license": "PLACEHOLDER",
   "repository": "PLACEHOLDER",
@@ -11,6 +11,7 @@
     "sync",
     "1password",
     "connect",
+    "sdk",
     "tooling"
   ],
   "main": "dist/index.js",
@@ -31,6 +32,7 @@
     "secret-sync": "node dist/cli.js"
   },
   "dependencies": {
+    "@1password/sdk": "0.5.0",
     "@repo-toolkit/publish-package": "workspace:*",
     "picomatch": "^4.0.5"
   },

@@ -18,15 +18,28 @@ import type {
 } from './types';
 
 export type { BranchSubcommand, SecretSyncCommand, SecretSyncCommandOptions, SecretSyncPlan } from './types';
-export type { SecretSyncLimits, SecretSyncRawConfig, SecretSyncRemoteConfig, SecretSyncValidatedConfig } from './types';
+export type {
+  SecretSyncConnectRemoteConfig,
+  SecretSyncLimits,
+  SecretSyncRawConfig,
+  SecretSyncRemoteConfig,
+  SecretSyncSdkAuthConfig,
+  SecretSyncSdkDesktopAuth,
+  SecretSyncSdkRemoteConfig,
+  SecretSyncSdkServiceAccountAuth,
+  SecretSyncValidatedConfig,
+} from './types';
 export {
   DEFAULT_BRANCH,
   DEFAULT_LIMITS,
+  DEFAULT_SDK_TOKEN_ENV,
   MAX_CONCURRENCY_HARD_CEILING,
   MAX_FILES_HARD_CEILING,
   MAX_FILE_BYTES_HARD_CEILING,
   MAX_SCAN_RECORDS,
   SECRET_SYNC_SCHEMA_VERSION,
+  isConnectRemote,
+  isSdkRemote,
   loadSecretSyncConfigFile,
   normalizeProjectRelPath,
   validateBranchName,
@@ -52,8 +65,11 @@ export {
   validateConnectItemDetail,
   validateConnectItemSummary,
   validateCreateConnectItemInput,
+  validateCreateSecretItemInput,
   validateItemId,
   validateListResponse,
+  validateSecretItemDetail,
+  validateSecretItemSummary,
 } from './store';
 export type {
   ConnectItemDetail,
@@ -61,9 +77,19 @@ export type {
   ConnectItemSummary,
   CreateConnectItemInput,
   CreateItemResult,
+  CreateSecretItemInput,
   ListItemsOptions,
+  SecretItemDetail,
+  SecretItemField,
+  SecretItemSummary,
   SecretStore,
 } from './store';
+export {
+  SHARED_DEFAULT_CONCURRENCY,
+  SHARED_MAX_CONCURRENCY,
+  mapWithConcurrency,
+  validateConcurrency,
+} from './concurrency';
 export {
   CONNECT_DEFAULT_CONCURRENCY,
   CONNECT_MAX_CONCURRENCY,
@@ -77,13 +103,36 @@ export {
   delayForAttempt,
   escapeConnectFilterValue,
   isLoopbackHostname,
-  mapWithConcurrency,
   parseRetryAfterMs,
   readBoundedText,
   resolveConnectBaseUrl,
-  validateConcurrency,
 } from './connect';
 export type { ConnectStoreOptions, FetchHeadersLike, FetchLike, FetchRequestInit, FetchResponseLike } from './connect';
+export {
+  SDK_INTEGRATION_NAME,
+  SDK_INTEGRATION_VERSION,
+  SDK_MAX_DETAIL_BYTES,
+  SDK_MAX_GET_RETRIES,
+  SDK_MAX_RECORDS,
+  SDK_TIMEOUT_MS,
+  SdkSecretStore,
+  createSdkStore,
+  defaultSdkClientFactory,
+} from './sdk';
+export type {
+  SdkClientFactory,
+  SdkClientLike,
+  SdkCreateField,
+  SdkCreateParams,
+  SdkFactoryAuth,
+  SdkFactoryConfig,
+  SdkFieldLike,
+  SdkItemLike,
+  SdkItemsApiLike,
+  SdkListFilter,
+  SdkOverviewLike,
+  SdkStoreOptions,
+} from './sdk';
 export {
   MAX_BLOB_BYTES,
   MAX_OPERATION_KIND_CHARS,
@@ -210,7 +259,9 @@ export {
   initState,
   loadState,
   loadStateFile,
+  normalizeOperationIdentity,
   readStateIfPresent,
+  remoteIdentityFromConfig,
   resolveStateDir,
   resolveStatePaths,
   resolveStateRoot,
@@ -221,19 +272,28 @@ export {
   setObservedHeads,
   validateRemoteEndpoint,
   validateRemoteIdentity,
+  validateStateRemote,
 } from './state';
 export type {
   AbsentBaseline,
   AcquireLockOptions,
+  ConnectRemoteIdentity,
+  ConnectStateRemote,
   FileBaseline,
   InitStateOptions,
+  LegacyRemoteIdentity,
+  OperationIdentityInput,
   PresentBaseline,
+  RemoteBinding,
   RemoteIdentity,
   SaveStateHooks,
   SaveStateOptions,
+  SdkRemoteIdentity,
+  SdkStateRemote,
   SecretSyncState,
   StateLock,
   StatePaths,
+  StateRemote,
 } from './state';
 export {
   FILESYSTEM_RACE_LIMITS,
@@ -321,8 +381,14 @@ export { CLI_SCHEMA_VERSION, buildErrorEnvelope, buildSuccessEnvelope, redactTex
 export { INIT_DEFAULT_CONFIG, initSecrets } from './init';
 export type { InitOptions, InitResult } from './init';
 export { doctorSecrets } from './doctor';
-export type { DoctorCheck, DoctorOptions, DoctorResult } from './doctor';
-export { assertCommandFlags, collectCliSecrets, createSecretStoreForPlan, resolveEndpointForPlan } from './cli-options';
+export type { DoctorAuthMode, DoctorCheck, DoctorOptions, DoctorProvider, DoctorResult } from './doctor';
+export {
+  assertCommandFlags,
+  collectCliSecrets,
+  createSecretStoreForPlan,
+  resolveEndpointForPlan,
+  resolveIdentityForPlan,
+} from './cli-options';
 export type { StoreOverrides } from './cli-options';
 export { pushSecrets } from './push';
 export type { PushHooks, PushOptions, PushResult } from './push';
@@ -390,8 +456,13 @@ export interface SecretSyncOptions {
   name?: string;
   from?: string;
   vault?: string;
+  provider?: string;
+  auth?: string;
+  account?: string;
+  tokenEnv?: string;
   store?: import('./store').SecretStore;
   fetchImpl?: import('./connect').FetchLike;
+  sdkClientFactory?: import('./sdk').SdkClientFactory;
   env?: Record<string, string | undefined>;
 }
 
@@ -524,6 +595,10 @@ export async function resolveSecretSyncPlan(options: SecretSyncOptions = {}): Pr
     ...(options.name === undefined ? {} : { name: options.name }),
     ...(options.from === undefined ? {} : { from: options.from }),
     ...(options.vault === undefined ? {} : { vault: options.vault }),
+    ...(options.provider === undefined ? {} : { provider: options.provider }),
+    ...(options.auth === undefined ? {} : { auth: options.auth }),
+    ...(options.account === undefined ? {} : { account: options.account }),
+    ...(options.tokenEnv === undefined ? {} : { tokenEnv: options.tokenEnv }),
     ...(options.branch === undefined ? {} : { branch: activeBranch }),
     ...(selection.length === 0 ? {} : { files: selection }),
     ...(branchSubcommand === undefined ? {} : { branchSubcommand }),
@@ -551,6 +626,10 @@ export async function runSecretSync(options: SecretSyncOptions = {}): Promise<Se
       ...(options.cwd === undefined ? {} : { cwd: options.cwd }),
       ...(options.config === undefined ? {} : { config: options.config }),
       ...(options.vault === undefined ? {} : { vault: options.vault }),
+      ...(options.provider === undefined ? {} : { provider: options.provider }),
+      ...(options.auth === undefined ? {} : { auth: options.auth }),
+      ...(options.account === undefined ? {} : { account: options.account }),
+      ...(options.tokenEnv === undefined ? {} : { tokenEnv: options.tokenEnv }),
       ...(options.projectId === undefined ? {} : { projectId: options.projectId }),
       ...(options.branch === undefined ? {} : { branch: options.branch }),
       ...(options.root === undefined ? {} : { root: options.root }),
@@ -560,13 +639,14 @@ export async function runSecretSync(options: SecretSyncOptions = {}): Promise<Se
   }
   const plan = await resolveSecretSyncPlan(options);
   const env = options.env ?? (process.env as Record<string, string | undefined>);
-  const { createSecretStoreForPlan, resolveEndpointForPlan } = await import('./cli-options');
+  const { createSecretStoreForPlan, resolveIdentityForPlan } = await import('./cli-options');
   const store = createSecretStoreForPlan(plan, {
     ...(options.store === undefined ? {} : { store: options.store }),
     ...(options.fetchImpl === undefined ? {} : { fetchImpl: options.fetchImpl }),
+    ...(options.sdkClientFactory === undefined ? {} : { sdkClientFactory: options.sdkClientFactory }),
     env,
   });
-  const endpoint = resolveEndpointForPlan(plan, env);
+  const identity = resolveIdentityForPlan(plan, env);
   const dryRun = plan.commandOptions.dryRun === true;
   switch (plan.command) {
     case 'doctor': {
@@ -574,10 +654,9 @@ export async function runSecretSync(options: SecretSyncOptions = {}): Promise<Se
       const result = await doctorSecrets({
         store,
         rootAbsolute: plan.rootAbsolute,
-        projectId: plan.projectId,
         branch: resolveTargetBranch(plan),
-        endpoint,
-        vaultId: plan.remote.vaultId,
+        identity,
+        remote: plan.remote,
         files: plan.files,
         ignore: plan.ignore,
         ...(configRelForPlan(plan) === undefined ? {} : { configRelPath: configRelForPlan(plan) as string }),
@@ -589,20 +668,18 @@ export async function runSecretSync(options: SecretSyncOptions = {}): Promise<Se
       return { command: 'doctor', result };
     }
     case 'status': {
-      const result = await executeStatus(plan, store, endpoint);
+      const result = await executeStatus(plan, store, identity);
       return { command: 'status', result };
     }
     case 'push': {
       const { pushSecrets } = await import('./push');
-      const branch = await resolveActiveBranch(plan, endpoint);
+      const branch = await resolveActiveBranch(plan);
       const selection = await resolveEffectiveSelection(plan, store, branch);
       const result = await pushSecrets({
         store,
         rootAbsolute: plan.rootAbsolute,
-        projectId: plan.projectId,
         branch,
-        endpoint,
-        vaultId: plan.remote.vaultId,
+        identity,
         ...(selection === undefined ? {} : { selection }),
         ...(plan.commandOptions.remove === undefined ? {} : { allowDelete: plan.commandOptions.remove }),
         ...(plan.commandOptions.message === undefined ? {} : { message: plan.commandOptions.message }),
@@ -615,15 +692,13 @@ export async function runSecretSync(options: SecretSyncOptions = {}): Promise<Se
     }
     case 'pull': {
       const { pullSecrets } = await import('./pull');
-      const branch = await resolveActiveBranch(plan, endpoint);
+      const branch = await resolveActiveBranch(plan);
       const selection = await resolveEffectiveSelection(plan, store, branch);
       const result = await pullSecrets({
         store,
         rootAbsolute: plan.rootAbsolute,
-        projectId: plan.projectId,
         branch,
-        endpoint,
-        vaultId: plan.remote.vaultId,
+        identity,
         ...(selection === undefined ? {} : { selection }),
         ...(plan.commandOptions.remove === undefined ? {} : { allowDelete: plan.commandOptions.remove }),
         concurrency: plan.limits.concurrency,
@@ -645,7 +720,7 @@ export async function runSecretSync(options: SecretSyncOptions = {}): Promise<Se
       }
       const result = await logFileHistory({
         store,
-        projectId: plan.projectId,
+        projectId: identity.projectId,
         branch: resolveTargetBranch(plan),
         path: files[0] as string,
         ...(plan.commandOptions.limit === undefined ? {} : { limit: plan.commandOptions.limit }),
@@ -662,8 +737,7 @@ export async function runSecretSync(options: SecretSyncOptions = {}): Promise<Se
       const result = await restoreFile({
         store,
         rootAbsolute: plan.rootAbsolute,
-        projectId: plan.projectId,
-        branch: await resolveActiveBranch(plan, endpoint),
+        branch: await resolveActiveBranch(plan),
         path: files[0] as string,
         ...(plan.commandOptions.revision === undefined ? {} : { revision: plan.commandOptions.revision }),
         ...(plan.commandOptions.fromBranch === undefined ? {} : { fromBranch: plan.commandOptions.fromBranch }),
@@ -674,8 +748,7 @@ export async function runSecretSync(options: SecretSyncOptions = {}): Promise<Se
         ...(dryRun ? { dryRun: true } : {}),
         maxFileBytes: plan.limits.maxFileBytes,
         concurrency: plan.limits.concurrency,
-        endpoint,
-        vaultId: plan.remote.vaultId,
+        identity,
       });
       return { command: 'restore', result };
     }
@@ -691,23 +764,21 @@ export async function runSecretSync(options: SecretSyncOptions = {}): Promise<Se
       const result = await rollbackFile({
         store,
         rootAbsolute: plan.rootAbsolute,
-        projectId: plan.projectId,
-        branch: await resolveActiveBranch(plan, endpoint),
+        branch: await resolveActiveBranch(plan),
         path: files[0] as string,
         revision: plan.commandOptions.revision,
         ...(plan.commandOptions.message === undefined ? {} : { message: plan.commandOptions.message }),
         concurrency: plan.limits.concurrency,
         ...(dryRun ? { dryRun: true } : {}),
         maxFileBytes: plan.limits.maxFileBytes,
-        endpoint,
-        vaultId: plan.remote.vaultId,
+        identity,
       });
       return { command: 'rollback', result };
     }
     case 'branch': {
       if ((branchSubcommand ?? 'list') === 'list') {
         const { listBranches } = await import('./branches');
-        const listed = await listBranches(store, plan.projectId, plan.limits.concurrency);
+        const listed = await listBranches(store, identity.projectId, plan.limits.concurrency);
         return { command: 'branch', result: { subcommand: 'list', ...listed } };
       }
       const { createBranch } = await import('./branches');
@@ -717,11 +788,11 @@ export async function runSecretSync(options: SecretSyncOptions = {}): Promise<Se
       const created = await createBranch({
         store,
         rootAbsolute: plan.rootAbsolute,
-        projectId: plan.projectId,
         name: plan.commandOptions.name,
         ...(plan.commandOptions.from === undefined ? {} : { from: plan.commandOptions.from }),
         concurrency: plan.limits.concurrency,
         ...(dryRun ? { dryRun: true } : {}),
+        identity,
       });
       return { command: 'branch', result: { subcommand: 'create', ...created } };
     }
@@ -733,10 +804,8 @@ export async function runSecretSync(options: SecretSyncOptions = {}): Promise<Se
       const result = await switchBranch({
         store,
         rootAbsolute: plan.rootAbsolute,
-        projectId: plan.projectId,
         targetBranch: plan.commandOptions.branch,
-        endpoint,
-        vaultId: plan.remote.vaultId,
+        identity,
         concurrency: plan.limits.concurrency,
         maxFileBytes: plan.limits.maxFileBytes,
         ...(dryRun ? { dryRun: true } : {}),
@@ -751,12 +820,12 @@ export async function runSecretSync(options: SecretSyncOptions = {}): Promise<Se
       const result = await resolveFork({
         store,
         rootAbsolute: plan.rootAbsolute,
-        projectId: plan.projectId,
         branch: resolveTargetBranch(plan),
         heads: [...plan.commandOptions.heads],
         take: plan.commandOptions.take,
         concurrency: plan.limits.concurrency,
         ...(dryRun ? { dryRun: true } : {}),
+        identity,
       });
       return { command: 'resolve', result };
     }
@@ -784,8 +853,7 @@ function resolveTargetBranch(plan: SecretSyncPlan): string {
   return plan.branch;
 }
 
-async function resolveActiveBranch(plan: SecretSyncPlan, _endpoint: string): Promise<string> {
-  void _endpoint;
+async function resolveActiveBranch(plan: SecretSyncPlan): Promise<string> {
   const { readStateIfPresent } = await import('./state');
   const state = await readStateIfPresent(plan.rootAbsolute);
   if (state !== undefined) {
@@ -836,9 +904,9 @@ async function resolveEffectiveSelection(
 async function executeStatus(
   plan: SecretSyncPlan,
   store: import('./store').SecretStore,
-  _endpoint: string,
+  _identity: import('./state').RemoteIdentity,
 ): Promise<import('./status').StatusReport> {
-  void _endpoint;
+  void _identity;
   const { baselinesToSlots, loadBranchHistory, scanLocalSlots } = await import('./operations');
   const { readFileBounded } = await import('./filesystem');
   const { readStateIfPresent } = await import('./state');

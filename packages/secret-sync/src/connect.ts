@@ -1,3 +1,4 @@
+import { validateConcurrency } from './concurrency';
 import { SecretSyncError } from './errors';
 import {
   validateConnectItemDetail,
@@ -12,6 +13,8 @@ import {
   type ListItemsOptions,
   type SecretStore,
 } from './store';
+
+export { mapWithConcurrency, validateConcurrency } from './concurrency';
 
 export interface FetchRequestInit {
   method?: string;
@@ -128,14 +131,6 @@ export function escapeConnectFilterValue(value: string): string {
 
 export function buildTitleFilter(title: string): string {
   return `title eq "${escapeConnectFilterValue(title)}"`;
-}
-
-export function validateConcurrency(value: number | undefined, fallback: number): number {
-  const candidate = value === undefined ? fallback : value;
-  if (!Number.isSafeInteger(candidate) || candidate < 1 || candidate > CONNECT_MAX_CONCURRENCY) {
-    throw new SecretSyncError('validation', `Concurrency must be an integer between 1 and ${CONNECT_MAX_CONCURRENCY}.`);
-  }
-  return candidate;
 }
 
 export function parseRetryAfterMs(value: string | null): number | undefined {
@@ -407,35 +402,6 @@ export async function readBoundedText(
     });
   }
   return text;
-}
-
-export async function mapWithConcurrency<T, R>(
-  items: ReadonlyArray<T>,
-  fn: (item: T, index: number) => Promise<R>,
-  concurrency: number,
-): Promise<R[]> {
-  const limit = validateConcurrency(concurrency, CONNECT_DEFAULT_CONCURRENCY);
-  const results: R[] = new Array(items.length);
-  let next = 0;
-  const workers: Promise<void>[] = [];
-  const count = Math.min(limit, items.length);
-  for (let w = 0; w < count; w += 1) {
-    workers.push(
-      (async () => {
-        for (;;) {
-          const current = next;
-          next += 1;
-          if (current >= items.length) {
-            return;
-          }
-          const item = items[current] as T;
-          results[current] = await fn(item, current);
-        }
-      })(),
-    );
-  }
-  await Promise.all(workers);
-  return results;
 }
 
 interface ResolvedEndpoint {

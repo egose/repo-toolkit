@@ -23,14 +23,18 @@ import {
 } from './journal';
 import {
   acquireStateLock,
+  assertIdentityMatches,
   computeFileHmac,
   initState,
+  normalizeOperationIdentity,
   readStateIfPresent,
   saveState,
   setActiveBranch,
   setBaseline,
   setMaterializedBranch,
   setObservedHeads,
+  validateRemoteIdentity,
+  validateStateRemote,
 } from './state';
 import { compareFile } from './status';
 import type { SecretStore } from './store';
@@ -48,7 +52,7 @@ import {
 export interface BranchCreateOptions {
   store: SecretStore;
   rootAbsolute: string;
-  projectId: string;
+  projectId?: string;
   name: string;
   from?: string;
   message?: string;
@@ -57,6 +61,8 @@ export interface BranchCreateOptions {
   operationId?: string;
   commitId?: string;
   dryRun?: boolean;
+  remote?: unknown;
+  identity?: unknown;
 }
 
 export interface BranchCreateResult {
@@ -90,10 +96,12 @@ export interface SwitchHooks {
 export interface SwitchOptions {
   store: SecretStore;
   rootAbsolute: string;
-  projectId: string;
+  projectId?: string;
   targetBranch: string;
-  endpoint: string;
-  vaultId: string;
+  endpoint?: string;
+  vaultId?: string;
+  remote?: unknown;
+  identity?: unknown;
   concurrency?: number;
   timestamp?: number;
   operationId?: string;
@@ -123,6 +131,29 @@ function assertProjectId(value: unknown, what: string): string {
   return value;
 }
 
+function resolveMetadataProjectId(
+  options: { projectId?: unknown; remote?: unknown; identity?: unknown },
+  what: string,
+): string {
+  const hasIdentity = options.identity !== undefined;
+  const hasRemote = options.remote !== undefined;
+  const hasProject = options.projectId !== undefined;
+  if (hasIdentity) {
+    if (hasRemote || hasProject) {
+      throw new SecretSyncError('validation', 'Operation identity mixes old and new identity forms.');
+    }
+    return validateRemoteIdentity(options.identity).projectId;
+  }
+  if (hasRemote) {
+    if (hasProject === false) {
+      throw new SecretSyncError('validation', 'Operation remote binding requires a project id.');
+    }
+    validateStateRemote(options.remote);
+    return assertProjectId(options.projectId, what);
+  }
+  return assertProjectId(options.projectId, what);
+}
+
 function assertCommitId(value: string): string {
   const pattern = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
   if (!pattern.test(value)) {
@@ -134,7 +165,7 @@ function assertCommitId(value: string): string {
 export async function createBranch(options: BranchCreateOptions): Promise<BranchCreateResult> {
   const branch = validateBranchName(options.name);
   const sourceBranch = options.from === undefined ? 'main' : validateBranchName(options.from);
-  const projectId = assertProjectId(options.projectId, 'Branch create');
+  const projectId = resolveMetadataProjectId(options, 'Branch create');
   const concurrency = resolveOperationConcurrency(options.concurrency);
   const timestamp = resolveTimestamp(options.timestamp);
   const dryRun = options.dryRun === true;
@@ -255,12 +286,23 @@ export async function listBranches(
 
 export async function switchBranch(options: SwitchOptions): Promise<SwitchResult> {
   const targetBranch = validateBranchName(options.targetBranch);
-  const projectId = assertProjectId(options.projectId, 'Switch');
+  const identity = normalizeOperationIdentity({
+    endpoint: options.endpoint,
+    vaultId: options.vaultId,
+    projectId: options.projectId,
+    remote: options.remote,
+    identity: options.identity,
+  });
+  const projectId = identity.projectId;
   const concurrency = resolveOperationConcurrency(options.concurrency);
   const timestamp = resolveTimestamp(options.timestamp);
   const dryRun = options.dryRun === true;
 
   if (dryRun) {
+    const prior = await readStateIfPresent(options.rootAbsolute);
+    if (prior !== undefined) {
+      assertIdentityMatches(identity, prior);
+    }
     const history = await loadValidatedHistory(options.store, projectId, { concurrency });
     const targetHeads = deriveBranchHeads(history.commits, targetBranch);
     if (targetHeads.length > 1) {
@@ -269,7 +311,6 @@ export async function switchBranch(options: SwitchOptions): Promise<SwitchResult
     const target = targetHeads[0];
     const targetBytes =
       target === undefined ? new Map<string, Uint8Array>() : materializeTreeBytes(history, target.logicalId);
-    const prior = await readStateIfPresent(options.rootAbsolute);
     const tracked = new Set<string>([
       ...(prior === undefined ? [] : Object.keys(prior.baselines)),
       ...targetBytes.keys(),
@@ -318,11 +359,7 @@ export async function switchBranch(options: SwitchOptions): Promise<SwitchResult
 
   const lock = await acquireStateLock(options.rootAbsolute);
   try {
-    const state = await initState(
-      options.rootAbsolute,
-      { endpoint: options.endpoint, vaultId: options.vaultId, projectId },
-      { branch: targetBranch },
-    );
+    const state = await initState(options.rootAbsolute, identity, { branch: targetBranch });
     const from = state.activeBranch;
     const history = await loadValidatedHistory(options.store, projectId, { concurrency });
     const currentHeads = deriveBranchHeads(history.commits, from);

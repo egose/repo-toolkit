@@ -1,5 +1,5 @@
 import { MAX_SCAN_RECORDS } from './config';
-import { mapWithConcurrency, validateConcurrency } from './connect';
+import { mapWithConcurrency, validateConcurrency } from './concurrency';
 import { SecretSyncError } from './errors';
 import { findMissingParents } from './graph';
 import {
@@ -14,7 +14,7 @@ import {
   type CommitEnvelope,
   type RecordEnvelope,
 } from './records';
-import type { ConnectItemDetail, SecretStore } from './store';
+import type { SecretItemDetail, SecretStore } from './store';
 
 export const HISTORY_MAX_RECORDS = MAX_SCAN_RECORDS;
 export const HISTORY_DEFAULT_CONCURRENCY = 4;
@@ -237,7 +237,7 @@ export async function reconcileRecordByLogicalId(
   kind: string,
   logicalId: string,
   expected: RecordEnvelope,
-): Promise<ConnectItemDetail | undefined> {
+): Promise<SecretItemDetail | undefined> {
   const summaries = await store.listItems();
   const candidates = [];
   for (const summary of summaries) {
