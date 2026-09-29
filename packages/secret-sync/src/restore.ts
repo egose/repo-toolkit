@@ -8,12 +8,14 @@ import {
   removeFileGuarded,
   resolveSafeDestination,
   writeFileAtomically,
+  expectedDestinationFromBytes,
 } from './filesystem';
 import { deriveBranchHeads } from './graph';
 import { loadValidatedHistory, type LoadedHistory } from './history-store';
 import { sha256Hex, type BlobEnvelope } from './records';
 import {
   acquireStateLock,
+  assertNoPendingSwitch,
   assertIdentityMatches,
   computeFileHmac,
   initState,
@@ -250,6 +252,7 @@ export async function restoreFile(options: RestoreOptions): Promise<RestoreResul
   const lock = await acquireStateLock(options.rootAbsolute);
   try {
     const state = await initState(options.rootAbsolute, identity, { branch });
+    assertNoPendingSwitch(state);
     const current = await readFileBounded(options.rootAbsolute, path, { maxFileBytes: options.maxFileBytes });
     if (current !== undefined && !bytesEqual(current, target.bytes)) {
       if (!overwrite) {
@@ -297,7 +300,9 @@ export async function restoreFile(options: RestoreOptions): Promise<RestoreResul
       if (target.bytes === undefined) {
         resolveSafeDestination(options.rootAbsolute, path);
         await assertAncestorDirsSafe(options.rootAbsolute, path);
-        await removeFileGuarded(options.rootAbsolute, path);
+        await removeFileGuarded(options.rootAbsolute, path, {
+          expectedDestination: expectedDestinationFromBytes(current),
+        });
       } else {
         const bytes = target.bytes;
         resolveSafeDestination(options.rootAbsolute, path);
@@ -313,7 +318,10 @@ export async function restoreFile(options: RestoreOptions): Promise<RestoreResul
         if (kind === 'directory') {
           throw new SecretSyncError('unsafe-path', `Refusing restore over a directory at ${JSON.stringify(path)}.`);
         }
-        await writeFileAtomically(options.rootAbsolute, path, bytes, { maxFileBytes: options.maxFileBytes });
+        await writeFileAtomically(options.rootAbsolute, path, bytes, {
+          maxFileBytes: options.maxFileBytes,
+          expectedDestination: expectedDestinationFromBytes(current),
+        });
         const verify = await readFileBounded(options.rootAbsolute, path, { maxFileBytes: options.maxFileBytes });
         if (!bytesEqual(verify, bytes)) {
           throw new SecretSyncError('local-changed', `Restore verification failed for ${JSON.stringify(path)}.`);
@@ -361,7 +369,9 @@ export async function restoreFile(options: RestoreOptions): Promise<RestoreResul
     if (target.bytes === undefined) {
       resolveSafeDestination(options.rootAbsolute, path);
       await assertAncestorDirsSafe(options.rootAbsolute, path);
-      await removeFileGuarded(options.rootAbsolute, path);
+      await removeFileGuarded(options.rootAbsolute, path, {
+        expectedDestination: expectedDestinationFromBytes(current),
+      });
     } else {
       const bytes = target.bytes;
       resolveSafeDestination(options.rootAbsolute, path);
@@ -377,7 +387,10 @@ export async function restoreFile(options: RestoreOptions): Promise<RestoreResul
       if (kind === 'directory') {
         throw new SecretSyncError('unsafe-path', `Refusing restore over a directory at ${JSON.stringify(path)}.`);
       }
-      await writeFileAtomically(options.rootAbsolute, path, bytes, { maxFileBytes: options.maxFileBytes });
+      await writeFileAtomically(options.rootAbsolute, path, bytes, {
+        maxFileBytes: options.maxFileBytes,
+        expectedDestination: expectedDestinationFromBytes(current),
+      });
       const verify = await readFileBounded(options.rootAbsolute, path, { maxFileBytes: options.maxFileBytes });
       if (!bytesEqual(verify, bytes)) {
         throw new SecretSyncError('local-changed', `Restore verification failed for ${JSON.stringify(path)}.`);

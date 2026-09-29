@@ -18,7 +18,8 @@ export const STATE_FILE_MODE = 0o600;
 
 export const STATE_LOCK_RACE_LIMITS = [
   'Local state locks coordinate processes on one host only; they are not a remote distributed lock.',
-  'Stale recovery probes the owner with a same-host signal check plus an age bound; a PID that was recycled on the same host can look live.',
+  'Locks with valid owner metadata are reclaimed only when a same-host signal check confirms the PID is absent; live or indeterminate owners remain busy regardless of age, and recycled PIDs can look live.',
+  'The stale age bound applies only to locks without valid owner metadata.',
   'Lock acquisition, destination rechecks, and rename are separate filesystem steps; a privileged local writer can still race them.',
   'On network or case-insensitive filesystems, lock visibility and name comparisons may lag; callers must treat a busy lock as a reason to retry later.',
   'Windows ACLs do not map one-to-one to POSIX modes; permission values asserted on POSIX are recorded as unverified on Windows.',
@@ -77,6 +78,31 @@ export interface PresentBaseline {
 
 export type FileBaseline = AbsentBaseline | PresentBaseline;
 
+export type LocalPreimage = AbsentBaseline | { state: 'present'; hmac: string; byteLength: number };
+
+export interface RollbackRecovery {
+  kind: 'rollback';
+  operationId: string;
+  branch: string;
+  sourceCommitId: string;
+  commitId: string;
+  files: Array<{ path: string; blobId: string; preimage: LocalPreimage }>;
+}
+
+export interface SwitchRecovery {
+  kind: 'switch';
+  operationId: string;
+  sourceBranch: string;
+  materializedBranch?: string;
+  targetBranch: string;
+  sourceCommitId: string | null;
+  targetCommitId: string | null;
+  timestamp: number;
+  files: Array<{ path: string; action: 'write' | 'remove' | 'acknowledge'; blobId?: string; preimage: LocalPreimage }>;
+}
+
+export type MaterializationRecovery = RollbackRecovery | SwitchRecovery;
+
 export interface SecretSyncState {
   schemaVersion: 2;
   projectId: string;
@@ -87,6 +113,7 @@ export interface SecretSyncState {
   baselines: Record<string, FileBaseline>;
   heads: Record<string, string[]>;
   journalSeq: number;
+  recovery?: MaterializationRecovery;
 }
 
 export interface StatePaths {
@@ -150,6 +177,183 @@ export function computeFileHmac(bytes: Uint8Array, localKeyHex: string): string 
 
 export function fingerprintBytes(bytes: Uint8Array, localKeyHex: string): { hmac: string; byteLength: number } {
   return { hmac: computeFileHmac(bytes, localKeyHex), byteLength: bytes.byteLength };
+}
+
+export function captureLocalPreimage(bytes: Uint8Array | undefined, localKey: string): LocalPreimage {
+  return bytes === undefined ? { state: 'absent' } : { state: 'present', ...fingerprintBytes(bytes, localKey) };
+}
+
+export function matchesLocalPreimage(
+  preimage: LocalPreimage,
+  bytes: Uint8Array | undefined,
+  localKey: string,
+): boolean {
+  if (preimage.state === 'absent') {
+    return bytes === undefined;
+  }
+  return (
+    bytes !== undefined &&
+    bytes.byteLength === preimage.byteLength &&
+    computeFileHmac(bytes, localKey) === preimage.hmac
+  );
+}
+
+export function assertNoPendingSwitch(
+  state: SecretSyncState,
+): asserts state is SecretSyncState & { recovery?: RollbackRecovery } {
+  if (state.recovery?.kind === 'switch') {
+    throw new SecretSyncError(
+      'local-changed',
+      'Resume the pending switch before another mutation; recovery evidence was retained.',
+    );
+  }
+}
+
+function assertMaterializationRecovery(value: unknown): MaterializationRecovery {
+  const invalid = (): never => {
+    throw new SecretSyncError('state-corrupt', 'State carries invalid materialization recovery metadata.');
+  };
+  if (!isPlainObject(value)) {
+    return invalid();
+  }
+  const record = value as Record<string, unknown>;
+  const switching = record.kind === 'switch';
+  const allowed = new Set(
+    switching
+      ? [
+          'kind',
+          'operationId',
+          'sourceBranch',
+          'materializedBranch',
+          'targetBranch',
+          'sourceCommitId',
+          'targetCommitId',
+          'timestamp',
+          'files',
+        ]
+      : ['kind', 'operationId', 'branch', 'sourceCommitId', 'commitId', 'files'],
+  );
+  if (Object.keys(record).some((key) => !allowed.has(key)) || (!switching && record.kind !== 'rollback')) {
+    return invalid();
+  }
+  let branch: string;
+  try {
+    branch = validateBranchName(switching ? record.sourceBranch : record.branch);
+  } catch {
+    return invalid();
+  }
+  if (!Array.isArray(record.files) || (!switching && record.files.length === 0)) {
+    return invalid();
+  }
+  const files: Array<{
+    path: string;
+    blobId?: string;
+    preimage: LocalPreimage;
+    action?: 'write' | 'remove' | 'acknowledge';
+  }> = [];
+  const seen = new Set<string>();
+  for (const file of record.files) {
+    if (
+      !isPlainObject(file) ||
+      Object.keys(file).some(
+        (key) => !(switching ? ['path', 'blobId', 'preimage', 'action'] : ['path', 'blobId', 'preimage']).includes(key),
+      )
+    ) {
+      return invalid();
+    }
+    if (typeof file.path !== 'string') {
+      return invalid();
+    }
+    let path: string;
+    try {
+      path = normalizeProjectRelPath(file.path, 'recovery path');
+    } catch {
+      return invalid();
+    }
+    if (path !== file.path || seen.has(path) || !isPlainObject(file.preimage)) {
+      return invalid();
+    }
+    seen.add(path);
+    const blobId =
+      switching && file.blobId === undefined ? undefined : assertUuidField(file.blobId, 'recovery blob id');
+    const action = file.action;
+    if (
+      switching &&
+      ((action !== 'write' && action !== 'remove' && action !== 'acknowledge') ||
+        (action === 'write' && blobId === undefined) ||
+        (action === 'remove' && blobId !== undefined))
+    ) {
+      return invalid();
+    }
+    const metadata = {
+      path,
+      ...(blobId === undefined ? {} : { blobId }),
+      ...(switching ? { action: action as 'write' | 'remove' | 'acknowledge' } : {}),
+    };
+    const preimage = file.preimage;
+    if (preimage.state === 'absent') {
+      if (Object.keys(preimage).length !== 1) {
+        return invalid();
+      }
+      files.push({ ...metadata, preimage: { state: 'absent' } });
+    } else {
+      if (
+        preimage.state !== 'present' ||
+        Object.keys(preimage).some((key) => !['state', 'hmac', 'byteLength'].includes(key)) ||
+        typeof preimage.hmac !== 'string' ||
+        !HMAC_PATTERN.test(preimage.hmac) ||
+        typeof preimage.byteLength !== 'number' ||
+        !Number.isSafeInteger(preimage.byteLength) ||
+        preimage.byteLength < 0
+      ) {
+        return invalid();
+      }
+      files.push({
+        ...metadata,
+        preimage: { state: 'present', hmac: preimage.hmac, byteLength: preimage.byteLength },
+      });
+    }
+  }
+  if (switching) {
+    let targetBranch: string;
+    let materializedBranch: string | undefined;
+    try {
+      targetBranch = validateBranchName(record.targetBranch);
+      materializedBranch =
+        record.materializedBranch === undefined ? undefined : validateBranchName(record.materializedBranch);
+    } catch {
+      return invalid();
+    }
+    if (
+      branch === targetBranch ||
+      typeof record.timestamp !== 'number' ||
+      !Number.isSafeInteger(record.timestamp) ||
+      record.timestamp < 0
+    ) {
+      return invalid();
+    }
+    return {
+      kind: 'switch',
+      operationId: assertUuidField(record.operationId, 'recovery operation id'),
+      sourceBranch: branch,
+      ...(materializedBranch === undefined ? {} : { materializedBranch }),
+      targetBranch,
+      sourceCommitId:
+        record.sourceCommitId === null ? null : assertUuidField(record.sourceCommitId, 'recovery source commit id'),
+      targetCommitId:
+        record.targetCommitId === null ? null : assertUuidField(record.targetCommitId, 'recovery target commit id'),
+      timestamp: record.timestamp,
+      files: files as SwitchRecovery['files'],
+    };
+  }
+  return {
+    kind: 'rollback',
+    operationId: assertUuidField(record.operationId, 'recovery operation id'),
+    branch,
+    sourceCommitId: assertUuidField(record.sourceCommitId, 'recovery source commit id'),
+    commitId: assertUuidField(record.commitId, 'recovery commit id'),
+    files: files as RollbackRecovery['files'],
+  };
 }
 
 export function validateRemoteEndpoint(value: unknown): string {
@@ -461,6 +665,7 @@ export function assertSecretSyncState(value: unknown): SecretSyncState {
     'baselines',
     'heads',
     'journalSeq',
+    'recovery',
   ]);
   for (const key of Object.keys(record)) {
     if (!allowedTop.has(key)) {
@@ -531,6 +736,9 @@ export function assertSecretSyncState(value: unknown): SecretSyncState {
   };
   if (materializedBranch !== undefined) {
     state.materializedBranch = materializedBranch;
+  }
+  if (record.recovery !== undefined) {
+    state.recovery = assertMaterializationRecovery(record.recovery);
   }
   return state;
 }
@@ -722,16 +930,13 @@ interface LockPayload {
   nonce: string;
 }
 
-function isPidAlive(pid: number): boolean {
+function isPidDead(pid: number): boolean {
   try {
     process.kill(pid, 0);
-    return true;
+    return false;
   } catch (error) {
     const code = (error as NodeJS.ErrnoException).code;
-    if (code === 'EPERM') {
-      return true;
-    }
-    return false;
+    return code === 'ESRCH';
   }
 }
 
@@ -821,14 +1026,7 @@ export async function acquireStateLock(rootAbsolute: string, options: AcquireLoc
       const observed = await readLockPayload(paths.lockFile);
       const existing = observed.payload;
       const ageMs = observed.mtimeMs === undefined ? now - (existing?.timestamp ?? 0) : now - observed.mtimeMs;
-      let stale: boolean;
-      if (existing === undefined) {
-        stale = ageMs > staleMs;
-      } else if (!isPidAlive(existing.pid)) {
-        stale = true;
-      } else {
-        stale = now - existing.timestamp > staleMs;
-      }
+      const stale = existing === undefined ? ageMs > staleMs : isPidDead(existing.pid);
       if (!stale) {
         throw new SecretSyncError('lock-busy', 'Local state is locked by another process; retry after it finishes.');
       }

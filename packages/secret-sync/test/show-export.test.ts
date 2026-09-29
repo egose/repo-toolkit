@@ -132,6 +132,9 @@ describe('show --export', () => {
         throw new Error('expected show result');
       }
       expect(planned.result.exported).toBeUndefined();
+      expect(planned.bytes.byteLength).toBe(0);
+      expect(planned.result.byteLength).toBe(Buffer.from('V=1\n', 'utf8').byteLength);
+      expect(planned.result.dryRun).toBe(true);
       await expect(stat(join(dir, 'rel', 'dry.env'))).rejects.toThrow();
     } finally {
       await rm(dir, { recursive: true, force: true });

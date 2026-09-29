@@ -624,12 +624,22 @@ export class SdkSecretStore implements SecretStore {
     return task;
   }
 
-  private withDeadline<T>(task: Promise<T>, op: string): Promise<T> {
+  private withDeadline<T>(op: string, fn: (client: SdkClientLike) => Promise<T>): Promise<T> {
     const path = sdkItemPath(this.vaultId);
     return new Promise<T>((resolve, reject) => {
+      let expired = false;
+      const timeout = new SecretSyncError('timeout', `1Password SDK ${op} timed out.`, { method: op, path });
       const timer = setTimeout(() => {
-        reject(new SecretSyncError('timeout', `1Password SDK ${op} timed out.`, { retryable: true, method: op, path }));
+        expired = true;
+        reject(timeout);
       }, this.timeoutMs);
+      const task = (async () => {
+        const client = await this.ensureClient();
+        if (expired) {
+          throw timeout;
+        }
+        return fn(client);
+      })();
       task.then(
         (value) => {
           clearTimeout(timer);
@@ -648,8 +658,7 @@ export class SdkSecretStore implements SecretStore {
     let attempt = 0;
     for (;;) {
       try {
-        const client = await this.ensureClient();
-        return await this.withDeadline(fn(client), op);
+        return await this.withDeadline(op, fn);
       } catch (error) {
         const mapped = error instanceof SecretSyncError ? error : mapSdkError(error, op, path);
         if (!mapped.retryable || attempt >= this.maxRetries) {
@@ -788,24 +797,16 @@ export class SdkSecretStore implements SecretStore {
         value: field.value,
       })),
     };
-    let client: SdkClientLike;
-    try {
-      client = await this.ensureClient();
-    } catch (error) {
-      throw error instanceof SecretSyncError ? error : mapSdkError(error, 'create', sdkItemPath(this.vaultId));
-    }
+    let started = false;
     let raw: SdkItemLike;
     try {
-      raw = await this.withDeadline(client.items.create(params), 'create');
+      raw = await this.withDeadline('create', (client) => {
+        started = true;
+        return client.items.create(params);
+      });
     } catch (error) {
-      if (error instanceof SecretSyncError) {
-        if (isDeterministicCreateError(error)) {
-          throw error;
-        }
-        return { status: 'uncertain', attempts: 1 };
-      }
       const mapped = mapSdkError(error, 'create', sdkItemPath(this.vaultId));
-      if (isDeterministicCreateError(mapped)) {
+      if (!started || isDeterministicCreateError(mapped)) {
         throw mapped;
       }
       return { status: 'uncertain', attempts: 1 };

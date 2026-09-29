@@ -181,7 +181,8 @@ describe('guarded switching', () => {
           vaultId: VAULT,
           hooks: {
             beforeFile: async (path) => {
-              if (path === '.env') {
+              if (path === 'a.env') {
+                expect(await readText(dir, '.env')).toBe('shared-main-env');
                 throw new Error('Injected switch failure.');
               }
             },
@@ -190,6 +191,9 @@ describe('guarded switching', () => {
       ).rejects.toThrow('Injected switch failure.');
       const partial = await loadState(dir, { endpoint: ENDPOINT, vaultId: VAULT, projectId: PROJECT_ID });
       expect(partial.activeBranch).toBe('feature/demo');
+      expect(await readText(dir, '.env')).toBe('shared-main-env');
+      expect(await readText(dir, 'a.env')).toBe('feature-a');
+      const resumedPaths: string[] = [];
       const resumed = await switchBranch({
         store,
         rootAbsolute: dir,
@@ -197,8 +201,15 @@ describe('guarded switching', () => {
         targetBranch: 'main',
         endpoint: ENDPOINT,
         vaultId: VAULT,
+        hooks: {
+          beforeFile: (path) => {
+            resumedPaths.push(path);
+          },
+        },
       });
       expect(resumed.switched).toBe(true);
+      expect(resumedPaths).toEqual(['a.env']);
+      expect(resumed.resumedFromJournal).toBe(true);
       expect(resumed.downloaded.sort()).toEqual(['.env', 'a.env']);
       expect(await readText(dir, '.env')).toBe('shared-main-env');
       expect(await readText(dir, 'a.env')).toBe('shared-main-a');

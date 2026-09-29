@@ -972,13 +972,20 @@ export async function runSecretSync(options: SecretSyncOptions = {}): Promise<Se
     }
     case 'switch': {
       const { switchBranch } = await import('./branches');
+      const { createSelectionMatcher } = await import('./discovery');
       if (plan.commandOptions.branch === undefined) {
         throw new Error('switch requires --branch <name>.');
       }
+      const configRelPath = configRelForPlan(plan);
       const result = await switchBranch({
         store,
         rootAbsolute: plan.rootAbsolute,
         targetBranch: plan.commandOptions.branch,
+        matchesPath: createSelectionMatcher({
+          files: plan.files,
+          ignore: plan.ignore,
+          ...(configRelPath === undefined ? {} : { extraExcludes: [configRelPath] }),
+        }),
         identity,
         concurrency: plan.limits.concurrency,
         maxFileBytes: plan.limits.maxFileBytes,

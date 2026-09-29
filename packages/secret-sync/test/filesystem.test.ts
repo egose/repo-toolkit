@@ -4,16 +4,19 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import { MAX_FILE_BYTES_HARD_CEILING } from '../src/config';
+import { computeFileHmac } from '../src/state';
 import { SecretSyncError } from '../src/errors';
 import {
   assertNoCaseCollision,
   checkDestinationKind,
   detectCaseCollision,
+  expectedDestinationFromBytes,
   FILESYSTEM_RACE_LIMITS,
   readFileBounded,
   removeFileGuarded,
   resolveSafeDestination,
   writeFileAtomically,
+  writeExportFileAtomically,
 } from '../src/filesystem';
 
 async function withTempDir(fn: (dir: string) => Promise<void>): Promise<void> {
@@ -253,15 +256,16 @@ describe('bounded safe writes', () => {
         await writeFileAtomically(dir, 'race.env', new Uint8Array(Buffer.from('v2', 'utf8')), {
           hooks: {
             beforeRename: async () => {
-              await writeFile(join(dir, 'race.env'), 'concurrent-edit');
+              await writeFile(join(dir, 'race.env'), 'v3');
             },
           },
         });
       } catch (error) {
         caught = error;
       }
-      expect(caught).toBeUndefined();
-      expect(await readFile(join(dir, 'race.env'), 'utf8')).toBe('v2');
+      expectSecretSyncError(caught, 'local-changed');
+      expect(await readFile(join(dir, 'race.env'), 'utf8')).toBe('v3');
+      expect(await readdir(dir)).toEqual(['race.env']);
       await writeFile(join(dir, 'guard.env'), 'g1');
       let dirSwap: unknown;
       try {
@@ -318,6 +322,118 @@ describe('bounded safe writes', () => {
     });
   });
 
+  it.each(['before-entry', 'afterTempWrite', 'beforeRename'] as const)(
+    'preserves preflight expectations against presence and content changes at %s',
+    async (stage) => {
+      for (const [before, after] of [
+        [undefined, Buffer.alloc(0)],
+        [Buffer.alloc(0), undefined],
+        [Buffer.from([0, 255]), Buffer.from([255, 0])],
+        [Buffer.from('a'), Buffer.from('longer')],
+      ]) {
+        await withTempDir(async (dir) => {
+          const path = join(dir, 'race.env');
+          if (before !== undefined) {
+            await writeFile(path, before);
+          }
+          const expectedDestination = expectedDestinationFromBytes(before);
+          const edit = async () => {
+            if (after === undefined) {
+              await rm(path);
+            } else {
+              await writeFile(path, after);
+            }
+          };
+          if (stage === 'before-entry') {
+            await edit();
+          }
+          await expect(
+            writeFileAtomically(dir, 'race.env', Buffer.from('replacement'), {
+              expectedDestination,
+              hooks: stage === 'before-entry' ? {} : { [stage]: edit },
+            }),
+          ).rejects.toMatchObject({ code: 'local-changed' });
+          expect(await readFileBounded(dir, 'race.env')).toEqual(
+            after === undefined ? undefined : new Uint8Array(after),
+          );
+          expect(await readdir(dir)).toEqual(after === undefined ? [] : ['race.env']);
+        });
+      }
+    },
+  );
+
+  it('accepts exact binary preimages and empty files at the write bound without exposing fingerprints', async () => {
+    await withTempDir(async (dir) => {
+      const bytes = Buffer.from([0, 255, 13, 10]);
+      await writeFileAtomically(dir, 'bounded.env', bytes, {
+        maxFileBytes: 4,
+        expectedDestination: { state: 'absent' },
+      });
+      const result = await writeFileAtomically(dir, 'bounded.env', Buffer.alloc(0), {
+        maxFileBytes: 4,
+        expectedDestination: expectedDestinationFromBytes(bytes),
+      });
+      expect(result).toEqual({ byteLength: 0 });
+      await writeFileAtomically(dir, 'bounded.env', bytes, {
+        expectedDestination: expectedDestinationFromBytes(Buffer.alloc(0)),
+      });
+      expect(await readFile(join(dir, 'bounded.env'))).toEqual(bytes);
+    });
+  });
+
+  it.each(['beforeTempWrite', 'afterTempWrite', 'beforeRename'] as const)(
+    'cleans temporary plaintext when %s throws for worktree and export writes',
+    async (stage) => {
+      await withTempDir(async (dir) => {
+        await writeFile(join(dir, 'kept.env'), 'kept');
+        for (const writer of [
+          (options: Parameters<typeof writeFileAtomically>[3]) =>
+            writeFileAtomically(dir, 'kept.env', Buffer.from('secret'), options),
+          (options: Parameters<typeof writeExportFileAtomically>[2]) =>
+            writeExportFileAtomically(join(dir, 'kept.env'), Buffer.from('secret'), options),
+        ]) {
+          const failure = new Error(`injected-${stage}`);
+          await expect(
+            writer({
+              hooks: {
+                [stage]: () => {
+                  throw failure;
+                },
+              },
+            }),
+          ).rejects.toBe(failure);
+          expect(await readFile(join(dir, 'kept.env'), 'utf8')).toBe('kept');
+          expect(await readdir(dir)).toEqual(['kept.env']);
+        }
+      });
+    },
+  );
+
+  it.each(['edit', 'create', 'remove'] as const)(
+    'preserves deliberate export overwrite on concurrent %s',
+    async (change) => {
+      await withTempDir(async (dir) => {
+        const path = join(dir, 'export.env');
+        if (change !== 'create') {
+          await writeFile(path, 'original');
+        }
+        await writeExportFileAtomically(path, Buffer.from('exported'), {
+          hooks: {
+            beforeRename: async () => {
+              if (change === 'remove') {
+                await rm(path);
+              } else {
+                await writeFile(path, 'concurrent');
+              }
+            },
+          },
+        });
+        expect(await readFile(path, 'utf8')).toBe('exported');
+        expect(await readdir(dir)).toEqual(['export.env']);
+      });
+    },
+  );
+
   it('reads bounded files and guards removals against concurrent edits', async () => {
     await withTempDir(async (dir) => {
       expect(await readFileBounded(dir, 'missing.env')).toBeUndefined();
@@ -334,6 +450,89 @@ describe('bounded safe writes', () => {
       expect(await removeFileGuarded(dir, 'absent.env')).toBe(false);
       expect(await removeFileGuarded(dir, 'r.env')).toBe(true);
       expect(await readFileBounded(dir, 'r.env')).toBeUndefined();
+    });
+  });
+
+  it.each([
+    [Buffer.from('original'), Buffer.from('lateedit')],
+    [Buffer.from([0, 255]), Buffer.from([255, 0])],
+    [Buffer.from('a'), Buffer.from('longer')],
+    [undefined, Buffer.alloc(0)],
+    [undefined, Buffer.from('created')],
+    [Buffer.alloc(0), undefined],
+    [Buffer.from('removed'), undefined],
+  ])('refuses removal when expected %j changed to %j', async (before, after) => {
+    await withTempDir(async (dir) => {
+      if (after !== undefined) {
+        await writeFile(join(dir, 'guard.env'), after);
+      }
+      await expect(
+        removeFileGuarded(dir, 'guard.env', {
+          expectedDestination: expectedDestinationFromBytes(before),
+        }),
+      ).rejects.toMatchObject({ code: 'local-changed' });
+      expect(await readFileBounded(dir, 'guard.env')).toEqual(after === undefined ? undefined : new Uint8Array(after));
+    });
+  });
+
+  it.each([undefined, Buffer.alloc(0), Buffer.from([0, 255, 13, 10])])(
+    'accepts exact removal content or absence %j',
+    async (bytes) => {
+      await withTempDir(async (dir) => {
+        if (bytes !== undefined) {
+          await writeFile(join(dir, 'guard.env'), bytes);
+        }
+        expect(
+          await removeFileGuarded(dir, 'guard.env', {
+            expectedDestination: expectedDestinationFromBytes(bytes),
+          }),
+        ).toBe(bytes !== undefined);
+        expect(await readFileBounded(dir, 'guard.env')).toBeUndefined();
+      });
+    },
+  );
+
+  it('preserves keyed removal checks and absent no-ops, enforcing both supplied expectations', async () => {
+    await withTempDir(async (dir) => {
+      const bytes = Buffer.from('original');
+      const localKey = 'ab'.repeat(32);
+      const keyed = {
+        localKey,
+        expectedHmac: computeFileHmac(bytes, localKey),
+        expectedByteLength: bytes.byteLength,
+      };
+      expect(await removeFileGuarded(dir, 'guard.env', keyed)).toBe(false);
+      await writeFile(join(dir, 'guard.env'), 'lateedit');
+      await expect(removeFileGuarded(dir, 'guard.env', keyed)).rejects.toMatchObject({ code: 'local-changed' });
+      expect(await readFile(join(dir, 'guard.env'), 'utf8')).toBe('lateedit');
+      await writeFile(join(dir, 'guard.env'), bytes);
+      await expect(
+        removeFileGuarded(dir, 'guard.env', {
+          ...keyed,
+          expectedByteLength: bytes.byteLength + 1,
+        }),
+      ).rejects.toMatchObject({ code: 'local-changed' });
+      await expect(
+        removeFileGuarded(dir, 'guard.env', {
+          expectedHmac: keyed.expectedHmac,
+        }),
+      ).rejects.toMatchObject({ code: 'validation' });
+      await expect(
+        removeFileGuarded(dir, 'guard.env', {
+          ...keyed,
+          expectedDestination: { state: 'absent' },
+        }),
+      ).rejects.toMatchObject({ code: 'local-changed' });
+      await expect(
+        removeFileGuarded(dir, 'guard.env', {
+          ...keyed,
+          expectedHmac: computeFileHmac(Buffer.from('lateedit'), localKey),
+          expectedDestination: expectedDestinationFromBytes(bytes),
+        }),
+      ).rejects.toMatchObject({ code: 'local-changed' });
+      expect(await readFile(join(dir, 'guard.env'))).toEqual(bytes);
+      expect(await removeFileGuarded(dir, 'guard.env', keyed)).toBe(true);
+      expect(await readFileBounded(dir, 'guard.env')).toBeUndefined();
     });
   });
 

@@ -10,20 +10,16 @@ import {
   removeFileGuarded,
   resolveSafeDestination,
   writeFileAtomically,
+  expectedDestinationFromBytes,
 } from './filesystem';
 import { deriveBranchHeads } from './graph';
-import { loadValidatedHistory, materializeTreeBytes, publishCommit } from './history-store';
+import { loadValidatedHistory, materializeTreeBytes, publishCommit, type LoadedHistory } from './history-store';
 import { sha256Hex } from './records';
-import {
-  appendJournalEntry,
-  clearAcknowledgedEntries,
-  loadJournal,
-  markJournalStatus,
-  recoverJournal,
-} from './journal';
+import { appendJournalEntry, clearAcknowledgedEntries, loadJournal, markJournalStatus } from './journal';
 import {
   acquireStateLock,
   assertIdentityMatches,
+  captureLocalPreimage,
   computeFileHmac,
   initState,
   normalizeOperationIdentity,
@@ -35,8 +31,10 @@ import {
   setObservedHeads,
   validateRemoteIdentity,
   validateStateRemote,
+  type SecretSyncState,
 } from './state';
 import { compareFile } from './status';
+import { verifySwitchRecovery } from './switch-recovery';
 import type { SecretStore } from './store';
 import {
   baselinesToSlots,
@@ -107,6 +105,7 @@ export interface SwitchOptions {
   operationId?: string;
   dryRun?: boolean;
   maxFileBytes?: number;
+  matchesPath?: (path: string) => boolean;
   hooks?: SwitchHooks;
 }
 
@@ -284,6 +283,107 @@ export async function listBranches(
   return { branches };
 }
 
+async function planSwitchWorktree(
+  options: SwitchOptions,
+  state: SecretSyncState | undefined,
+  history: LoadedHistory,
+  targetBranch: string,
+) {
+  const from = state?.activeBranch ?? targetBranch;
+  const currentHeads = deriveBranchHeads(history.commits, from);
+  if (currentHeads.length > 1) {
+    throw new SecretSyncError(
+      'remote-diverged',
+      `Branch ${JSON.stringify(from)} has multiple heads; resolve the fork before switching.`,
+    );
+  }
+  const currentHead = currentHeads[0];
+  const targetHeads = deriveBranchHeads(history.commits, targetBranch);
+  if (targetHeads.length > 1) {
+    throw new SecretSyncError('remote-diverged', `Branch ${JSON.stringify(targetBranch)} has multiple heads.`);
+  }
+  const targetHead = targetHeads[0];
+  const currentTree = new Map((currentHead === undefined ? [] : currentHead.tree).map((entry) => [entry.path, entry]));
+  const targetBytes =
+    targetHead === undefined ? new Map<string, Uint8Array>() : materializeTreeBytes(history, targetHead.logicalId);
+  const targetTree = new Map((targetHead === undefined ? [] : targetHead.tree).map((entry) => [entry.path, entry]));
+  const baselines = baselinesToSlots(state?.baselines ?? {}, history.blobs);
+  const candidates = new Set([...baselines.keys(), ...currentTree.keys(), ...targetTree.keys()]);
+  const ordered = [...candidates].filter((path) => options.matchesPath?.(path) ?? true).sort();
+  const scanned = await scanLocalSlots(
+    (path) => readFileBounded(options.rootAbsolute, path, { maxFileBytes: options.maxFileBytes }),
+    ordered,
+  );
+  const journal = await loadJournal(options.rootAbsolute);
+  const completed = verifySwitchRecovery({
+    state,
+    targetBranch,
+    sourceCommitId: currentHead?.logicalId ?? null,
+    targetCommitId: targetHead?.logicalId ?? null,
+    operationId: options.operationId,
+    ordered,
+    targetBytes,
+    targetTree,
+    localBytes: scanned.bytes,
+    journal,
+  });
+  for (const path of ordered) {
+    normalizeProjectRelPath(path, 'worktree path');
+    if (state?.recovery?.kind === 'switch') {
+      continue;
+    }
+    const baseline = baselines.get(path) ?? { state: 'unknown' as const };
+    const local = scanned.slots.get(path) ?? { state: 'absent' as const };
+    const remoteEntry = currentTree.get(path);
+    const remote =
+      remoteEntry === undefined
+        ? { state: 'absent' as const }
+        : {
+            state: 'present' as const,
+            fingerprint: {
+              sha256: remoteEntry.sha256,
+              byteLength: remoteEntry.byteLength,
+              blobId: remoteEntry.blobId,
+            },
+          };
+    const status = compareFile(baseline, local, remote);
+    if (status !== 'clean') {
+      throw new SecretSyncError(
+        'local-changed',
+        `Refusing switch with local drift at ${JSON.stringify(path)} (observed ${status}); restore or sync a clean worktree first.`,
+      );
+    }
+  }
+  const downloads: string[] = [];
+  const removals: string[] = [];
+  if (from !== targetBranch) {
+    for (const path of ordered) {
+      const wanted = targetBytes.get(path);
+      const local = scanned.bytes.get(path);
+      if (wanted !== undefined) {
+        if (local === undefined || sha256Hex(local) !== sha256Hex(wanted)) {
+          downloads.push(path);
+        }
+      } else if (local !== undefined) {
+        removals.push(path);
+      }
+    }
+  }
+  return {
+    currentHead,
+    targetHeads,
+    targetHead,
+    targetBytes,
+    targetTree,
+    ordered,
+    scanned,
+    downloads,
+    removals,
+    completed,
+    journal,
+  };
+}
+
 export async function switchBranch(options: SwitchOptions): Promise<SwitchResult> {
   const targetBranch = validateBranchName(options.targetBranch);
   const identity = normalizeOperationIdentity({
@@ -304,54 +404,22 @@ export async function switchBranch(options: SwitchOptions): Promise<SwitchResult
       assertIdentityMatches(identity, prior);
     }
     const history = await loadValidatedHistory(options.store, projectId, { concurrency });
-    const targetHeads = deriveBranchHeads(history.commits, targetBranch);
-    if (targetHeads.length > 1) {
-      throw new SecretSyncError('remote-diverged', `Branch ${JSON.stringify(targetBranch)} has multiple heads.`);
-    }
-    const target = targetHeads[0];
-    const targetBytes =
-      target === undefined ? new Map<string, Uint8Array>() : materializeTreeBytes(history, target.logicalId);
-    const tracked = new Set<string>([
-      ...(prior === undefined ? [] : Object.keys(prior.baselines)),
-      ...targetBytes.keys(),
-    ]);
-    if (target !== undefined) {
-      for (const entry of target.tree) {
-        tracked.add(entry.path);
-      }
-    }
-    const ordered = [...tracked].sort();
-    const scanned = await scanLocalSlots(
-      (path) => readFileBounded(options.rootAbsolute, path, { maxFileBytes: options.maxFileBytes }),
-      ordered,
+    const { targetHeads, ordered, downloads, removals } = await planSwitchWorktree(
+      options,
+      prior,
+      history,
+      targetBranch,
     );
-    const downloaded: string[] = [];
-    const removedLocal: string[] = [];
-    for (const path of ordered) {
-      const wanted = targetBytes.get(path);
-      const local = scanned.bytes.get(path);
-      if (wanted !== undefined) {
-        if (local === undefined || sha256Hex(local) !== sha256Hex(wanted)) {
-          downloaded.push(path);
-        }
-        continue;
-      }
-      if (local !== undefined) {
-        removedLocal.push(path);
-      }
-    }
-    downloaded.sort();
-    removedLocal.sort();
     return {
       switched: false,
-      noop: downloaded.length === 0 && removedLocal.length === 0,
+      noop: downloads.length === 0 && removals.length === 0,
       from: prior === undefined ? '(uninitialized)' : prior.activeBranch,
       to: targetBranch,
-      downloaded,
-      removedLocal,
-      acknowledged: [],
+      downloaded: downloads,
+      removedLocal: removals,
+      acknowledged: ordered,
       heads: targetHeads.map((head) => head.logicalId).sort(),
-      resumedFromJournal: false,
+      resumedFromJournal: prior?.recovery?.kind === 'switch',
       dryRun: true,
       note: 'Dry run: reads permitted; no remote or local writes were performed.',
     };
@@ -362,76 +430,29 @@ export async function switchBranch(options: SwitchOptions): Promise<SwitchResult
     const state = await initState(options.rootAbsolute, identity, { branch: targetBranch });
     const from = state.activeBranch;
     const history = await loadValidatedHistory(options.store, projectId, { concurrency });
-    const currentHeads = deriveBranchHeads(history.commits, from);
-    if (currentHeads.length > 1) {
-      throw new SecretSyncError(
-        'remote-diverged',
-        `Branch ${JSON.stringify(from)} has multiple heads; resolve the fork before switching.`,
-      );
-    }
-    const currentHead = currentHeads[0];
-    const targetHeads = deriveBranchHeads(history.commits, targetBranch);
-    if (targetHeads.length > 1) {
-      throw new SecretSyncError('remote-diverged', `Branch ${JSON.stringify(targetBranch)} has multiple heads.`);
-    }
-    const targetHead = targetHeads[0];
-    const currentTree = new Map(
-      (currentHead === undefined ? [] : currentHead.tree).map((entry) => [entry.path, entry]),
-    );
-    const targetBytes =
-      targetHead === undefined ? new Map<string, Uint8Array>() : materializeTreeBytes(history, targetHead.logicalId);
-    const targetTree = new Map((targetHead === undefined ? [] : targetHead.tree).map((entry) => [entry.path, entry]));
-
-    const operationId = createOperationId(options.operationId);
-    await writeOperationRecord(options.rootAbsolute, {
-      schemaVersion: 1,
-      operationId,
-      kind: 'pull',
-      branch: targetBranch,
-      commitId: targetHead === undefined ? operationId : targetHead.logicalId,
-      blobIds: {},
-      timestamp,
-    });
-
-    const recovery = await recoverJournal(options.rootAbsolute, state.localKey);
-    const resumedFromJournal = recovery.verified.length > 0 || recovery.pending.length > 0;
-
-    const baselines = baselinesToSlots(state.baselines, history.blobs);
-    const candidates = new Set<string>([...Object.keys(state.baselines), ...currentTree.keys(), ...targetTree.keys()]);
-    const ordered = [...candidates].sort();
-    const scanned = await scanLocalSlots(
-      (path) => readFileBounded(options.rootAbsolute, path, { maxFileBytes: options.maxFileBytes }),
+    const {
+      currentHead,
+      targetHeads,
+      targetHead,
+      targetBytes,
+      targetTree,
       ordered,
-    );
-    for (const path of ordered) {
-      normalizeProjectRelPath(path, 'worktree path');
-      const baseline = baselines.get(path) ?? { state: 'unknown' as const };
-      const local = scanned.slots.get(path) ?? { state: 'absent' as const };
-      const remoteEntry = currentTree.get(path);
-      const remote =
-        remoteEntry === undefined
-          ? { state: 'absent' as const }
-          : {
-              state: 'present' as const,
-              fingerprint: {
-                sha256: remoteEntry.sha256,
-                byteLength: remoteEntry.byteLength,
-                blobId: remoteEntry.blobId,
-              },
-            };
-      const status = compareFile(baseline, local, remote);
-      if (status !== 'clean') {
-        throw new SecretSyncError(
-          'local-changed',
-          `Refusing switch with local drift at ${JSON.stringify(path)} (observed ${status}); restore or sync a clean worktree first.`,
-        );
-      }
-    }
+      scanned,
+      downloads,
+      removals,
+      completed,
+      journal,
+    } = await planSwitchWorktree(options, state, history, targetBranch);
+
+    const resumedFromJournal = state.recovery?.kind === 'switch';
+    const operationId = state.recovery?.operationId ?? createOperationId(options.operationId);
+    const operationTimestamp = state.recovery?.kind === 'switch' ? state.recovery.timestamp : timestamp;
 
     if (from === targetBranch) {
       const heads = targetHeads.map((head) => head.logicalId).sort();
       setObservedHeads(state, targetBranch, heads);
       await saveState(options.rootAbsolute, state);
+      await clearAcknowledgedEntries(options.rootAbsolute);
       return {
         switched: false,
         noop: true,
@@ -447,28 +468,6 @@ export async function switchBranch(options: SwitchOptions): Promise<SwitchResult
       };
     }
 
-    const downloads: string[] = [];
-    const removals: string[] = [];
-    for (const path of ordered) {
-      const wanted = targetBytes.get(path);
-      const local = scanned.bytes.get(path);
-      if (wanted !== undefined) {
-        if (local === undefined || sha256Hex(local) !== sha256Hex(wanted)) {
-          downloads.push(path);
-        }
-        continue;
-      }
-      if (local !== undefined) {
-        const baseline = baselines.get(path);
-        const inCurrent = currentTree.has(path);
-        const inTarget = targetTree.has(path);
-        if (baseline !== undefined || inCurrent || inTarget) {
-          removals.push(path);
-        }
-      }
-    }
-    downloads.sort();
-    removals.sort();
     assertNoCaseCollision([...downloads, ...removals]);
     for (const path of [...downloads, ...removals]) {
       resolveSafeDestination(options.rootAbsolute, path);
@@ -485,19 +484,45 @@ export async function switchBranch(options: SwitchOptions): Promise<SwitchResult
       }
     }
 
+    if (state.recovery === undefined) {
+      state.recovery = {
+        kind: 'switch',
+        operationId,
+        sourceBranch: from,
+        targetBranch,
+        ...(state.materializedBranch === undefined ? {} : { materializedBranch: state.materializedBranch }),
+        sourceCommitId: currentHead?.logicalId ?? null,
+        targetCommitId: targetHead?.logicalId ?? null,
+        timestamp: operationTimestamp,
+        files: ordered.map((path) => ({
+          path,
+          action: downloads.includes(path) ? 'write' : removals.includes(path) ? 'remove' : 'acknowledge',
+          ...(targetTree.get(path) === undefined ? {} : { blobId: targetTree.get(path)?.blobId }),
+          preimage: captureLocalPreimage(scanned.bytes.get(path), state.localKey),
+        })),
+      };
+      await saveState(options.rootAbsolute, state);
+    }
+
     const downloaded: string[] = [];
     const removedLocal: string[] = [];
+    for (const path of completed) {
+      (targetBytes.has(path) ? downloaded : removedLocal).push(path);
+    }
     for (const path of downloads) {
       const bytes = targetBytes.get(path) as Uint8Array;
       const expectedHmac = computeFileHmac(bytes, state.localKey);
-      const entry = await appendJournalEntry(options.rootAbsolute, {
-        opId: operationId,
-        path,
-        kind: 'write',
-        byteLength: bytes.byteLength,
-        hmac: expectedHmac,
-        timestamp,
-      });
+      const entry =
+        journal.find((record) => record.opId === operationId && record.path === path) ??
+        (await appendJournalEntry(options.rootAbsolute, {
+          opId: operationId,
+          path,
+          kind: 'write',
+          byteLength: bytes.byteLength,
+          hmac: expectedHmac,
+          blobId: targetTree.get(path)?.blobId,
+          timestamp: operationTimestamp,
+        }));
       if (options.hooks?.beforeFile !== undefined) {
         await options.hooks.beforeFile(path);
       }
@@ -516,7 +541,10 @@ export async function switchBranch(options: SwitchOptions): Promise<SwitchResult
         downloaded.push(path);
         continue;
       }
-      await writeFileAtomically(options.rootAbsolute, path, bytes, { maxFileBytes: options.maxFileBytes });
+      await writeFileAtomically(options.rootAbsolute, path, bytes, {
+        maxFileBytes: options.maxFileBytes,
+        expectedDestination: expectedDestinationFromBytes(planned),
+      });
       const verify = await readFileBounded(options.rootAbsolute, path, { maxFileBytes: options.maxFileBytes });
       if (verify === undefined || computeFileHmac(verify, state.localKey) !== expectedHmac) {
         throw new SecretSyncError(
@@ -529,12 +557,14 @@ export async function switchBranch(options: SwitchOptions): Promise<SwitchResult
     }
     for (const path of removals) {
       const planned = scanned.bytes.get(path);
-      const entry = await appendJournalEntry(options.rootAbsolute, {
-        opId: operationId,
-        path,
-        kind: 'remove',
-        timestamp,
-      });
+      const entry =
+        journal.find((record) => record.opId === operationId && record.path === path) ??
+        (await appendJournalEntry(options.rootAbsolute, {
+          opId: operationId,
+          path,
+          kind: 'remove',
+          timestamp: operationTimestamp,
+        }));
       if (options.hooks?.beforeFile !== undefined) {
         await options.hooks.beforeFile(path);
       }
@@ -598,18 +628,17 @@ export async function switchBranch(options: SwitchOptions): Promise<SwitchResult
     setObservedHeads(state, targetBranch, targetHeads.map((head) => head.logicalId).sort());
     setActiveBranch(state, targetBranch);
     setMaterializedBranch(state, targetBranch);
+    const finishedJournal = await loadJournal(options.rootAbsolute);
+    for (const record of finishedJournal) {
+      if (record.opId === operationId && record.status !== 'acknowledged') {
+        await markJournalStatus(options.rootAbsolute, record.seq, 'acknowledged');
+      }
+    }
+    delete state.recovery;
     if (options.hooks?.beforeStateSave !== undefined) {
       await saveState(options.rootAbsolute, state, { hooks: { beforeRename: options.hooks.beforeStateSave } });
     } else {
       await saveState(options.rootAbsolute, state);
-    }
-    await clearAcknowledgedEntries(options.rootAbsolute);
-    const acknowledgedPaths = new Set(acknowledged);
-    const journal = await loadJournal(options.rootAbsolute);
-    for (const record of journal) {
-      if ((record.status === 'written' || record.status === 'pending') && acknowledgedPaths.has(record.path)) {
-        await markJournalStatus(options.rootAbsolute, record.seq, 'acknowledged');
-      }
     }
     await clearAcknowledgedEntries(options.rootAbsolute);
 

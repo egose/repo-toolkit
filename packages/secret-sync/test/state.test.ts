@@ -1,12 +1,13 @@
 import { chmod, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { SecretSyncError } from '../src/errors';
 import {
   acquireStateLock,
   assertSecretSyncState,
+  captureLocalPreimage,
   computeFileHmac,
   createFingerprintKey,
   fingerprintBytes,
@@ -18,6 +19,7 @@ import {
   saveState,
   setBaseline,
   setObservedHeads,
+  STATE_LOCK_STALE_MS,
   validateRemoteIdentity,
 } from '../src/state';
 
@@ -44,6 +46,126 @@ function expectSecretSyncError(error: unknown, code: string): void {
 }
 
 describe('protected state layout', () => {
+  it('validates switch provenance, selected actions, empty heads, and metadata-only preimages', async () => {
+    await withTempDir(async (dir) => {
+      const state = await initState(dir, identity());
+      const file = {
+        path: '.env',
+        action: 'write' as const,
+        blobId: BLOB_ID,
+        preimage: captureLocalPreimage(Buffer.from('canary-secret'), state.localKey),
+      };
+      const recovery = {
+        kind: 'switch' as const,
+        operationId: COMMIT_ID,
+        sourceBranch: 'main',
+        materializedBranch: 'main',
+        targetBranch: 'feature',
+        sourceCommitId: BLOB_ID,
+        targetCommitId: COMMIT_ID,
+        timestamp: 123,
+        files: [file],
+      };
+      state.recovery = recovery;
+      await saveState(dir, state);
+      expect(await loadState(dir)).toEqual(state);
+      const invalid = [
+        { ...recovery, bytes: 'canary-secret' },
+        { ...recovery, targetBranch: 'main' },
+        { ...recovery, sourceBranch: '' },
+        { ...recovery, targetBranch: '' },
+        { ...recovery, materializedBranch: '' },
+        { ...recovery, targetCommitId: undefined },
+        { ...recovery, targetCommitId: 'invalid' },
+        { ...recovery, sourceCommitId: 'invalid' },
+        { ...recovery, timestamp: -1 },
+        { ...recovery, timestamp: 0.5 },
+        { ...recovery, files: [file, file] },
+        ...[
+          { ...file, action: 'download' },
+          { ...file, action: 'remove' },
+          { ...file, blobId: undefined },
+          { ...file, path: '../escape' },
+          { ...file, content: 'canary-secret' },
+          { ...file, preimage: { ...file.preimage, sha256: 'a'.repeat(64) } },
+        ].map((bad) => ({ ...recovery, files: [bad] })),
+      ];
+      for (const bad of invalid) {
+        expect(() => assertSecretSyncState({ ...state, recovery: bad })).toThrowError(
+          expect.objectContaining({ code: 'state-corrupt' }),
+        );
+      }
+      for (const empty of [
+        { ...recovery, sourceCommitId: null, targetCommitId: null, files: [] },
+        {
+          ...recovery,
+          targetCommitId: null,
+          files: [{ path: '.env', action: 'remove' as const, preimage: file.preimage }],
+        },
+        {
+          ...recovery,
+          files: [{ path: '.env', action: 'acknowledge' as const, preimage: { state: 'absent' as const } }],
+        },
+      ]) {
+        state.recovery = empty;
+        await saveState(dir, state);
+        expect(await loadState(dir)).toEqual(state);
+      }
+    });
+  });
+
+  it('round-trips strictly metadata-only recovery and rejects malformed provenance or preimages', async () => {
+    await withTempDir(async (dir) => {
+      const state = await initState(dir, identity());
+      state.recovery = {
+        kind: 'rollback',
+        operationId: COMMIT_ID,
+        branch: 'main',
+        sourceCommitId: BLOB_ID,
+        commitId: COMMIT_ID,
+        files: [
+          {
+            path: '.env',
+            blobId: BLOB_ID,
+            preimage: captureLocalPreimage(Buffer.from('canary-secret'), state.localKey),
+          },
+        ],
+      };
+      await saveState(dir, state);
+      expect(await loadState(dir)).toEqual(state);
+      const recovery = state.recovery;
+      const file = recovery.files[0];
+      const invalid = [
+        { ...recovery, content: 'canary-secret' },
+        { ...recovery, kind: 'pull' },
+        { ...recovery, operationId: 'invalid' },
+        { ...recovery, commitId: 'invalid' },
+        { ...recovery, sourceCommitId: 'invalid' },
+        { ...recovery, branch: '' },
+        { ...recovery, files: [] },
+        { ...recovery, files: [file, file] },
+        { ...recovery, files: [{ ...file, path: '../escape' }] },
+        { ...recovery, files: [{ ...file, blobId: 'invalid' }] },
+        { ...recovery, files: [{ ...file, content: 'canary-secret' }] },
+        ...[
+          { state: 'unknown' },
+          { state: 'absent', hmac: 'a'.repeat(64) },
+          { ...file.preimage, hmac: 'invalid' },
+          { ...file.preimage, byteLength: -1 },
+          { ...file.preimage, byteLength: 0.5 },
+          { ...file.preimage, contentBase64: 'Y2FuYXJ5' },
+          { ...file.preimage, sha256: 'a'.repeat(64) },
+        ].map((preimage) => ({ ...recovery, files: [{ ...file, preimage }] })),
+      ];
+      for (const bad of invalid) {
+        expect(() => assertSecretSyncState({ ...state, recovery: bad })).toThrowError(
+          expect.objectContaining({ code: 'state-corrupt' }),
+        );
+      }
+      expect(await loadState(dir)).toEqual(state);
+    });
+  });
+
   it('initializes a 0700 directory with a 0600 state file and generated key', async () => {
     await withTempDir(async (dir) => {
       const state = await initState(dir, identity());
@@ -306,46 +428,81 @@ describe('local state locking', () => {
     });
   });
 
-  it('recovers stale locks from dead owners but not from live owners', async () => {
+  it('recovers a dead owner lock without waiting for the stale threshold', async () => {
     await withTempDir(async (dir) => {
       await initState(dir, identity());
       const paths = resolveStatePaths(dir);
       const deadPid = 2147483647;
       await writeFile(paths.lockFile, JSON.stringify({ pid: deadPid, timestamp: Date.now(), nonce: 'dead-owner' }));
-      const takeover = await acquireStateLock(dir);
-      await takeover.release();
-      await writeFile(paths.lockFile, JSON.stringify({ pid: process.pid, timestamp: Date.now(), nonce: 'live-owner' }));
-      let busy: unknown;
+      const probe = vi.spyOn(process, 'kill').mockImplementation(() => {
+        throw Object.assign(new Error('No such process'), { code: 'ESRCH' });
+      });
       try {
-        await acquireStateLock(dir, { staleMs: 60000 });
-      } catch (error) {
-        busy = error;
+        const takeover = await acquireStateLock(dir, { nonce: 'new-owner' });
+        expect(probe).toHaveBeenCalledWith(deadPid, 0);
+        expect(JSON.parse(await readFile(paths.lockFile, 'utf8'))).toMatchObject({ nonce: 'new-owner' });
+        await takeover.release();
+        await expect(readFile(paths.lockFile)).rejects.toMatchObject({ code: 'ENOENT' });
+      } finally {
+        probe.mockRestore();
       }
-      expectSecretSyncError(busy, 'lock-busy');
-      await writeFile(
-        paths.lockFile,
-        JSON.stringify({ pid: process.pid, timestamp: Date.now() - 120000, nonce: 'aged-owner' }),
-      );
-      const aged = await acquireStateLock(dir, { staleMs: 1000 });
-      await aged.release();
     });
   });
+
+  it.each([0, STATE_LOCK_STALE_MS * 2])(
+    'preserves a live owner when contender time advances by %i ms',
+    async (elapsed) => {
+      await withTempDir(async (dir) => {
+        const now = Date.now();
+        const owner = await acquireStateLock(dir, { now, nonce: 'live-owner' });
+        const paths = resolveStatePaths(dir);
+        const before = await readFile(paths.lockFile, 'utf8');
+        try {
+          await expect(acquireStateLock(dir, { now: now + elapsed })).rejects.toMatchObject({ code: 'lock-busy' });
+          expect(await readFile(paths.lockFile, 'utf8')).toBe(before);
+        } finally {
+          await owner.release();
+        }
+      });
+    },
+  );
+
+  it.each(['EPERM', 'EACCES', 'EIO', undefined])(
+    'preserves an aged lock when the PID probe fails with %s',
+    async (code) => {
+      await withTempDir(async (dir) => {
+        const now = Date.now();
+        const owner = await acquireStateLock(dir, { now, nonce: 'unconfirmed-owner' });
+        const paths = resolveStatePaths(dir);
+        const before = await readFile(paths.lockFile, 'utf8');
+        const probe = vi.spyOn(process, 'kill').mockImplementation(() => {
+          throw Object.assign(new Error('PID probe failed'), { code });
+        });
+        try {
+          await expect(acquireStateLock(dir, { now: now + STATE_LOCK_STALE_MS * 2 })).rejects.toMatchObject({
+            code: 'lock-busy',
+          });
+          expect(probe).toHaveBeenCalledWith(process.pid, 0);
+          expect(await readFile(paths.lockFile, 'utf8')).toBe(before);
+        } finally {
+          probe.mockRestore();
+          await owner.release();
+        }
+      });
+    },
+  );
 
   it('does not delete a new owner lock on stale release', async () => {
     await withTempDir(async (dir) => {
       await initState(dir, identity());
       const first = await acquireStateLock(dir);
       const paths = resolveStatePaths(dir);
-      const before = await readFile(paths.lockFile, 'utf8');
-      expect(before).toContain(String(process.pid));
+      const replacement = JSON.stringify({ pid: process.pid, timestamp: Date.now(), nonce: 'replacement-owner' });
+      await writeFile(paths.lockFile, replacement);
       await first.release();
-      let missing: string | undefined;
-      try {
-        missing = await readFile(paths.lockFile, 'utf8');
-      } catch {
-        missing = undefined;
-      }
-      expect(missing).toBeUndefined();
+      expect(await readFile(paths.lockFile, 'utf8')).toBe(replacement);
+      await first.release();
+      expect(await readFile(paths.lockFile, 'utf8')).toBe(replacement);
     });
   });
 

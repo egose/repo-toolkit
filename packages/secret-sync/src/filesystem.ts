@@ -1,5 +1,5 @@
-import { createHmac } from 'node:crypto';
-import { chmod, lstat, mkdir, open, readFile, readdir, rename, unlink, writeFile } from 'node:fs/promises';
+import { createHash, createHmac } from 'node:crypto';
+import { chmod, lstat, mkdir, open, readFile, readdir, rename, unlink } from 'node:fs/promises';
 import { dirname, isAbsolute, join, parse, relative, resolve, sep } from 'node:path';
 
 import { MAX_FILE_BYTES_HARD_CEILING, normalizeProjectRelPath } from './config';
@@ -11,8 +11,10 @@ export const SAFE_WRITE_FILE_MODE = 0o600;
 
 export const FILESYSTEM_RACE_LIMITS = [
   'Replacement is atomic per file via same-directory rename; there is no multi-file filesystem transaction.',
-  'Each write rechecks the destination and its ancestors immediately before rename, but a privileged local actor can still swap a symlink ancestor or the destination between that recheck and rename.',
-  'Descriptor-level identity is not retained across rename on this path; callers needing stronger guarantees must hold the local state lock for the whole operation.',
+  'Worktree writes recheck expected content or absence and ancestors immediately before rename; export deliberately overwrites regular files.',
+  'Restore removals recheck preflight content or absence before unlink or an absent no-op; pull and switch retain keyed removal guards.',
+  'This is not filesystem compare-and-swap: another local writer can edit the destination or swap an ancestor between recheck and rename or unlink, or create a file after an absence check.',
+  'The local state lock serializes cooperating sync operations, not editors or other local writers.',
   'Case-insensitive filesystems may treat distinct spellings as one file; writes therefore refuse case collisions before touching the filesystem.',
   'Network filesystems can delay rename visibility; recovery must verify file bytes rather than assuming a rename result.',
   'POSIX modes 0600/0700 are enforced where the platform supports them; Windows ACL behavior is unverified in ordinary CI.',
@@ -30,11 +32,24 @@ export interface SafeWriteOptions {
   hooks?: SafeWriteHooks;
 }
 
+export type ExpectedDestination = { state: 'absent' } | { state: 'present'; sha256: string; byteLength: number };
+
+export interface WorktreeWriteOptions extends SafeWriteOptions {
+  expectedDestination?: ExpectedDestination;
+}
+
+export function expectedDestinationFromBytes(bytes: Uint8Array | undefined): ExpectedDestination {
+  return bytes === undefined
+    ? { state: 'absent' }
+    : { state: 'present', sha256: createHash('sha256').update(bytes).digest('hex'), byteLength: bytes.byteLength };
+}
+
 export interface ReadBoundedOptions {
   maxFileBytes?: number;
 }
 
 export interface RemoveGuardOptions {
+  expectedDestination?: ExpectedDestination;
   expectedHmac?: string;
   expectedByteLength?: number;
   localKey?: string;
@@ -220,49 +235,45 @@ async function replaceAtomically(
   bytes: Uint8Array,
   options: SafeWriteOptions,
   recheck: () => Promise<void>,
+  expectedDestination?: ExpectedDestination,
 ): Promise<{ byteLength: number }> {
   await mkdir(dirname(absolute), { recursive: true });
   const tempName = `${SAFE_WRITE_TEMP_PREFIX}${process.pid}-${Date.now()}-${Math.floor(Math.random() * 0xffffffff).toString(16)}.tmp`;
   const tempPath = join(dirname(absolute), tempName);
-  if (options.hooks?.beforeTempWrite !== undefined) {
-    await options.hooks.beforeTempWrite();
-  }
-  await writeFile(tempPath, Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength), {
-    mode: SAFE_WRITE_FILE_MODE,
-  });
-  await chmod(tempPath, SAFE_WRITE_FILE_MODE);
-  const tempHandle = await open(tempPath, 'r');
+  let tempOwned = false;
   try {
-    await tempHandle.sync();
-  } finally {
-    await tempHandle.close();
-  }
-  if (options.hooks?.afterTempWrite !== undefined) {
-    await options.hooks.afterTempWrite();
-  }
-  if (options.hooks?.beforeRename !== undefined) {
+    await options.hooks?.beforeTempWrite?.();
+    const tempHandle = await open(tempPath, 'wx', SAFE_WRITE_FILE_MODE);
+    tempOwned = true;
     try {
-      await options.hooks.beforeRename();
-    } catch (error) {
-      await removeTempQuietly(tempPath);
-      throw error;
+      await tempHandle.writeFile(bytes);
+      await tempHandle.chmod(SAFE_WRITE_FILE_MODE);
+      await tempHandle.sync();
+    } finally {
+      await tempHandle.close();
     }
-  }
-  await recheck();
-  const rechecked = await checkDestinationKind(absolute);
-  if (rechecked === 'symlink' || rechecked === 'special') {
-    await removeTempQuietly(tempPath);
-    throw new SecretSyncError('local-changed', 'Destination changed to a symlink or special file before replacement.');
-  }
-  if (rechecked === 'directory') {
-    await removeTempQuietly(tempPath);
-    throw new SecretSyncError('local-changed', 'Destination changed to a directory before replacement.');
-  }
-  try {
+    await options.hooks?.afterTempWrite?.();
+    await options.hooks?.beforeRename?.();
+    await recheck();
+    const rechecked = await checkDestinationKind(absolute);
+    if (rechecked === 'symlink' || rechecked === 'special') {
+      throw new SecretSyncError(
+        'local-changed',
+        'Destination changed to a symlink or special file before replacement.',
+      );
+    }
+    if (rechecked === 'directory') {
+      throw new SecretSyncError('local-changed', 'Destination changed to a directory before replacement.');
+    }
+    if (expectedDestination !== undefined) {
+      await assertExpectedDestination(absolute, rechecked, expectedDestination);
+    }
     await rename(tempPath, absolute);
-  } catch (error) {
-    await removeTempQuietly(tempPath);
-    throw error;
+    tempOwned = false;
+  } finally {
+    if (tempOwned) {
+      await removeTempQuietly(tempPath);
+    }
   }
   if (options.hooks?.afterRename !== undefined) {
     await options.hooks.afterRename();
@@ -272,11 +283,42 @@ async function replaceAtomically(
   return { byteLength: bytes.byteLength };
 }
 
+async function assertExpectedDestination(
+  absolute: string,
+  kind: DestinationKind,
+  expected: ExpectedDestination,
+  action = 'replacement',
+): Promise<void> {
+  if (expected.state === 'absent' && kind === 'absent') {
+    return;
+  }
+  if (expected.state === 'present' && kind === 'file') {
+    try {
+      const stats = await lstat(absolute);
+      if (stats.isFile() && stats.size === expected.byteLength) {
+        const actual = expectedDestinationFromBytes(await readFile(absolute));
+        if (
+          actual.state === 'present' &&
+          actual.byteLength === expected.byteLength &&
+          actual.sha256 === expected.sha256
+        ) {
+          return;
+        }
+      }
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+        throw error;
+      }
+    }
+  }
+  throw new SecretSyncError('local-changed', `Refusing ${action} after an unexpected concurrent local edit.`);
+}
+
 export async function writeFileAtomically(
   rootAbsolute: string,
   relPath: string,
   bytes: Uint8Array,
-  options: SafeWriteOptions = {},
+  options: WorktreeWriteOptions = {},
 ): Promise<{ byteLength: number }> {
   const maxBytes = resolveMaxBytes(options.maxFileBytes);
   if (!(bytes instanceof Uint8Array)) {
@@ -296,9 +338,18 @@ export async function writeFileAtomically(
   if (before === 'directory') {
     throw new SecretSyncError('unsafe-path', 'Refusing to replace a directory with a file.');
   }
-  return replaceAtomically(absolute, bytes, options, async () => {
-    await assertAncestorDirsSafe(rootAbsolute, relPath);
-  });
+  const expected =
+    options.expectedDestination ??
+    expectedDestinationFromBytes(await readFileBounded(rootAbsolute, relPath, { maxFileBytes: options.maxFileBytes }));
+  return replaceAtomically(
+    absolute,
+    bytes,
+    options,
+    async () => {
+      await assertAncestorDirsSafe(rootAbsolute, relPath);
+    },
+    expected,
+  );
 }
 
 export async function writeExportFileAtomically(
@@ -368,6 +419,9 @@ export async function removeFileGuarded(
   await assertAncestorDirsSafe(rootAbsolute, relPath);
   const kind = await checkDestinationKind(absolute);
   if (kind === 'absent') {
+    if (options.expectedDestination !== undefined) {
+      await assertExpectedDestination(absolute, kind, options.expectedDestination, 'removal');
+    }
     return false;
   }
   if (kind === 'symlink' || kind === 'special') {
@@ -389,6 +443,9 @@ export async function removeFileGuarded(
     if (actual !== options.expectedHmac || data.byteLength !== options.expectedByteLength) {
       throw new SecretSyncError('local-changed', 'Refusing removal after an unexpected concurrent local edit.');
     }
+  }
+  if (options.expectedDestination !== undefined) {
+    await assertExpectedDestination(absolute, kind, options.expectedDestination, 'removal');
   }
   await unlink(absolute);
   await fsyncDir(dirname(absolute));

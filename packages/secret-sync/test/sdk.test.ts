@@ -1,10 +1,11 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { reconcileRecordByLogicalId } from '../src/history-store';
 import { SecretSyncError } from '../src/errors';
 import { createBlobRecord, decodeRecordEnvelope } from '../src/records';
 import {
   SdkSecretStore,
+  SDK_TIMEOUT_MS,
   createSdkStore,
   defaultSdkClientFactory,
   type SdkClientFactory,
@@ -79,6 +80,16 @@ function delay(ms: number | undefined): Promise<void> {
   return new Promise((resolve) => {
     setTimeout(resolve, ms);
   });
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
 }
 
 function namedError(name: string, message: string): Error {
@@ -680,22 +691,6 @@ describe('sdk failures', () => {
     await expect(captureFailure(store.listItems())).resolves.toMatchObject({ code: 'too-large' });
   });
 
-  it('applies the outer deadline to reads without retry storms', async () => {
-    const harness = makeFakeClient({ vaultId: VAULT_ID, items: [], listDelayMs: 60 });
-    const store = createSdkStore({
-      vaultId: VAULT_ID,
-      auth: { ...SERVICE_AUTH },
-      env: { [TOKEN_ENV]: 'token-ok' },
-      clientFactory: makeFactory(harness.client),
-      timeoutMs: 10,
-      maxRetries: 0,
-      sleep: () => Promise.resolve(),
-    });
-    const failure = await captureFailure(store.listItems());
-    expect(failure.code).toBe('timeout');
-    expect(harness.calls.lists).toBe(1);
-  });
-
   it('returns uncertain for late creates and reconciles by logical id', async () => {
     const harness = makeFakeClient({ vaultId: VAULT_ID, items: [], createDelayMs: 60 });
     const store = createSdkStore({
@@ -848,6 +843,281 @@ describe('sdk failures', () => {
     });
     expect(await store.listItems()).toHaveLength(1);
     expect(await store.getItem('sdk-nc')).toMatchObject({ id: 'sdk-nc' });
+  });
+});
+
+describe('sdk deadlines and settled retries', () => {
+  const token = 'SDK-DEADLINE-TOKEN-CANARY';
+  const payload = 'SDK-DEADLINE-PAYLOAD-CANARY';
+  const record = createBlobRecord(PROJECT_ID, new TextEncoder().encode(payload));
+  const item = envelopeItem('sdk-deadline', VAULT_ID, record.serialized, 'blob', record.envelope.logicalId);
+
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
+  function setup(clientFactory?: SdkClientFactory) {
+    const harness = makeFakeClient({ vaultId: VAULT_ID, items: [item] });
+    const factory = vi.fn(clientFactory ?? (() => Promise.resolve(harness.client)));
+    const sleep = vi.fn(delay);
+    const store = createSdkStore({
+      vaultId: VAULT_ID,
+      auth: SERVICE_AUTH,
+      env: { [TOKEN_ENV]: token },
+      clientFactory: factory,
+      sleep,
+    });
+    return { ...harness, factory, sleep, store };
+  }
+
+  function expectRedacted(error: SecretSyncError) {
+    const serialized = serializeFailure(error);
+    for (const canary of [token, payload, record.serialized]) {
+      expect(serialized).not.toContain(canary);
+    }
+  }
+
+  it.each([SERVICE_AUTH, DESKTOP_AUTH])('bounds stalled shared $type authentication for every caller', async (auth) => {
+    const init = deferred<SdkClientLike>();
+    const { client, calls, factory, sleep } = setup(() => init.promise);
+    const store = createSdkStore({
+      vaultId: VAULT_ID,
+      auth,
+      env: { [TOKEN_ENV]: token },
+      clientFactory: factory,
+      sleep,
+    });
+    expect(factory).not.toHaveBeenCalled();
+    const results = [
+      store.listItems(),
+      store.getItem(item.id),
+      store.listVaults!(),
+      store.createItem(record.input),
+    ].map(captureFailure);
+    await vi.advanceTimersByTimeAsync(SDK_TIMEOUT_MS - 1);
+    expect(factory).toHaveBeenCalledTimes(1);
+    expect(calls).toMatchObject({ lists: 0, gets: 0, creates: 0 });
+    expect(vi.getTimerCount()).toBe(4);
+    await vi.advanceTimersByTimeAsync(1);
+    for (const result of results) {
+      const failure = await result;
+      expect(failure).toMatchObject({ code: 'timeout', retryable: false });
+      expectRedacted(failure);
+    }
+    const later = captureFailure(store.listItems());
+    await vi.advanceTimersByTimeAsync(SDK_TIMEOUT_MS * 5);
+    expect(await later).toMatchObject({ code: 'timeout', retryable: false });
+    expect(factory).toHaveBeenCalledTimes(1);
+    expect(sleep).not.toHaveBeenCalled();
+    expect(calls).toMatchObject({ lists: 0, gets: 0, creates: 0 });
+    init.resolve(client);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(calls).toMatchObject({ lists: 0, gets: 0, creates: 0 });
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('shares late initialization with a live caller without starting the expired create', async () => {
+    const init = deferred<SdkClientLike>();
+    const { store, client, calls, factory, sleep } = setup(() => init.promise);
+    const expired = captureFailure(store.createItem(record.input));
+    await vi.advanceTimersByTimeAsync(SDK_TIMEOUT_MS / 2);
+    const live = store.getItem(item.id);
+    await vi.advanceTimersByTimeAsync(SDK_TIMEOUT_MS / 2);
+    expect(await expired).toMatchObject({ code: 'timeout', retryable: false });
+    init.resolve(client);
+    expect(await live).toMatchObject({ id: item.id });
+    expect(calls).toMatchObject({ creates: 0, gets: 1 });
+    expect(await store.createItem(record.input)).toMatchObject({ status: 'created' });
+    expect(calls.creates).toBe(1);
+    expect(factory).toHaveBeenCalledTimes(1);
+    expect(sleep).not.toHaveBeenCalled();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it.each(['list', 'get', 'create'] as const)('uses one deadline for initialization and %s work', async (op) => {
+    const init = deferred<SdkClientLike>();
+    const work = deferred<never>();
+    const { store, client, factory, sleep } = setup(() => init.promise);
+    const call = vi.fn(() => work.promise);
+    client.items[op] = call;
+    const result =
+      op === 'create'
+        ? store.createItem(record.input)
+        : captureFailure(op === 'list' ? store.listItems() : store.getItem(item.id));
+    await vi.advanceTimersByTimeAsync(SDK_TIMEOUT_MS - 100);
+    expect(call).not.toHaveBeenCalled();
+    init.resolve(client);
+    await vi.advanceTimersByTimeAsync(99);
+    expect(call).toHaveBeenCalledTimes(1);
+    expect(vi.getTimerCount()).toBe(1);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(await result).toMatchObject(
+      op === 'create' ? { status: 'uncertain', attempts: 1 } : { code: 'timeout', retryable: false },
+    );
+    await vi.advanceTimersByTimeAsync(SDK_TIMEOUT_MS * 5);
+    work.reject(new Error(`network ${token} ${payload}`));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(call).toHaveBeenCalledTimes(1);
+    expect(factory).toHaveBeenCalledTimes(1);
+    expect(sleep).not.toHaveBeenCalled();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it.each(['list', 'get', 'list-vaults'] as const)(
+    'does not multiply eight stalled %s calls with default retries',
+    async (op) => {
+      const work = deferred<never>();
+      const { store, client, factory, sleep } = setup();
+      let active = 0;
+      let peak = 0;
+      const call = vi.fn(async () => {
+        active += 1;
+        peak = Math.max(peak, active);
+        try {
+          return await work.promise;
+        } finally {
+          active -= 1;
+        }
+      });
+      if (op === 'list-vaults') {
+        client.vaults = { list: call };
+      } else {
+        client.items[op] = call;
+      }
+      const results = Array.from({ length: 8 }, () =>
+        captureFailure(op === 'list' ? store.listItems() : op === 'get' ? store.getItem(item.id) : store.listVaults!()),
+      );
+      await vi.advanceTimersByTimeAsync(SDK_TIMEOUT_MS);
+      for (const result of results) {
+        const failure = await result;
+        expect(failure).toMatchObject({ code: 'timeout', retryable: false });
+        expectRedacted(failure);
+      }
+      await vi.advanceTimersByTimeAsync(SDK_TIMEOUT_MS * 5);
+      expect(call).toHaveBeenCalledTimes(8);
+      expect(active).toBe(8);
+      expect(peak).toBe(8);
+      expect(sleep).not.toHaveBeenCalled();
+      work.reject(new Error(`rate limit ${token} ${payload}`));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(active).toBe(0);
+      expect(call).toHaveBeenCalledTimes(8);
+      expect(factory).toHaveBeenCalledTimes(1);
+      expect(vi.getTimerCount()).toBe(0);
+    },
+  );
+
+  it.each(['resolve', 'reject'] as const)(
+    'keeps started creates uncertain after late %s without replay',
+    async (settlement) => {
+      const work = deferred<SdkItemLike>();
+      const { store, client, factory, sleep } = setup();
+      const create = vi.fn(() => work.promise);
+      client.items.create = create;
+      const result = store.createItem(record.input);
+      await vi.advanceTimersByTimeAsync(SDK_TIMEOUT_MS);
+      expect(await result).toEqual({ status: 'uncertain', attempts: 1 });
+      expect(create).toHaveBeenCalledTimes(1);
+      if (settlement === 'resolve') {
+        work.resolve(item);
+      } else {
+        work.reject(new Error(`quota exceeded ${token} ${payload}`));
+      }
+      await vi.advanceTimersByTimeAsync(SDK_TIMEOUT_MS * 5);
+      expect(await result).toEqual({ status: 'uncertain', attempts: 1 });
+      expect(create).toHaveBeenCalledTimes(1);
+      expect(factory).toHaveBeenCalledTimes(1);
+      expect(sleep).not.toHaveBeenCalled();
+      expect(vi.getTimerCount()).toBe(0);
+    },
+  );
+
+  it.each(['auth', 'list', 'get'] as const)(
+    'retries settled %s rate limits with exact default backoff and no overlap',
+    async (op) => {
+      const attempts = Array.from({ length: 4 }, () => deferred<never>());
+      let active = 0;
+      let peak = 0;
+      let count = 0;
+      const call = vi.fn(async () => {
+        const attempt = attempts[count++];
+        active += 1;
+        peak = Math.max(peak, active);
+        try {
+          return await attempt.promise;
+        } finally {
+          active -= 1;
+        }
+      });
+      const { store, client, factory, sleep } = setup(op === 'auth' ? call : undefined);
+      if (op !== 'auth') {
+        client.items[op] = call;
+      }
+      const result = captureFailure(op === 'get' ? store.getItem(item.id) : store.listItems());
+      await vi.advanceTimersByTimeAsync(0);
+      for (let index = 0; index < attempts.length; index += 1) {
+        expect(count).toBe(index + 1);
+        expect(active).toBe(1);
+        attempts[index].reject(namedError('RateLimitExceededError', `${token} ${payload}`));
+        await vi.advanceTimersByTimeAsync(0);
+        expect(active).toBe(0);
+        if (index < 3) {
+          const backoff = 100 * Math.pow(2, index);
+          expect(sleep).toHaveBeenLastCalledWith(backoff);
+          await vi.advanceTimersByTimeAsync(backoff - 1);
+          expect(count).toBe(index + 1);
+          await vi.advanceTimersByTimeAsync(1);
+        }
+      }
+      const failure = await result;
+      expect(failure).toMatchObject({ code: 'rate-limited', retryable: true });
+      expectRedacted(failure);
+      expect(count).toBe(4);
+      expect(peak).toBe(1);
+      expect(sleep.mock.calls).toEqual([[100], [200], [400]]);
+      expect(factory).toHaveBeenCalledTimes(op === 'auth' ? 4 : 1);
+      expect(vi.getTimerCount()).toBe(0);
+    },
+  );
+
+  it.each(['rate limit', 'network failure', 'request timed out'])(
+    'can succeed after a settled provider %s',
+    async (message) => {
+      const { store, client, factory, sleep } = setup();
+      const first = deferred<SdkItemLike>();
+      const get = vi
+        .fn()
+        .mockImplementationOnce(() => first.promise)
+        .mockResolvedValue(item);
+      client.items.get = get;
+      const result = store.getItem(item.id);
+      await vi.advanceTimersByTimeAsync(SDK_TIMEOUT_MS - 1);
+      first.reject(new Error(`${message}: ${token} ${payload}`));
+      await vi.advanceTimersByTimeAsync(100);
+      expect(await result).toMatchObject({ id: item.id });
+      expect(get).toHaveBeenCalledTimes(2);
+      expect(factory).toHaveBeenCalledTimes(1);
+      expect(sleep.mock.calls).toEqual([[100]]);
+      expect(vi.getTimerCount()).toBe(0);
+    },
+  );
+
+  it('redacts late authentication rejection and allows a fresh call after settlement', async () => {
+    const init = deferred<SdkClientLike>();
+    const { store, client, factory, calls, sleep } = setup(() => init.promise);
+    const result = captureFailure(store.createItem(record.input));
+    await vi.advanceTimersByTimeAsync(SDK_TIMEOUT_MS);
+    const failure = await result;
+    expect(failure).toMatchObject({ code: 'timeout', retryable: false });
+    init.reject(new Error(`access denied ${token} ${payload}`));
+    await vi.advanceTimersByTimeAsync(0);
+    expectRedacted(failure);
+    expect(calls.creates).toBe(0);
+    expect(factory).toHaveBeenCalledTimes(1);
+    factory.mockResolvedValue(client);
+    expect(await store.getItem(item.id)).toMatchObject({ id: item.id });
+    expect(factory).toHaveBeenCalledTimes(2);
+    expect(sleep).not.toHaveBeenCalled();
+    expect(vi.getTimerCount()).toBe(0);
   });
 });
 

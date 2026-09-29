@@ -207,7 +207,11 @@ describe('show current and historical content', () => {
         throw new Error('expected show result');
       }
       expect(outcome.result.dryRun).toBe(true);
-      expect(Buffer.from(outcome.bytes).toString('utf8')).toBe(canary);
+      expect(outcome.bytes.byteLength).toBe(0);
+      expect(outcome.result.byteLength).toBe(Buffer.from(canary, 'utf8').byteLength);
+      expect(outcome.result.copied).toBe(false);
+      expect(outcome.result.exported).toBeUndefined();
+      expect(outcome.result.note).toContain('Dry run');
       await expect(stat(join(dir, '.repo-toolkit-secret-sync'))).rejects.toThrow();
       const failure = await runSecretSync({
         cwd: dir,
@@ -253,6 +257,9 @@ describe('show command wiring', () => {
     expect(() => validateSecretSyncCommandOptions('show', {}, 'list')).toThrow('exactly one --file');
     expect(() => validateSecretSyncCommandOptions('show', { files: ['a', 'b'] }, 'list')).toThrow('exactly one --file');
     expect(() => validateSecretSyncCommandOptions('show', { files: ['a'], json: true }, 'list')).toThrow('--json');
+    expect(() =>
+      validateSecretSyncCommandOptions('show', { files: ['a'], json: true, dryRun: true }, 'list'),
+    ).not.toThrow();
     expect(() => validateSecretSyncCommandOptions('show', { files: ['a'], revision: 'r' }, 'list')).not.toThrow();
   });
 });

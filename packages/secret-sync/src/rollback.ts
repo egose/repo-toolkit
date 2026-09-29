@@ -9,14 +9,18 @@ import {
   readFileBounded,
   resolveSafeDestination,
   writeFileAtomically,
+  expectedDestinationFromBytes,
 } from './filesystem';
 import { loadValidatedHistory, publishCommit, type LoadedHistory } from './history-store';
 import { sha256Hex, type BlobEnvelope } from './records';
 import {
   acquireStateLock,
+  assertNoPendingSwitch,
   assertIdentityMatches,
   computeFileHmac,
+  captureLocalPreimage,
   initState,
+  matchesLocalPreimage,
   normalizeOperationIdentity,
   readStateIfPresent,
   saveState,
@@ -30,6 +34,7 @@ import {
   createOperationId,
   loadBranchHistory,
   recheckHeads,
+  readOperationRecord,
   requireSingleOperationHead,
   resolveOperationConcurrency,
   resolveTimestamp,
@@ -201,6 +206,7 @@ export async function rollbackFile(options: RollbackOptions): Promise<RollbackRe
   const lock = await acquireStateLock(options.rootAbsolute);
   try {
     const state = await initState(options.rootAbsolute, identity, { branch });
+    assertNoPendingSwitch(state);
     const history = await loadValidatedHistory(options.store, projectId, { concurrency });
     const loaded = await loadBranchHistory(options.store, projectId, branch, concurrency);
     const head = requireSingleOperationHead(loaded.heads, branch);
@@ -211,13 +217,40 @@ export async function rollbackFile(options: RollbackOptions): Promise<RollbackRe
     const blob = requireReachableBlob(history, path, revision);
     const targetBytes = decodeBlobBytes(blob);
     const currentEntry = head.tree.find((entry) => entry.path === path);
+    const recovery = state.recovery;
+    const recoveryFile = recovery?.files[0];
+    if (
+      recovery !== undefined &&
+      (recovery.kind !== 'rollback' ||
+        recovery.branch !== branch ||
+        recovery.files.length !== 1 ||
+        recoveryFile?.path !== path ||
+        recoveryFile.blobId !== revision ||
+        (options.operationId !== undefined && options.operationId !== recovery.operationId) ||
+        (options.commitId !== undefined && options.commitId !== recovery.commitId) ||
+        (head.logicalId !== recovery.sourceCommitId && head.logicalId !== recovery.commitId))
+    ) {
+      throw new SecretSyncError(
+        'local-changed',
+        'Rollback does not match the pending recovery operation; recovery evidence was retained.',
+      );
+    }
 
     if (currentEntry !== undefined && currentEntry.blobId === revision) {
-      let localCheck: Uint8Array | undefined;
-      try {
-        localCheck = await readFileBounded(options.rootAbsolute, path, { maxFileBytes: options.maxFileBytes });
-      } catch {
-        localCheck = undefined;
+      const localCheck = await readFileBounded(options.rootAbsolute, path, { maxFileBytes: options.maxFileBytes });
+      const provenRecovery =
+        recovery !== undefined &&
+        recoveryFile !== undefined &&
+        recovery.commitId === head.logicalId &&
+        head.operationKind === 'rollback' &&
+        head.operationId === recovery.operationId &&
+        head.parents.length === 1 &&
+        head.parents[0] === recovery.sourceCommitId;
+      if (recovery !== undefined && !provenRecovery) {
+        throw new SecretSyncError(
+          'local-changed',
+          'Remote head does not prove the pending rollback; recovery evidence was retained.',
+        );
       }
       const baselinesConverge = baselinesToSlots(state.baselines, history.blobs);
       const baselineConverge = baselinesConverge.get(path);
@@ -228,6 +261,7 @@ export async function rollbackFile(options: RollbackOptions): Promise<RollbackRe
       const localAtTarget =
         localCheck !== undefined && sha256Hex(localCheck) === blob.sha256 && localCheck.byteLength === blob.byteLength;
       if (localAtTarget && baselineAtTarget) {
+        delete state.recovery;
         setObservedHeads(state, branch, headsBefore);
         await saveState(options.rootAbsolute, state);
         return {
@@ -248,30 +282,40 @@ export async function rollbackFile(options: RollbackOptions): Promise<RollbackRe
           note: `Rollback of ${JSON.stringify(path)} is already at the requested revision; no commit created.`,
         };
       }
-      if (baselineAtTarget) {
+      if (
+        !localAtTarget &&
+        (!provenRecovery ||
+          recoveryFile === undefined ||
+          !matchesLocalPreimage(recoveryFile.preimage, localCheck, state.localKey))
+      ) {
         throw new SecretSyncError(
           'local-changed',
           `Rollback requires ${JSON.stringify(path)} to be clean at the current head; the worktree has uncommitted edits.`,
         );
       }
-      if (options.hooks?.beforeFile !== undefined) {
-        await options.hooks.beforeFile(path);
+      if (!localAtTarget) {
+        if (options.hooks?.beforeFile !== undefined) {
+          await options.hooks.beforeFile(path);
+        }
+        resolveSafeDestination(options.rootAbsolute, path);
+        await assertAncestorDirsSafe(options.rootAbsolute, path);
+        assertNoCaseCollision([path]);
+        const convergeAbsolute = resolveSafeDestination(options.rootAbsolute, path);
+        const convergeKind = await checkDestinationKind(convergeAbsolute);
+        if (convergeKind === 'symlink' || convergeKind === 'special') {
+          throw new SecretSyncError(
+            'unsafe-path',
+            `Refusing rollback over a symlink or special file at ${JSON.stringify(path)}.`,
+          );
+        }
+        if (convergeKind === 'directory') {
+          throw new SecretSyncError('unsafe-path', `Refusing rollback over a directory at ${JSON.stringify(path)}.`);
+        }
+        await writeFileAtomically(options.rootAbsolute, path, targetBytes, {
+          maxFileBytes: options.maxFileBytes,
+          expectedDestination: expectedDestinationFromBytes(localCheck),
+        });
       }
-      resolveSafeDestination(options.rootAbsolute, path);
-      await assertAncestorDirsSafe(options.rootAbsolute, path);
-      assertNoCaseCollision([path]);
-      const convergeAbsolute = resolveSafeDestination(options.rootAbsolute, path);
-      const convergeKind = await checkDestinationKind(convergeAbsolute);
-      if (convergeKind === 'symlink' || convergeKind === 'special') {
-        throw new SecretSyncError(
-          'unsafe-path',
-          `Refusing rollback over a symlink or special file at ${JSON.stringify(path)}.`,
-        );
-      }
-      if (convergeKind === 'directory') {
-        throw new SecretSyncError('unsafe-path', `Refusing rollback over a directory at ${JSON.stringify(path)}.`);
-      }
-      await writeFileAtomically(options.rootAbsolute, path, targetBytes, { maxFileBytes: options.maxFileBytes });
       const convergeVerify = await readFileBounded(options.rootAbsolute, path, { maxFileBytes: options.maxFileBytes });
       if (convergeVerify === undefined || sha256Hex(convergeVerify) !== blob.sha256) {
         throw new SecretSyncError('local-changed', `Rollback verification failed for ${JSON.stringify(path)}.`);
@@ -284,6 +328,7 @@ export async function rollbackFile(options: RollbackOptions): Promise<RollbackRe
         commitId: head.logicalId,
       });
       setObservedHeads(state, branch, headsBefore);
+      delete state.recovery;
       try {
         if (options.hooks?.beforeStateSave !== undefined) {
           await saveState(options.rootAbsolute, state, { hooks: { beforeRename: options.hooks.beforeStateSave } });
@@ -328,8 +373,8 @@ export async function rollbackFile(options: RollbackOptions): Promise<RollbackRe
         localRecoveryOk: true,
         dryRun: false,
         note:
-          `Rollback commit ${head.logicalId} was already published on the configured endpoint and vault; ` +
-          `local recovery completed without a second commit.`,
+          `Requested revision is already published on the configured endpoint and vault; ` +
+          `local acknowledgment completed without a second commit.`,
       };
     }
 
@@ -370,8 +415,12 @@ export async function rollbackFile(options: RollbackOptions): Promise<RollbackRe
       );
     }
 
-    const operationId = createOperationId(options.operationId);
-    const commitId = options.commitId === undefined ? randomUUID() : assertCommitId(options.commitId);
+    if (recoveryFile !== undefined && !matchesLocalPreimage(recoveryFile.preimage, localBytes, state.localKey)) {
+      throw new SecretSyncError('local-changed', 'Rollback preimage changed; recovery evidence was retained.');
+    }
+    const operationId = recovery?.operationId ?? createOperationId(options.operationId);
+    const commitId =
+      recovery?.commitId ?? (options.commitId === undefined ? randomUUID() : assertCommitId(options.commitId));
     const tree = head.tree.map((entry) => ({ ...entry }));
     const replacement = { path, blobId: blob.logicalId, sha256: blob.sha256, byteLength: blob.byteLength };
     const index = tree.findIndex((entry) => entry.path === path);
@@ -382,16 +431,43 @@ export async function rollbackFile(options: RollbackOptions): Promise<RollbackRe
     }
     tree.sort((left, right) => (left.path < right.path ? -1 : left.path > right.path ? 1 : 0));
 
-    await writeOperationRecord(options.rootAbsolute, {
-      schemaVersion: 1,
-      operationId,
-      kind: 'rollback',
-      branch,
-      commitId,
-      blobIds: { [path]: blob.logicalId },
-      timestamp,
-      ...(options.message === undefined ? {} : { message: options.message }),
-    });
+    const previousOperation =
+      recovery === undefined ? undefined : await readOperationRecord(options.rootAbsolute, operationId);
+    if (
+      recovery !== undefined &&
+      (previousOperation === undefined ||
+        previousOperation.operationId !== operationId ||
+        previousOperation.kind !== 'rollback' ||
+        previousOperation.branch !== branch ||
+        previousOperation.commitId !== commitId ||
+        Object.keys(previousOperation.blobIds).length !== 1 ||
+        previousOperation.blobIds[path] !== revision)
+    ) {
+      throw new SecretSyncError('state-corrupt', 'Pending rollback is missing its matching operation record.');
+    }
+    const operation =
+      previousOperation ??
+      (await writeOperationRecord(options.rootAbsolute, {
+        schemaVersion: 1,
+        operationId,
+        kind: 'rollback',
+        branch,
+        commitId,
+        blobIds: { [path]: blob.logicalId },
+        timestamp,
+        ...(options.message === undefined ? {} : { message: options.message }),
+      }));
+    if (recovery === undefined) {
+      state.recovery = {
+        kind: 'rollback',
+        operationId,
+        branch,
+        sourceCommitId: head.logicalId,
+        commitId,
+        files: [{ path, blobId: revision, preimage: captureLocalPreimage(localBytes, state.localKey) }],
+      };
+      await saveState(options.rootAbsolute, state);
+    }
 
     await recheckHeads(options.store, projectId, branch, headsBefore, concurrency);
     if (options.hooks?.beforePublish !== undefined) {
@@ -404,8 +480,8 @@ export async function rollbackFile(options: RollbackOptions): Promise<RollbackRe
         branch,
         parents: [head.logicalId],
         tree,
-        timestamp,
-        ...(options.message === undefined ? {} : { message: options.message }),
+        timestamp: operation.timestamp,
+        ...(operation.message === undefined ? {} : { message: operation.message }),
         operationId,
         operationKind: 'rollback',
       },
@@ -439,7 +515,10 @@ export async function rollbackFile(options: RollbackOptions): Promise<RollbackRe
       if (kind === 'directory') {
         throw new SecretSyncError('unsafe-path', `Refusing rollback over a directory at ${JSON.stringify(path)}.`);
       }
-      await writeFileAtomically(options.rootAbsolute, path, targetBytes, { maxFileBytes: options.maxFileBytes });
+      await writeFileAtomically(options.rootAbsolute, path, targetBytes, {
+        maxFileBytes: options.maxFileBytes,
+        expectedDestination: expectedDestinationFromBytes(localBytes),
+      });
       const verify = await readFileBounded(options.rootAbsolute, path, { maxFileBytes: options.maxFileBytes });
       if (verify === undefined || sha256Hex(verify) !== blob.sha256 || verify.byteLength !== blob.byteLength) {
         throw new SecretSyncError('local-changed', `Rollback verification failed for ${JSON.stringify(path)}.`);
@@ -467,7 +546,7 @@ export async function rollbackFile(options: RollbackOptions): Promise<RollbackRe
         dryRun: false,
         note:
           `Rollback commit ${commitId} was published on the configured endpoint and vault but local materialization failed. ` +
-          `Rerun rollback with the same operation and commit ids to resume without publishing a second commit.`,
+          `Rerun rollback with the same file, branch, and revision to resume without publishing a second commit.`,
       };
     }
 
@@ -479,6 +558,7 @@ export async function rollbackFile(options: RollbackOptions): Promise<RollbackRe
       commitId,
     });
     setObservedHeads(state, branch, headsAfter);
+    delete state.recovery;
     try {
       if (options.hooks?.beforeStateSave !== undefined) {
         await saveState(options.rootAbsolute, state, { hooks: { beforeRename: options.hooks.beforeStateSave } });
@@ -504,7 +584,7 @@ export async function rollbackFile(options: RollbackOptions): Promise<RollbackRe
         dryRun: false,
         note:
           `Rollback commit ${commitId} was published on the configured endpoint and vault but local state failed to save. ` +
-          `Rerun rollback with the same operation and commit ids to resume without publishing a second commit.`,
+          `Rerun rollback with the same file, branch, and revision to resume without publishing a second commit.`,
       };
     }
 

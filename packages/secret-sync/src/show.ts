@@ -130,13 +130,38 @@ export async function showFile(options: ShowOptions): Promise<{ result: ShowResu
     sourceCommitId = head.logicalId;
   }
   const bytes = decodeBlobBytes(blob);
+  if (dryRun) {
+    const planned: string[] = [];
+    if (options.copy === true) {
+      planned.push('copy to the system clipboard');
+    }
+    if (options.exportPath !== undefined) {
+      planned.push(`export to ${JSON.stringify(options.exportPath)}`);
+    }
+    if (planned.length === 0) {
+      planned.push(`print ${JSON.stringify(path)} (${bytes.byteLength} bytes) to stdout`);
+    }
+    return {
+      result: {
+        path,
+        branch,
+        blobId: blob.logicalId,
+        sourceCommitId,
+        byteLength: bytes.byteLength,
+        dryRun,
+        copied: false,
+        note: `Dry run: would ${planned.join(' and ')}; nothing was exported, copied, or printed. Reads permitted; worktree, state, and baselines are unchanged.`,
+      },
+      bytes: new Uint8Array(0),
+    };
+  }
   const sinks: string[] = [];
-  if (!dryRun && options.exportPath !== undefined) {
+  if (options.exportPath !== undefined) {
     await writeExportFileAtomically(options.exportPath, bytes, { maxFileBytes: options.maxFileBytes });
     sinks.push(`exported to ${JSON.stringify(options.exportPath)}`);
   }
   let clipboardCommand: string | undefined;
-  if (!dryRun && options.copy === true) {
+  if (options.copy === true) {
     const writer = options.clipboard ?? systemClipboardWriter();
     clipboardCommand = (await writer.write(bytes)).command;
     sinks.push(`copied to the system clipboard via ${JSON.stringify(clipboardCommand)}`);
@@ -167,9 +192,7 @@ export async function showFile(options: ShowOptions): Promise<{ result: ShowResu
       byteLength: bytes.byteLength,
       dryRun,
       copied: false,
-      note: dryRun
-        ? `Dry run: reads permitted; ${JSON.stringify(path)} was not exported, copied, or printed.`
-        : `Showing ${JSON.stringify(path)} from ${JSON.stringify(sourceCommitId)} on branch ${JSON.stringify(branch)}; worktree, state, and baselines are unchanged.`,
+      note: `Showing ${JSON.stringify(path)} from ${JSON.stringify(sourceCommitId)} on branch ${JSON.stringify(branch)}; worktree, state, and baselines are unchanged.`,
     },
     bytes,
   };
