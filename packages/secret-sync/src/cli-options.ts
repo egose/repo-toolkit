@@ -1,4 +1,4 @@
-import type { ParseFlagsResult } from '@repo-toolkit/publish-package';
+import type { FlagSpec, ParseFlagsResult } from '@repo-toolkit/publish-package';
 
 import { createConnectStore, type FetchLike } from './connect';
 import { createSdkStore, type SdkClientFactory } from './sdk';
@@ -8,7 +8,7 @@ import type { SecretStore } from './store';
 
 export const GLOBAL_FLAGS = new Set(['config', 'cwd', 'json']);
 
-const COMMAND_FLAGS: Record<string, ReadonlyArray<string>> = {
+export const COMMAND_FLAGS = {
   init: ['config', 'cwd', 'vault', 'provider', 'auth', 'account', 'token-env', 'json'],
   doctor: ['config', 'cwd', 'branch', 'json'],
   status: ['config', 'cwd', 'branch', 'file', 'check', 'dry-run', 'json'],
@@ -24,9 +24,140 @@ const COMMAND_FLAGS: Record<string, ReadonlyArray<string>> = {
   show: ['config', 'cwd', 'branch', 'file', 'revision', 'interactive', 'copy', 'export', 'dry-run', 'json'],
   switch: ['config', 'cwd', 'branch', 'dry-run', 'json'],
   resolve: ['config', 'cwd', 'branch', 'head', 'take', 'dry-run', 'json'],
-};
+} as const satisfies Record<string, ReadonlyArray<string>>;
 
-function commandKey(
+export type CommandKey = keyof typeof COMMAND_FLAGS;
+
+export interface CliFlagSpec extends FlagSpec {
+  argument?: string;
+  description: string;
+}
+
+export const SPECS: CliFlagSpec[] = [
+  {
+    name: 'config',
+    argument: '<path>',
+    description:
+      'Config file (JSON, .mjs, or .cjs default export; default: ./secret-sync.config.json in the working directory).',
+  },
+  { name: 'cwd', argument: '<path>', description: 'Working directory (default: process.cwd()).' },
+  {
+    name: 'branch',
+    argument: '<name>',
+    description: 'Target branch (default: configured branch, main when omitted in config).',
+  },
+  {
+    name: 'file',
+    argument: '<path>',
+    repeatable: true,
+    description:
+      'Exact project-relative path; never overrides excludes. No comma splitting; use --file=<name> for dash-leading names.',
+  },
+  {
+    name: 'message',
+    argument: '<text>',
+    description: 'Optional commit message (default: absent); visible in history and output, so use non-secret text.',
+  },
+  {
+    name: 'revision',
+    argument: '<blob-id>',
+    description: 'Historical blob UUID associated with the selected path; obtain it from log.',
+  },
+  { name: 'limit', argument: '<count>', description: 'Maximum history entries (default: 20; range: 1–1000).' },
+  {
+    name: 'head',
+    argument: '<commit-id>',
+    repeatable: true,
+    description: 'Observed head commit UUID; repeat for every divergent head (at least two distinct IDs).',
+  },
+  {
+    name: 'take',
+    argument: '<commit-id>',
+    description: 'Required: one of the supplied head IDs; choose its entire snapshot.',
+  },
+  { name: 'name', argument: '<branch>', description: 'Required: new branch name.' },
+  {
+    name: 'from',
+    argument: '<branch>',
+    description: 'Source branch to copy (default: main); an empty source produces an empty branch.',
+  },
+  {
+    name: 'from-branch',
+    argument: '<name>',
+    description: 'Restore from this branch head instead of a revision; absence there requests local removal.',
+  },
+  {
+    name: 'vault',
+    argument: '<vault-id>',
+    description: 'Required when creating a config; exact vault ID, discoverable with vault list.',
+  },
+  {
+    name: 'provider',
+    argument: 'onepassword-connect | onepassword-sdk',
+    description: 'Explicit backend selection; credentials never select the backend implicitly.',
+  },
+  {
+    name: 'auth',
+    argument: 'service-account | desktop',
+    description: 'Required for a new SDK configuration; only supported by onepassword-sdk.',
+  },
+  {
+    name: 'account',
+    argument: '<selector>',
+    description: 'Required with desktop auth: 1Password account ID or name; prefer a stable ID.',
+  },
+  {
+    name: 'token-env',
+    argument: '<name>',
+    description:
+      'Environment variable name, never a token value (default: OP_SERVICE_ACCOUNT_TOKEN); requires explicit service-account auth.',
+  },
+  {
+    name: 'interactive',
+    boolean: true,
+    description:
+      'Pick file, revision, and branch interactively; supplied flags pre-answer their steps. Cancellation exits nonzero.',
+  },
+  {
+    name: 'copy',
+    boolean: true,
+    description: 'Copy verified bytes to the system clipboard; stdout receives metadata only on a non-dry run.',
+  },
+  {
+    name: 'export',
+    argument: '<path>',
+    description:
+      'Atomically write verified bytes with mode 0600; overwrites regular files, refuses symlinks/special files. Relative to the working directory.',
+  },
+  {
+    name: 'json',
+    boolean: true,
+    description:
+      'Emit schema-versioned metadata-only JSON (default: text); never includes secret bytes or fingerprints.',
+  },
+  {
+    name: 'dry-run',
+    boolean: true,
+    description:
+      'Read/plan only (default: false); no remote/local writes, locks, state, or temp files. Credentials are still needed for remote reads.',
+  },
+  { name: 'check', boolean: true, description: 'Exit 1 on drift/conflicts/errors (default: false); useful in CI.' },
+  { name: 'delete', boolean: true, description: 'Opt into deletions (default: false); other conflicts still refuse.' },
+  {
+    name: 'overwrite',
+    boolean: true,
+    description:
+      'Allow replacing/removing differing preflight local bytes (default: false); later edits still refuse replacement.',
+  },
+  {
+    name: 'acknowledge-remote',
+    boolean: true,
+    description:
+      'Update baseline only when the restored target equals the active branch current remote revision (default: false).',
+  },
+];
+
+export function commandKey(
   command: string | undefined,
   branchSubcommand: string | undefined,
   vaultSubcommand?: string,
@@ -55,7 +186,7 @@ export function assertCommandFlags(
   vaultSubcommand?: string,
 ): void {
   const key = commandKey(command, branchSubcommand, vaultSubcommand);
-  const allowed = COMMAND_FLAGS[key];
+  const allowed = (COMMAND_FLAGS as Record<string, ReadonlyArray<string>>)[key];
   if (allowed === undefined) {
     return;
   }

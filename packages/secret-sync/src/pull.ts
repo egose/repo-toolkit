@@ -8,6 +8,7 @@ import {
   removeFileGuarded,
   resolveSafeDestination,
   writeFileAtomically,
+  expectedDestinationFromBytes,
 } from './filesystem';
 import { materializeTreeBytes } from './history-store';
 import { sha256Hex } from './records';
@@ -20,6 +21,7 @@ import {
 } from './journal';
 import {
   acquireStateLock,
+  assertNoPendingSwitch,
   assertIdentityMatches,
   computeFileHmac,
   initState,
@@ -205,6 +207,7 @@ export async function pullSecrets(options: PullOptions): Promise<PullResult> {
   const lock = await acquireStateLock(options.rootAbsolute);
   try {
     const state = await initState(options.rootAbsolute, identity, { branch });
+    assertNoPendingSwitch(state);
     const loaded = await loadBranchHistory(options.store, projectId, branch, concurrency);
     const head = requireSingleOperationHead(loaded.heads, branch);
     const heads = loaded.headIds;
@@ -403,7 +406,10 @@ export async function pullSecrets(options: PullOptions): Promise<PullResult> {
           continue;
         }
       }
-      await writeFileAtomically(options.rootAbsolute, action.path, bytes, { maxFileBytes: bounds.maxFileBytes });
+      await writeFileAtomically(options.rootAbsolute, action.path, bytes, {
+        maxFileBytes: bounds.maxFileBytes,
+        expectedDestination: expectedDestinationFromBytes(planBytes),
+      });
       const verify = await readFileBounded(options.rootAbsolute, action.path, { maxFileBytes: bounds.maxFileBytes });
       if (verify === undefined || computeFileHmac(verify, state.localKey) !== expectedHmac) {
         throw new SecretSyncError(

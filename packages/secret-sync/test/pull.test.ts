@@ -1,13 +1,13 @@
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { SecretSyncError } from '../src/errors';
 import { loadJournal } from '../src/journal';
 import { pushSecrets } from '../src/push';
 import { pullSecrets } from '../src/pull';
-import { getBaseline, loadState } from '../src/state';
+import { getBaseline, loadState, resolveStatePaths, STATE_LOCK_STALE_MS } from '../src/state';
 import type {
   ConnectItemDetail,
   ConnectItemSummary,
@@ -207,6 +207,65 @@ describe('pull deletions', () => {
 });
 
 describe('pull concurrency guards', () => {
+  it('excludes a competing mutation while a live pull is paused beyond the stale threshold', async () => {
+    await withTempDir(async (cloneA) => {
+      await withTempDir(async (cloneB) => {
+        const store = new CountingFakeStore();
+        await writeBytes(cloneA, '.env', Buffer.from('remote-value', 'utf8'));
+        await pushSecrets(pullOptions(store, cloneA));
+        let pauseReached!: () => void;
+        const paused = new Promise<void>((resolve) => {
+          pauseReached = resolve;
+        });
+        let resume!: () => void;
+        const resumed = new Promise<void>((resolve) => {
+          resume = resolve;
+        });
+        const owner = pullSecrets({
+          ...pullOptions(store, cloneB),
+          hooks: {
+            beforeFile: async () => {
+              pauseReached();
+              await resumed;
+            },
+          },
+        });
+        try {
+          await Promise.race([
+            paused,
+            owner.then(() => {
+              throw new Error('Pull did not pause.');
+            }),
+          ]);
+          const paths = resolveStatePaths(cloneB);
+          const lockBefore = await readFile(paths.lockFile, 'utf8');
+          const stateBefore = await readFile(paths.stateFile, 'utf8');
+          const journalBefore = await loadJournal(cloneB);
+          const timestamp = (JSON.parse(lockBefore) as { timestamp: number }).timestamp;
+          const clock = vi.spyOn(Date, 'now').mockReturnValue(timestamp + STATE_LOCK_STALE_MS * 2);
+          try {
+            await expect(pushSecrets(pullOptions(store, cloneB))).rejects.toMatchObject({ code: 'lock-busy' });
+            expect(await readFile(paths.lockFile, 'utf8')).toBe(lockBefore);
+            expect(await readFile(paths.stateFile, 'utf8')).toBe(stateBefore);
+            expect(await loadJournal(cloneB)).toEqual(journalBefore);
+            await expect(readBytes(cloneB, '.env')).rejects.toMatchObject({ code: 'ENOENT' });
+          } finally {
+            clock.mockRestore();
+          }
+        } finally {
+          resume();
+          await owner;
+        }
+        expect((await owner).downloaded).toEqual(['.env']);
+        expect(await readFile(join(cloneB, '.env'), 'utf8')).toBe('remote-value');
+        expect(getBaseline(await loadState(cloneB), '.env')).toMatchObject({ state: 'present' });
+        expect(await loadJournal(cloneB)).toEqual([]);
+        await expect(readFile(resolveStatePaths(cloneB).lockFile)).rejects.toMatchObject({ code: 'ENOENT' });
+        expect((await pushSecrets(pullOptions(store, cloneB))).noop).toBe(true);
+      });
+    });
+  });
+
   it('refuses to overwrite an unexpected concurrent local edit', async () => {
     await withTempDir(async (cloneA) => {
       await withTempDir(async (cloneB) => {

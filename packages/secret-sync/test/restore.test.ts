@@ -1,10 +1,11 @@
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { createBranch } from '../src/branches';
 import { SecretSyncError } from '../src/errors';
+import { readFileBounded } from '../src/filesystem';
 import { loadValidatedHistory } from '../src/history-store';
 import { publishSnapshot } from '../src/history-store';
 import { pushSecrets } from '../src/push';
@@ -105,6 +106,170 @@ async function blobForCommit(store: SecretStore, commitTag: string, path: string
   }
   return entry.blobId;
 }
+
+async function prepareRemoval(store: SecretStore, dir: string, current: Uint8Array | undefined) {
+  await writeFile(join(dir, '.env'), 'baseline');
+  await pushSecrets(baseOptions(store, dir));
+  const state = await loadState(dir);
+  await publishSnapshot(store, {
+    projectId: PROJECT_ID,
+    branch: 'main',
+    parents: state.heads.main,
+    files: [],
+    timestamp: Date.now(),
+    operationId: testUuid(81),
+    operationKind: 'push',
+    commitId: testUuid(82),
+  });
+  if (current === undefined) {
+    await rm(join(dir, '.env'));
+  } else {
+    await writeFile(join(dir, '.env'), current);
+  }
+  return state;
+}
+
+describe('restore removal preflight guards', () => {
+  for (const acknowledgeRemote of [false, true]) {
+    describe(acknowledgeRemote ? 'acknowledging restore' : 'ordinary restore', () => {
+      it.each(['edit', 'binary-edit', 'recreate', 'remove', 'remove-empty'] as const)(
+        'refuses a late %s from the actual restore hook without advancing state',
+        async (change) => {
+          await withTempDir(async (dir) => {
+            const store = new ImmediateFakeStore();
+            const before =
+              change === 'remove-empty'
+                ? Buffer.alloc(0)
+                : change === 'binary-edit'
+                  ? Buffer.from([0, 255])
+                  : Buffer.from('original');
+            const after =
+              change === 'remove' || change === 'remove-empty'
+                ? undefined
+                : change === 'binary-edit'
+                  ? Buffer.from([255, 0])
+                  : Buffer.from('lateedit');
+            const state = await prepareRemoval(store, dir, before);
+            const remote = await store.listItems();
+            const beforeStateSave = vi.fn();
+            const beforeWrite = vi.fn(async (path: string) => {
+              expect(path).toBe('.env');
+              expect(await readFile(join(dir, path))).toEqual(before);
+              if (change === 'recreate' || after === undefined) {
+                await rm(join(dir, path));
+              }
+              if (after !== undefined) {
+                expect(after.byteLength).toBe(before.byteLength);
+                await writeFile(join(dir, path), after);
+              }
+            });
+            await expect(
+              restoreFile({
+                ...baseOptions(store, dir),
+                path: '.env',
+                fromBranch: 'main',
+                overwrite: true,
+                acknowledgeRemote,
+                hooks: { beforeWrite, beforeStateSave },
+              }),
+            ).rejects.toMatchObject({ code: 'local-changed' });
+            expect(beforeWrite).toHaveBeenCalledOnce();
+            expect(beforeStateSave).not.toHaveBeenCalled();
+            expect(await readFileBounded(dir, '.env')).toEqual(after === undefined ? undefined : new Uint8Array(after));
+            expect(await loadState(dir)).toEqual(state);
+            expect(await store.listItems()).toEqual(remote);
+          });
+        },
+      );
+
+      it.each([Buffer.alloc(0), Buffer.from('created')])(
+        'preserves absence semantics when a write hook would create %j',
+        async (created) => {
+          await withTempDir(async (dir) => {
+            const store = new ImmediateFakeStore();
+            const state = await prepareRemoval(store, dir, undefined);
+            const beforeWrite = vi.fn(async () => {
+              await writeFile(join(dir, '.env'), created);
+            });
+            const beforeStateSave = vi.fn();
+            const operation = restoreFile({
+              ...baseOptions(store, dir),
+              path: '.env',
+              fromBranch: 'main',
+              acknowledgeRemote,
+              hooks: { beforeWrite, beforeStateSave },
+            });
+            if (acknowledgeRemote) {
+              await expect(operation).rejects.toMatchObject({ code: 'local-changed' });
+              expect(beforeWrite).toHaveBeenCalledOnce();
+              expect(await readFile(join(dir, '.env'))).toEqual(created);
+            } else {
+              await expect(operation).resolves.toMatchObject({ noop: true, removed: true, acknowledged: false });
+              expect(beforeWrite).not.toHaveBeenCalled();
+              expect(await readFileBounded(dir, '.env')).toBeUndefined();
+            }
+            expect(beforeStateSave).not.toHaveBeenCalled();
+            expect(await loadState(dir)).toEqual(state);
+          });
+        },
+      );
+
+      it.each([undefined, Buffer.alloc(0), Buffer.from('authorized')])(
+        'allows intentional removal or absent no-op for %j',
+        async (current) => {
+          await withTempDir(async (dir) => {
+            const store = new ImmediateFakeStore();
+            const state = await prepareRemoval(store, dir, current);
+            const remote = await store.listItems();
+            const result = await restoreFile({
+              ...baseOptions(store, dir),
+              path: '.env',
+              fromBranch: 'main',
+              overwrite: current !== undefined,
+              acknowledgeRemote,
+            });
+            expect(result).toMatchObject({
+              removed: true,
+              acknowledged: acknowledgeRemote,
+              noop: current === undefined && !acknowledgeRemote,
+            });
+            expect(await readFileBounded(dir, '.env')).toBeUndefined();
+            const after = await loadState(dir);
+            if (acknowledgeRemote) {
+              expect(getBaseline(after, '.env')).toEqual({ state: 'absent' });
+              expect(after.heads.main).toEqual([testUuid(82)]);
+              expect(after.activeBranch).toBe(state.activeBranch);
+              expect(after.materializedBranch).toBe(state.materializedBranch);
+            } else {
+              expect(after).toEqual(state);
+            }
+            expect(await store.listItems()).toEqual(remote);
+          });
+        },
+      );
+
+      it('requires overwrite permission to remove preflight content', async () => {
+        await withTempDir(async (dir) => {
+          const store = new ImmediateFakeStore();
+          const state = await prepareRemoval(store, dir, Buffer.from('kept'));
+          const beforeWrite = vi.fn();
+          await expect(
+            restoreFile({
+              ...baseOptions(store, dir),
+              path: '.env',
+              fromBranch: 'main',
+              acknowledgeRemote,
+              hooks: { beforeWrite },
+            }),
+          ).rejects.toMatchObject({ code: 'local-changed' });
+          expect(beforeWrite).not.toHaveBeenCalled();
+          expect(await readFile(join(dir, '.env'), 'utf8')).toBe('kept');
+          expect(await loadState(dir)).toEqual(state);
+        });
+      });
+    });
+  }
+});
 
 describe('historical restore', () => {
   it('materializes one revision locally without touching baselines', async () => {

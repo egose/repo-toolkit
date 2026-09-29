@@ -7,6 +7,7 @@ import { publishCommit, validateHistoryDependencies } from './history-store';
 import { sha256Hex } from './records';
 import {
   acquireStateLock,
+  assertNoPendingSwitch,
   assertIdentityMatches,
   computeFileHmac,
   initState,
@@ -222,6 +223,7 @@ export async function pushSecrets(options: PushOptions): Promise<PushResult> {
   const lock = await acquireStateLock(options.rootAbsolute);
   try {
     const state = await initState(options.rootAbsolute, identity, { branch });
+    assertNoPendingSwitch(state);
     const loaded = await loadBranchHistory(options.store, projectId, branch, concurrency);
     const head = requireSingleOperationHead(loaded.heads, branch);
     const headsBefore = loaded.headIds;

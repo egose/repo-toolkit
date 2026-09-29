@@ -238,6 +238,51 @@ function isAbortError(error: unknown): boolean {
 interface BodyReaderLike {
   read(): Promise<{ done?: boolean; value?: unknown }>;
   cancel?(): Promise<void> | void;
+  releaseLock?(): void;
+}
+
+function bestEffortCleanup(cleanup: () => unknown): void {
+  try {
+    void Promise.resolve(cleanup()).catch(() => {});
+  } catch {
+    return;
+  }
+}
+
+function cancelBody(body: unknown): void {
+  const candidate = body as { cancel?: () => unknown; destroy?: () => unknown } | null | undefined;
+  if (typeof candidate?.cancel === 'function') {
+    bestEffortCleanup(() => candidate.cancel?.());
+  } else if (typeof candidate?.destroy === 'function') {
+    bestEffortCleanup(() => candidate.destroy?.());
+  } else {
+    const reader = getBodyReader(body);
+    if (reader !== undefined) {
+      bestEffortCleanup(() => reader.cancel?.());
+      bestEffortCleanup(() => reader.releaseLock?.());
+    } else {
+      bestEffortCleanup(() => getAsyncIterator(body)?.[Symbol.asyncIterator]().return?.());
+    }
+  }
+}
+
+async function withSignal<T>(operation: () => Promise<T>, signal?: AbortSignal): Promise<T> {
+  if (signal === undefined) {
+    return operation();
+  }
+  if (signal.aborted) {
+    throw new DOMException('Aborted', 'AbortError');
+  }
+  let onAbort: () => void = () => {};
+  const aborted = new Promise<never>((_resolve, reject) => {
+    onAbort = () => reject(new DOMException('Aborted', 'AbortError'));
+    signal.addEventListener('abort', onAbort, { once: true });
+  });
+  try {
+    return await Promise.race([operation(), aborted]);
+  } finally {
+    signal.removeEventListener('abort', onAbort);
+  }
 }
 
 function getBodyReader(body: unknown): BodyReaderLike | undefined {
@@ -275,6 +320,42 @@ export async function readBoundedText(
   maxBytes: number,
   method: string,
   path: string,
+  signal?: AbortSignal,
+): Promise<string> {
+  let reader: BodyReaderLike | undefined;
+  let iterator: AsyncIterator<unknown> | undefined;
+  try {
+    reader = getBodyReader(response.body);
+    iterator = reader === undefined ? getAsyncIterator(response.body)?.[Symbol.asyncIterator]() : undefined;
+    return await consumeBoundedText(response, maxBytes, method, path, reader, iterator, signal);
+  } catch (error) {
+    if (reader !== undefined) {
+      bestEffortCleanup(() => reader?.cancel?.());
+    } else if (iterator !== undefined) {
+      bestEffortCleanup(() => iterator?.return?.());
+    } else {
+      bestEffortCleanup(() => cancelBody(response.body));
+    }
+    if (error instanceof SecretSyncError || isAbortError(error)) {
+      throw error;
+    }
+    throw new SecretSyncError('truncated', `Connect ${method} response was truncated for ${path}.`, {
+      method,
+      path,
+    });
+  } finally {
+    bestEffortCleanup(() => reader?.releaseLock?.());
+  }
+}
+
+async function consumeBoundedText(
+  response: FetchResponseLike,
+  maxBytes: number,
+  method: string,
+  path: string,
+  reader: BodyReaderLike | undefined,
+  iterator: AsyncIterator<unknown> | undefined,
+  signal?: AbortSignal,
 ): Promise<string> {
   const declaredRaw = response.headers.get('content-length');
   let declared: number | undefined;
@@ -290,10 +371,8 @@ export async function readBoundedText(
       declared = parsed;
     }
   }
-  const reader = getBodyReader(response.body);
-  const iterator = reader === undefined ? getAsyncIterator(response.body) : undefined;
   if (reader === undefined && iterator === undefined) {
-    const text = await response.text();
+    const text = await withSignal(() => response.text(), signal);
     const size = byteLengthUtf8(text);
     if (size > maxBytes) {
       throw new SecretSyncError('too-large', `Connect ${method} response exceeds the byte bound for ${path}.`, {
@@ -326,7 +405,7 @@ export async function readBoundedText(
   try {
     if (reader !== undefined) {
       for (;;) {
-        const next = await reader.read();
+        const next = await withSignal(() => reader.read(), signal);
         if (next.done === true) {
           break;
         }
@@ -348,7 +427,12 @@ export async function readBoundedText(
         }
       }
     } else if (iterator !== undefined) {
-      for await (const value of iterator) {
+      for (;;) {
+        const next = await withSignal(() => iterator.next(), signal);
+        if (next.done === true) {
+          break;
+        }
+        const value = next.value;
         if (typeof value === 'string') {
           stringMode = true;
           pushBytes(byteLengthUtf8(value));
@@ -516,15 +600,39 @@ export class ConnectSecretStore implements SecretStore {
     return url.toString();
   }
 
-  private async fetchOnce(url: string, init: FetchRequestInit, timeoutMs: number): Promise<FetchResponseLike> {
+  private async fetchOnce(
+    url: string,
+    init: FetchRequestInit,
+    maxBytes: number,
+    path: string,
+  ): Promise<{ response: FetchResponseLike; text: string }> {
     const controller = new AbortController();
     const timer = setTimeout(() => {
       controller.abort();
-    }, timeoutMs);
+    }, this.timeoutMs);
+    let response: FetchResponseLike | undefined;
+    let reading = false;
+    let consumed = false;
     try {
-      return await this.fetchImpl(url, { ...init, signal: controller.signal });
+      response = await withSignal(async () => {
+        const received = await this.fetchImpl(url, { ...init, signal: controller.signal });
+        if (controller.signal.aborted) {
+          bestEffortCleanup(() => cancelBody(received.body));
+          throw new DOMException('Aborted', 'AbortError');
+        }
+        return received;
+      }, controller.signal);
+      const method = init.method ?? 'GET';
+      assertNoRedirect(response, new URL(url).origin, method, path);
+      let text = '';
+      if (response.status === 200 || (method === 'POST' && response.status === 201)) {
+        reading = true;
+        text = await readBoundedText(response, maxBytes, method, path, controller.signal);
+        consumed = true;
+      }
+      return { response, text };
     } catch (error) {
-      if (isAbortError(error)) {
+      if (controller.signal.aborted || isAbortError(error)) {
         throw new SecretSyncError('timeout', 'Connect request timed out.', { retryable: true });
       }
       if (error instanceof SecretSyncError) {
@@ -535,6 +643,12 @@ export class ConnectSecretStore implements SecretStore {
       });
     } finally {
       clearTimeout(timer);
+      if (!consumed) {
+        controller.abort();
+        if (response !== undefined && !reading) {
+          bestEffortCleanup(() => cancelBody(response?.body));
+        }
+      }
     }
   }
 
@@ -542,16 +656,18 @@ export class ConnectSecretStore implements SecretStore {
     let attempt = 0;
     for (;;) {
       let response: FetchResponseLike;
+      let text: string;
       try {
-        response = await this.fetchOnce(
+        ({ response, text } = await this.fetchOnce(
           url,
           {
             method: 'GET',
             headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
             redirect: 'manual',
           },
-          this.timeoutMs,
-        );
+          maxBytes,
+          path,
+        ));
       } catch (error) {
         if (error instanceof SecretSyncError && error.retryable && attempt < this.maxRetries) {
           const wait = delayForAttempt(attempt, undefined);
@@ -561,29 +677,7 @@ export class ConnectSecretStore implements SecretStore {
         }
         throw error;
       }
-      const origin = new URL(url).origin;
-      assertNoRedirect(response, origin, 'GET', path);
       if (response.status === 200) {
-        let text: string;
-        try {
-          text = await readBoundedText(response, maxBytes, 'GET', path);
-        } catch (error) {
-          if (isAbortError(error)) {
-            const timeout = new SecretSyncError('timeout', 'Connect GET response read timed out.', {
-              method: 'GET',
-              path,
-              retryable: true,
-            });
-            if (attempt < this.maxRetries) {
-              const wait = delayForAttempt(attempt, undefined);
-              attempt += 1;
-              await this.sleep(wait);
-              continue;
-            }
-            throw timeout;
-          }
-          throw error;
-        }
         let parsed: unknown;
         try {
           parsed = JSON.parse(text);
@@ -712,8 +806,9 @@ export class ConnectSecretStore implements SecretStore {
       fields: valid.fields.map((field) => ({ ...field })),
     });
     let response: FetchResponseLike;
+    let text: string;
     try {
-      response = await this.fetchOnce(
+      ({ response, text } = await this.fetchOnce(
         url,
         {
           method: 'POST',
@@ -725,13 +820,15 @@ export class ConnectSecretStore implements SecretStore {
           body,
           redirect: 'manual',
         },
-        this.timeoutMs,
-      );
-    } catch {
+        this.maxDetailBytes,
+        path,
+      ));
+    } catch (error) {
+      if (error instanceof SecretSyncError && error.code === 'redirect-blocked') {
+        throw error;
+      }
       return { status: 'uncertain', attempts: 1 };
     }
-    const origin = new URL(url).origin;
-    assertNoRedirect(response, origin, 'POST', path);
     if (response.status === 401 || response.status === 403) {
       throw new SecretSyncError('auth', `Connect POST was rejected for ${path}.`, {
         status: response.status,
@@ -755,12 +852,6 @@ export class ConnectSecretStore implements SecretStore {
         method: 'POST',
         path,
       });
-    }
-    let text: string;
-    try {
-      text = await readBoundedText(response, this.maxDetailBytes, 'POST', path);
-    } catch {
-      return { status: 'uncertain', attempts: 1 };
     }
     let parsed: unknown;
     try {

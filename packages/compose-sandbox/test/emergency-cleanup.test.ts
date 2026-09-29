@@ -448,6 +448,7 @@ describe('runComposeSandbox emergency integration', () => {
           opts.signal?.addEventListener('abort', () => reject(opts.signal?.reason ?? new Error('test aborted')), {
             once: true,
           });
+          signalTarget.emit('SIGINT');
         }) as never;
       });
       const options = {
@@ -458,7 +459,6 @@ describe('runComposeSandbox emergency integration', () => {
         timeouts: { startupMs: 5000, readinessMs: 5000, testMs: 5000, cleanupMs: 5000 },
       };
       const pending = runComposeSandbox(options, { clock, signalTarget, runProcess: fakeRun as never });
-      setTimeout(() => signalTarget.emit('SIGINT'), 10);
       let thrown: unknown;
       try {
         await pending;

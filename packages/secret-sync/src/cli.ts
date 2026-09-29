@@ -1,37 +1,9 @@
-import { parseFlags, type FlagSpec } from '@repo-toolkit/publish-package';
+import { parseFlags } from '@repo-toolkit/publish-package';
 
-import { assertCommandFlags, collectCliSecrets } from './cli-options';
+import { SPECS, assertCommandFlags, collectCliSecrets } from './cli-options';
+import { formatCommandHelp, formatRootHelp } from './cli-help';
 import { formatJsonError, formatJsonResult, formatTextResult, redactText } from './format';
 import { SECRET_SYNC_COMMANDS, resolveSecretSyncPlan, runSecretSync, type SecretSyncOptions } from './index';
-
-const SPECS: FlagSpec[] = [
-  { name: 'config' },
-  { name: 'cwd' },
-  { name: 'branch' },
-  { name: 'file', repeatable: true },
-  { name: 'message' },
-  { name: 'revision' },
-  { name: 'limit' },
-  { name: 'head', repeatable: true },
-  { name: 'take' },
-  { name: 'name' },
-  { name: 'from' },
-  { name: 'from-branch' },
-  { name: 'vault' },
-  { name: 'provider' },
-  { name: 'auth' },
-  { name: 'account' },
-  { name: 'token-env' },
-  { name: 'interactive', boolean: true },
-  { name: 'copy', boolean: true },
-  { name: 'export' },
-  { name: 'json', boolean: true },
-  { name: 'dry-run', boolean: true },
-  { name: 'check', boolean: true },
-  { name: 'delete', boolean: true },
-  { name: 'overwrite', boolean: true },
-  { name: 'acknowledge-remote', boolean: true },
-];
 
 export interface ExtractedCommand {
   command?: string;
@@ -116,90 +88,6 @@ export function buildOptions(
   };
 }
 
-function printRootHelp(): void {
-  console.log(`repo-toolkit-secret-sync
-
-Usage:
-  repo-toolkit-secret-sync <command> [options]
-  repo-toolkit-secret-sync branch <list|create> [options]
-  repo-toolkit-secret-sync vault <list> [options]
-
-Commands:
-  init       Generate project UUID/config and protected local state
-  doctor     Validate config, matching support, and connectivity
-  status     Three-way per-file status and branch/head summary
-  push       Synchronize local changes to the remote vault
-  pull       Synchronize remote changes to the local worktree
-  diff       Metadata-only local/remote or revision comparison
-  log        Bounded per-file history over branch ancestry
-  restore    Materialize one historical file locally
-  rollback   Publish a new commit replacing one file with its historical blob
-  branch     List or create independent named branches
-  switch     Switch the active branch through guarded pull machinery
-  resolve    Join observed divergent heads by choosing one full snapshot
-  vault      List vaults visible to the configured credential
-  show       Print one tracked file's verified bytes to stdout
-
-Selection (exact paths; repeatable; never overrides excludes):
-  --file <path>            Exact project-relative path (repeatable, no comma
-                           splitting; use --file=<name> for dash-leading names,
-                           e.g. --file=-leading-name)
-
-Common options (all commands):
-  --config <path>          Config file (JSON, .mjs, or .cjs default export;
-                           default: ./secret-sync.config.json in the working directory)
-  --cwd <path>             Working directory (default: process.cwd())
-  --branch <name>          Target branch for read-only commands and switch
-  --json                   Emit schema-versioned JSON output
-  --dry-run                Reads permitted; no remote/local writes, locks, state, or temp files
-  -h, --help               Show this help message (or per-command help after a command)
-
-Command options:
-  status:   --check --file <path>
-  push:     --file <path> --message <text> --delete
-  pull:     --file <path> --delete
-  diff:     --file <path>
-  log:      --file <path> --limit <count>
-  restore:  --file <path> --revision <blob-id> | --from-branch <name>
-            [--overwrite] [--acknowledge-remote]
-  rollback: --file <path> --revision <blob-id> [--message <text>]
-  branch list:   (no extra flags)
-  branch create: --name <branch> [--from <branch>]
-  vault list:    [--provider onepassword-connect | onepassword-sdk]
-                 [--auth service-account | desktop] [--account <selector>] [--token-env <name>]
-  show:     --file <path> [--revision <blob-id>] [--interactive] [--copy] [--export <path>]
-  switch:   --branch <name>
-  resolve:  --head <commit-A> --head <commit-B> --take <commit-A>
-  init:     --vault <vault-id> [--provider onepassword-connect | onepassword-sdk]
-            [--auth service-account | desktop] [--account <selector>] [--token-env <name>]
-  doctor:   --branch <name>
-`);
-}
-
-function printCommandHelp(command: string, branchSubcommand?: string, vaultSubcommand?: string): void {
-  const key =
-    command === 'branch'
-      ? `branch ${branchSubcommand ?? 'list'}`
-      : command === 'vault'
-        ? `vault ${vaultSubcommand ?? 'list'}`
-        : command;
-  console.log(`repo-toolkit-secret-sync ${key}
-
-Usage:
-  repo-toolkit-secret-sync ${key} [options]
-
-Common options:
-  --config <path>          Config file (JSON, .mjs, or .cjs default export;
-                           default: ./secret-sync.config.json in the working directory)
-  --cwd <path>             Working directory (default: process.cwd())
-  --json                   Emit schema-versioned JSON output
-  -h, --help               Show this help message
-
-Command-specific flags are strictly validated; unrelated flags are rejected.
-Use --file=<name> for dash-leading paths (e.g. --file=-leading-name).
-`);
-}
-
 async function main(): Promise<void> {
   let extracted: ExtractedCommand;
   try {
@@ -215,9 +103,9 @@ async function main(): Promise<void> {
     const result = parseFlags(extracted.rest, SPECS);
     if (!result) {
       if (extracted.command === undefined) {
-        printRootHelp();
+        console.log(formatRootHelp());
       } else {
-        printCommandHelp(extracted.command, extracted.branchSubcommand, extracted.vaultSubcommand);
+        console.log(formatCommandHelp(extracted.command, extracted.branchSubcommand, extracted.vaultSubcommand));
       }
       return;
     }
@@ -235,7 +123,15 @@ async function main(): Promise<void> {
     const options = buildOptions(parsed, extracted.command, extracted.branchSubcommand, extracted.vaultSubcommand);
     const outcome = await runSecretSync(options);
     if (outcome.command === 'show') {
-      const shown = outcome as { result: { copied: boolean; exported?: string }; bytes: Uint8Array };
+      const shown = outcome as { result: { copied: boolean; exported?: string; dryRun: boolean }; bytes: Uint8Array };
+      if (shown.result.dryRun === true) {
+        if (json) {
+          console.log(formatJsonResult(outcome.command, shown.result));
+          return;
+        }
+        console.log(formatTextResult(outcome.command, shown.result));
+        return;
+      }
       if ((shown.result.copied || shown.result.exported !== undefined) && json) {
         console.log(formatJsonResult(outcome.command, shown.result));
         return;

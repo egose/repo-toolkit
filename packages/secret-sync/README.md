@@ -16,9 +16,10 @@ pnpm add -D @repo-toolkit/secret-sync
 ## Configuration
 
 `secret-sync.config.json` (JSON, `.mjs`, or `.cjs` via the shared
-`loadConfigFile` helper). Every command loads `./secret-sync.config.json` from
-the working directory by default; pass `--config <path>` to use another file
-(`vault list --provider …` is the only command that runs without any config):
+`loadConfigFile` helper). Commands use `./secret-sync.config.json` from
+the working directory by default; pass `--config <path>` to use another file.
+`init` can create it, `vault list --provider …` can discover vaults without it,
+and all help runs without loading config or credentials:
 
 ```json
 {
@@ -143,10 +144,23 @@ access checks instead of selecting a similarly named vault.
 
 The file/record bounds are unchanged across backends: 32 KiB per file, 100
 files, 64 KiB serialized record, 10,000 records per scan, 256 KiB detail
-responses, 30 s timeouts, concurrency default 4 (max 8). Direct reads retry
-up to three times with bounded backoff; creates are never retried, and a
-timeout around a create is an uncertain write reconciled by logical ID, not
-evidence of failure. Service-account quotas differ from Connect: the SDK
+responses, 30 s timeouts, concurrency default 4 (max 8). Each direct SDK
+attempt has one deadline covering its wait for shared lazy initialization
+and authentication plus the item or vault request. Settled transient read
+failures (including rate limits and provider-reported timeouts) retry up to
+three times with bounded backoff. Adapter deadline expiry is non-retryable:
+the SDK exposes no cancellation, so underlying initialization or requests
+may remain pending after the caller returns. Timeout retries do not multiply
+those outstanding calls; independent later calls can still add work.
+
+Pending initialization remains shared, and a late client can serve a still-live
+or later caller, but never starts a request for an expired caller. Creates
+are never retried. Expiry before the create starts throws a timeout with no
+write issued; expiry after it starts returns an uncertain write reconciled
+by logical ID, even if the SDK later succeeds or fails. These deadlines bound
+asynchronous waiting, not synchronously blocking SDK code.
+
+Service-account quotas differ from Connect: the SDK
 surfaces rate limiting as an error with no documented quota numbers, and an
 incomplete listing never implies deletion. Live-vault verification of
 ceilings, visibility latency, quota numbers, and permission behavior is
@@ -177,6 +191,21 @@ equality in synthetic probes; live-vault verification of payload ceilings,
 visibility latency, and permission behavior is still required before any
 storage-compatibility claim.
 
+Connect's timeout covers each entire attempt, from waiting for headers through
+consuming the response body; receiving headers or another chunk does not reset
+the deadline. GET timeouts retain at most three retries (four attempts total),
+with bounded backoff between attempts. A POST timeout, including a stalled
+success body, returns an uncertain write after exactly one attempt and is
+never replayed automatically. Redirects remain blocked before body reads.
+Abandoned responses are aborted and their bodies cancelled on timeout, early
+rejection, retry, or byte-limit failure; reader locks are released. Cleanup is
+best-effort and never waits for a hanging cancellation promise. Async headers,
+reader/iterator reads, and `response.text()` are deadline-raced even with an
+injected implementation that ignores the signal; such underlying work cannot
+be forcibly stopped if it also ignores cancellation. Late headers are discarded
+and their bodies cancelled. Synchronously blocking injected code cannot be
+interrupted by a JavaScript timer.
+
 ## Identity, state, retention, branches, recovery, visibility
 
 Remote identity is endpoint plus vault ID plus project ID, pinned in
@@ -193,6 +222,51 @@ then by byte-identical content, so retrying a push adopts an orphaned blob
 from an earlier attempt instead of failing forever or duplicating it.
 Local writes are per-file atomic with same-directory temp
 files, journaled resume, and exclusive local locks (same-host only).
+Pull, restore, rollback, and switch carry the preflight file content or
+absence to a final check after temp-file preparation, immediately before
+rename. Changed content (including same-length edits), newly created files,
+and unexpected removals refuse replacement with `local-changed`. Restore
+`--overwrite` permits the preflight content to differ from the requested
+revision; it does not authorize later edits to be overwritten. Explicit
+`show --export` retains deliberate regular-file overwrite behavior.
+Both ordinary and acknowledging restore removals also check the preflight
+content or absence before unlink or an absent no-op. Late edits, creations,
+and unexpected removals refuse with `local-changed` without advancing baselines
+or observed heads, even with `--overwrite`. Ordinary restore of an already
+absent target returns without a write; acknowledging restore validates absence
+before recording the absent baseline. Pull and switch retain their keyed
+removal guards and existing absent no-op behavior.
+Pre-rename failures close the temporary handle and attempt to remove the
+plaintext temp file, including write, sync, hook, and recheck failures.
+This is not filesystem compare-and-swap: edits or ancestor swaps between
+the final check and rename or unlink remain possible, as do creations after
+an absence check. Filesystem failures or
+concurrent directory moves can prevent cleanup. The state lock serializes
+cooperating sync operations, not editors or other local writers.
+Locks with valid owner metadata remain busy regardless of age while the
+owner PID is alive or its liveness cannot be determined (including permission
+errors). A confirmed dead owner can be recovered immediately; the 30-second
+stale threshold applies only to locks without valid owner metadata. A recycled
+PID can conservatively keep a lock busy. Retry after the owning operation
+finishes; locks are released only when their ownership nonce still matches.
+
+Rollback requires a clean file at the current remote head. A stale or missing
+baseline alone never permits replacing different local content, even when the
+remote already points to the requested revision. Before publishing, rollback
+atomically saves pending recovery metadata in the identity-bound state file:
+operation ID, branch, source/target commit IDs, path, target blob ID, and the
+original local HMAC/length or absence. This optional `recovery` field uses the
+existing state permissions and contains no file bodies or bare content hashes.
+Rerun the same file, branch, and revision after an interrupted publication,
+write, or state save; persisted IDs are reused automatically. Recovery requires
+the matching remote rollback commit and either the original preimage or the
+already-materialized target. Other edits, different retries, and an advanced
+remote head are refused with recovery evidence retained. Already-materialized
+targets are verified without rewriting; successful baseline acknowledgment
+clears recovery in the same atomic state save. Older operation records without
+this proof cannot authorize recovery writes. Preserve local edits separately
+and reconcile the worktree before retrying; do not delete state to bypass a
+refusal.
 
 ## CLI
 
@@ -218,13 +292,79 @@ repo-toolkit-secret-sync show --file .env --export /tmp/out.env
 
 The command is the first non-wrapper token (`branch` takes a `list|create`
 subcommand); leading wrapper `--` tokens are stripped and remaining
-arguments are strict flags. All commands accept `--config`, `--json`, and
-`-h`/`--help`. All mutating commands accept `--dry-run` (reads only: no
-writes, locks, state, or temp files). JSON output is schema-versioned and
+arguments are strict flags. The default command is `status`; `branch` and
+`vault` default to `list`. Use `<command> --help` or `<command> -h`, including
+`branch create --help`, for required arguments, supported flags, defaults,
+alternatives, and examples. Help never loads config, reads credentials, or
+initializes the SDK. `init --help`, `vault list --help`, and `doctor --help`
+also explain SDK prerequisites.
+
+All commands accept `--config` and `--cwd`. `--json` is supported with the
+`show` restrictions below. `--dry-run`, where listed in command help, permits
+reads without writes, locks, state, or temp files; `init` has no dry-run flag.
+JSON output is schema-versioned and
 discriminated (`{ schemaVersion: 1, command, status: 'ok'|'error', ... }`)
 with metadata only — never authorization, response bodies, file bytes, or
 content fingerprints. Messages and paths are caller metadata and appear in
 output. Every failure exits 1.
+
+`restore` requires one file and exactly one of `--revision <blob-id>` or
+`--from-branch <name>`; source-branch absence requests local removal. Differing
+existing bytes require `--overwrite`. The baseline normally stays unchanged;
+`--acknowledge-remote` requires the active branch's current remote target and
+acknowledges it. `rollback` instead publishes a new commit and requires one
+file, a historical blob ID from `log`, and a clean file at the current head.
+`resolve` joins a fork with `--head <A> --head <B> --take <A>`: every head must
+match the target branch's observed heads and `--take` must be one of them.
+Without `--branch`, it uses the configured branch (`main` when omitted in
+config); with `--branch <name>`, it joins only that branch's heads. The join
+publishes a new commit without materializing files, switching the active
+branch, or changing local bytes and baselines. Stale or wrong-branch heads
+refuse without publication, and `--dry-run` plans without remote or local
+writes.
+
+## Switching branches with file selection
+
+`switch --branch <name>` and `runSecretSync({ command: 'switch', ... })`
+apply the current configured `files` and `ignore` patterns to the union of
+baseline, current-branch, and target-branch paths. Only selected paths are
+checked for local drift, replaced, removed, or acknowledged. Narrowing the
+selection preserves excluded file bytes and their existing baselines, even
+when those files are dirty or absent from the target branch. Target-only
+excluded files are not created. The config file under the sync root, `.git/`,
+and `.repo-toolkit-secret-sync/` remain excluded even with `files: ["**"]`.
+
+The active/materialized branch changes after the selected work completes;
+excluded files can still contain bytes from a previous branch. Re-including
+them subjects them to the usual drift checks. An empty selection permits a
+branch change without changing any file baseline. `switch --dry-run` uses
+the same selected cleanliness checks and reports planned `downloaded`,
+`removedLocal`, and `acknowledged` paths without writing files, baselines,
+branch metadata, locks, or journals.
+
+The low-level `switchBranch` API accepts an optional `matchesPath` predicate.
+Omitting it retains its all-tracked-paths default; it does not load config or
+apply CLI inclusion defaults. Config-aware callers can supply
+`createSelectionMatcher({ files, ignore, extraExcludes })`, including the
+root-relative config path in `extraExcludes`.
+
+Before switching files, secret-sync atomically records metadata-only recovery
+proof: source/target branches and heads, operation identity, selected actions,
+and original local HMAC/length or absence. An interrupted switch retains the
+old branches, heads, and baselines until all selected files are verified.
+Retry the same target with the same selected paths and unchanged remote heads.
+Matching journal entries are checked against actual target bytes or absence;
+completed writes/removals are acknowledged without repeating them, including
+after a final state-save failure. Unfinished files must still match their
+original preimages. Changed completed files, unrelated journals, other targets,
+or mismatched operation IDs refuse and retain recovery evidence.
+
+While switch recovery is pending, pull, push, restore (including overwrite),
+and rollback refuse local mutation. Resume the switch first. Read-only commands
+remain available; switch dry-run verifies the same proof without changing it.
+Excluded files and baselines remain untouched during recovery. Proof retirement
+and final branch/baseline updates share one atomic state save; recovery metadata
+and journals contain no secret bodies or unkeyed content hashes.
 
 ## Listing vaults
 
@@ -249,7 +389,8 @@ Service accounts cannot see Personal/Private/Employee vaults.
 SHA-256-checked) to stdout without touching the worktree, state, or baselines.
 Add `--revision <blob-id>` for a historical version (it must have been
 associated with that path) or `--branch <name>` to read another branch.
-`show` prints raw bytes only and does not support `--json`; redirect to a file
+Raw `show` does not support `--json` without `--copy`, `--export`, or
+`--dry-run`; redirect to a file
 (`show … > /tmp/out`) instead of scrolling secrets, and beware shell history.
 With `--interactive`, `show` walks file, revision, then branch pickers
 (`@clack/prompts`; already used elsewhere in this repo) instead of requiring
@@ -261,8 +402,15 @@ emits metadata without bytes. Clipboard contents linger — clear them when done
 With `--export <path>`, the bytes are written atomically with `0600`
 permissions instead of printed — a safer `>` that refuses symlinks, special
 files, directories, and symlinked ancestors, and overwrites an existing plain
-file. Relative destinations resolve against the invocation directory. `--export`
-composes with `--copy`, `--revision`, `--branch`, and `--interactive`.
+file. Relative destinations resolve against the working directory (`--cwd` when
+supplied). `--export` composes with `--copy`, `--revision`, `--branch`, and
+`--interactive`; `--export --json` also emits metadata only on a non-dry run.
+`show --dry-run` is a metadata-only preview in text or JSON: it performs no
+clipboard/export writes, prints no raw bytes, and changes no state, worktree,
+or baselines. `--dry-run --json` needs no sink; API dry-run bytes are empty
+while `byteLength` reports the verified size and the note names the requested
+action. Ordinary raw `show --json` without `--copy`, `--export`, or `--dry-run`
+remains rejected.
 
 ## Fake-server example without a real vault
 

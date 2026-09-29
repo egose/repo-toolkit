@@ -474,10 +474,11 @@ export function validateSecretSyncCommandOptions(
     options.branch !== undefined &&
     !READ_ONLY_COMMANDS.has(command) &&
     command !== 'branch' &&
-    command !== 'switch'
+    command !== 'switch' &&
+    command !== 'resolve'
   ) {
     throw new Error(
-      '--branch targets read-only commands and branch/switch; worktree-mutating commands use the active branch.',
+      '--branch targets read-only commands and branch/switch/resolve; worktree-mutating commands use the active branch.',
     );
   }
 
@@ -554,9 +555,9 @@ export function validateSecretSyncCommandOptions(
     if (options.files !== undefined && options.files.length > 1) {
       throw new Error('show accepts exactly one --file <path>.');
     }
-    if (options.json === true && options.copy !== true && options.export === undefined) {
+    if (options.json === true && options.copy !== true && options.export === undefined && options.dryRun !== true) {
       throw new Error(
-        'show prints raw file bytes and does not support --json without --copy or --export; omit it for content.',
+        'show prints raw file bytes and does not support --json without --copy, --export, or --dry-run; omit it for content.',
       );
     }
   }

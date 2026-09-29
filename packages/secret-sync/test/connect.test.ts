@@ -277,6 +277,68 @@ describe('status mapping', () => {
 });
 
 describe('bounds and schemas', () => {
+  it.each(['declared', 'streamed', 'iterator', 'text', 'read-error', 'text-error'])(
+    'cleans up %s body rejection without leaking provider or cleanup errors',
+    async (mode) => {
+      const cancel = vi.fn(() => {
+        throw new Error('cleanup-canary');
+      });
+      const releaseLock = vi.fn();
+      const read = vi.fn(async () => {
+        if (mode === 'read-error') {
+          throw new Error('provider-token-payload-canary');
+        }
+        return { done: false, value: Buffer.from('12345') };
+      });
+      const text = vi.fn(async () => {
+        if (mode === 'text-error') {
+          throw new Error('provider-token-payload-canary');
+        }
+        return '12345';
+      });
+      const fetchImpl = vi.fn(async () =>
+        textResponse(200, '', mode === 'declared' ? { 'content-length': '5' } : {}, {
+          text,
+          body: mode.startsWith('text')
+            ? { cancel }
+            : mode === 'iterator'
+              ? { [Symbol.asyncIterator]: () => ({ next: read, return: cancel }) }
+              : { getReader: () => ({ read, cancel, releaseLock }) },
+        }),
+      );
+      const store = new ConnectSecretStore({
+        vaultId: VAULT_ID,
+        env: makeEnv('https://connect.example.invalid', 't'),
+        fetchImpl,
+        maxDetailBytes: 4,
+      });
+      const error = await store.getItem('id').catch((error: unknown) => error);
+      expect(error).toMatchObject({ code: mode.endsWith('error') ? 'truncated' : 'too-large' });
+      expect(String(error)).not.toContain('canary');
+      expect(cancel).toHaveBeenCalledTimes(1);
+      expect(fetchImpl).toHaveBeenCalledTimes(1);
+      if (mode === 'declared') {
+        expect(read).not.toHaveBeenCalled();
+        expect(text).not.toHaveBeenCalled();
+      }
+    },
+  );
+
+  it('cancels and unlocks a native streamed body on byte-limit rejection', async () => {
+    const cancel = vi.fn();
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(Buffer.from('12345'));
+      },
+      cancel,
+    });
+    await expect(readBoundedText(textResponse(200, '', {}, { body }), 4, 'GET', '/p')).rejects.toMatchObject({
+      code: 'too-large',
+    });
+    expect(cancel).toHaveBeenCalledTimes(1);
+    expect(body.locked).toBe(false);
+  });
+
   it('rejects oversized list bodies', async () => {
     const store = new ConnectSecretStore({
       vaultId: VAULT_ID,
@@ -338,6 +400,226 @@ describe('bounds and schemas', () => {
 });
 
 describe('timeout', () => {
+  it.each([false, true])('cancels a native stalled stream (initial chunk: %s)', async (initialChunk) => {
+    vi.useFakeTimers();
+    try {
+      const cancel = vi.fn();
+      const body = new ReadableStream<Uint8Array>({
+        start(controller) {
+          if (initialChunk) {
+            controller.enqueue(Buffer.from('['));
+          }
+        },
+        cancel,
+      });
+      const store = new ConnectSecretStore({
+        vaultId: VAULT_ID,
+        env: makeEnv('https://connect.example.invalid', 't'),
+        timeoutMs: 20,
+        maxRetries: 0,
+        fetchImpl: async () => textResponse(200, '', {}, { body }),
+      });
+      const result = store.listVaults().catch((error: unknown) => error);
+      await vi.advanceTimersByTimeAsync(20);
+      expect(await result).toMatchObject({ code: 'timeout' });
+      expect(cancel).toHaveBeenCalledTimes(1);
+      expect(body.locked).toBe(false);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it.each(['reader-before', 'reader-after', 'iterator-before', 'iterator-after', 'text', 'headers'])(
+    'bounds signal-ignoring GET %s stalls and cleans up every attempt',
+    async (mode) => {
+      vi.useFakeTimers();
+      try {
+        const signals: AbortSignal[] = [];
+        const cleanups: ReturnType<typeof vi.fn>[] = [];
+        const releases: ReturnType<typeof vi.fn>[] = [];
+        const sleeps: number[] = [];
+        const store = new ConnectSecretStore({
+          vaultId: VAULT_ID,
+          env: makeEnv('https://connect.example.invalid', 'timeout-token-canary'),
+          timeoutMs: 20,
+          sleep: async (ms) => {
+            expect(signals[signals.length - 1].aborted).toBe(true);
+            if (mode !== 'headers') {
+              expect(cleanups[cleanups.length - 1]).toHaveBeenCalledTimes(1);
+            }
+            sleeps.push(ms);
+          },
+          fetchImpl: async (_url, init) => {
+            signals.push(init!.signal!);
+            if (mode === 'headers') {
+              return new Promise<FetchResponseLike>(() => {});
+            }
+            const cancel = vi.fn(() => new Promise<void>(() => {}));
+            const releaseLock = vi.fn();
+            cleanups.push(cancel);
+            releases.push(releaseLock);
+            let reads = 0;
+            const read = async () => {
+              reads += 1;
+              if (mode.endsWith('after') && reads === 1) {
+                return { done: false, value: Buffer.from('["payload-canary') };
+              }
+              return new Promise<{ done: boolean; value: Uint8Array }>(() => {});
+            };
+            return textResponse(
+              200,
+              '',
+              {},
+              {
+                text: () => new Promise<string>(() => {}),
+                body:
+                  mode === 'text'
+                    ? { cancel }
+                    : mode.startsWith('iterator')
+                      ? { [Symbol.asyncIterator]: () => ({ next: read, return: cancel }) }
+                      : { getReader: () => ({ read, cancel, releaseLock }) },
+              },
+            );
+          },
+        });
+        const result = store.listItems().catch((error: unknown) => error);
+        await vi.advanceTimersByTimeAsync(79);
+        expect(signals).toHaveLength(4);
+        expect(signals[3].aborted).toBe(false);
+        await vi.advanceTimersByTimeAsync(1);
+        const error = await result;
+        expect(error).toMatchObject({ code: 'timeout', retryable: true });
+        expect(String(error)).not.toContain('canary');
+        expect(signals.every((signal) => signal.aborted)).toBe(true);
+        expect(sleeps).toEqual([100, 200, 400]);
+        for (const cleanup of cleanups) {
+          expect(cleanup).toHaveBeenCalledTimes(1);
+        }
+        if (mode.startsWith('reader')) {
+          for (const release of releases) {
+            expect(release).toHaveBeenCalledTimes(1);
+          }
+        }
+        expect(vi.getTimerCount()).toBe(0);
+      } finally {
+        vi.useRealTimers();
+      }
+    },
+  );
+
+  it('shares one deadline across delayed headers and chunks, then retries successfully', async () => {
+    vi.useFakeTimers();
+    try {
+      const cancel = vi.fn();
+      const releaseLock = vi.fn();
+      let calls = 0;
+      let reads = 0;
+      const store = new ConnectSecretStore({
+        vaultId: VAULT_ID,
+        env: makeEnv('https://connect.example.invalid', 't'),
+        timeoutMs: 20,
+        sleep: async () => {},
+        fetchImpl: async () => {
+          calls += 1;
+          if (calls > 1) {
+            expect(cancel).toHaveBeenCalledTimes(1);
+            return streamResponse(200, ['[', ']']);
+          }
+          await new Promise((resolve) => setTimeout(resolve, 8));
+          return textResponse(
+            200,
+            '',
+            {},
+            {
+              body: {
+                getReader: () => ({
+                  cancel,
+                  releaseLock,
+                  read: async () => {
+                    reads += 1;
+                    await new Promise((resolve) => setTimeout(resolve, 8));
+                    return { done: false, value: reads === 1 ? '[' : ']' };
+                  },
+                }),
+              },
+            },
+          );
+        },
+      });
+      const result = store.listItems();
+      await vi.advanceTimersByTimeAsync(19);
+      expect(calls).toBe(1);
+      expect(reads).toBe(2);
+      await vi.advanceTimersByTimeAsync(1);
+      await expect(result).resolves.toEqual([]);
+      expect(calls).toBe(2);
+      expect(releaseLock).toHaveBeenCalledTimes(1);
+      await vi.runAllTimersAsync();
+      expect(reads).toBe(2);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it.each(['headers', 'reader', 'text'])(
+    'keeps POST %s timeout uncertain exactly once, including late settlement',
+    async (mode) => {
+      vi.useFakeTimers();
+      try {
+        const cancel = vi.fn(async () => {
+          throw new Error('cleanup-secret-canary');
+        });
+        const releaseLock = vi.fn();
+        let settle: (value: never) => void = () => {};
+        const pending = new Promise<never>((resolve) => {
+          settle = resolve;
+        });
+        const response = textResponse(
+          201,
+          '',
+          {},
+          {
+            text: () => pending,
+            body: mode === 'reader' ? { getReader: () => ({ read: () => pending, cancel, releaseLock }) } : { cancel },
+          },
+        );
+        const signals: AbortSignal[] = [];
+        const fetchImpl = vi.fn(async (_url, init) => {
+          signals.push(init.signal);
+          return mode === 'headers' ? pending : response;
+        });
+        const store = new ConnectSecretStore({
+          vaultId: VAULT_ID,
+          env: makeEnv('https://connect.example.invalid', 'token-canary'),
+          timeoutMs: 20,
+          fetchImpl,
+        });
+        const input: CreateConnectItemInput = {
+          title: 't',
+          category: 'SECURE_NOTE',
+          tags: [],
+          fields: [{ type: 'CONCEALED', value: 'payload-canary' }],
+        };
+        const result = store.createItem(input);
+        await vi.advanceTimersByTimeAsync(20);
+        await expect(result).resolves.toEqual({ status: 'uncertain', attempts: 1 });
+        expect(signals[0].aborted).toBe(true);
+        settle((mode === 'headers' ? response : mode === 'reader' ? { done: true } : '{}') as never);
+        await vi.runAllTimersAsync();
+        expect(cancel).toHaveBeenCalledTimes(1);
+        expect(fetchImpl).toHaveBeenCalledTimes(1);
+        if (mode === 'reader') {
+          expect(releaseLock).toHaveBeenCalledTimes(1);
+        }
+        expect(vi.getTimerCount()).toBe(0);
+      } finally {
+        vi.useRealTimers();
+      }
+    },
+  );
+
   it('times out slow GET responses with retries', async () => {
     let calls = 0;
     const store = new ConnectSecretStore({
@@ -394,6 +676,72 @@ describe('timeout', () => {
 });
 
 describe('redirects', () => {
+  it.each(['GET', 'POST'])('cleans up every abandoned %s status before returning or retrying', async (method) => {
+    for (const status of [302, 400, 401, 403, 404, 429, 503]) {
+      const signals: AbortSignal[] = [];
+      const cancel = vi.fn(() => new Promise<void>(() => {}));
+      const text = vi.fn(() => new Promise<string>(() => {}));
+      const fetchImpl = vi.fn(async (url, init) => {
+        expect(new URL(url).origin).toBe('https://connect.example.invalid');
+        expect(init.redirect).toBe('manual');
+        expect(authOf(init)).toBe('Bearer t');
+        signals.push(init.signal);
+        return textResponse(
+          status,
+          '',
+          { location: 'https://evil.example.invalid', 'retry-after': '1' },
+          {
+            text,
+            body: { cancel },
+          },
+        );
+      });
+      const sleep = vi.fn(async () => {
+        expect(cancel).toHaveBeenCalledTimes(fetchImpl.mock.calls.length);
+        expect(signals.every((signal) => signal.aborted)).toBe(true);
+      });
+      const store = new ConnectSecretStore({
+        vaultId: VAULT_ID,
+        env: makeEnv('https://connect.example.invalid', 't'),
+        fetchImpl,
+        sleep,
+      });
+      const input: CreateConnectItemInput = {
+        title: 't',
+        category: 'SECURE_NOTE',
+        tags: [],
+        fields: [{ type: 'CONCEALED', value: 'v' }],
+      };
+      const result = await (method === 'GET' ? store.listItems() : store.createItem(input)).catch(
+        (error: unknown) => error,
+      );
+      const retryable = status === 429 || status === 503;
+      const attempts = method === 'GET' && retryable ? 4 : 1;
+      if (method === 'POST' && retryable) {
+        expect(result).toEqual({ status: 'uncertain', attempts: 1 });
+      } else {
+        const code =
+          status === 302
+            ? 'redirect-blocked'
+            : status === 400
+              ? 'validation'
+              : status === 404
+                ? 'not-found'
+                : status === 429
+                  ? 'rate-limited'
+                  : status === 503
+                    ? 'server'
+                    : 'auth';
+        expect(result).toMatchObject({ code });
+      }
+      expect(fetchImpl).toHaveBeenCalledTimes(attempts);
+      expect(cancel).toHaveBeenCalledTimes(attempts);
+      expect(signals.every((signal) => signal.aborted)).toBe(true);
+      expect(text).not.toHaveBeenCalled();
+      expect(sleep).toHaveBeenCalledTimes(attempts - 1);
+    }
+  });
+
   it('blocks 3xx without sending auth to the redirected origin', async () => {
     const requested: string[] = [];
     const authed: Array<string | undefined> = [];
@@ -459,6 +807,33 @@ describe('filters', () => {
 });
 
 describe('uncertain writes', () => {
+  it.each([false, true])('cancels an oversized POST success body exactly once (declared: %s)', async (declared) => {
+    const cancel = vi.fn();
+    const read = vi.fn(async () => ({ done: false, value: Buffer.from('12345') }));
+    const fetchImpl = vi.fn(async () =>
+      textResponse(201, '', declared ? { 'content-length': '5' } : {}, {
+        body: { getReader: () => ({ read, cancel }) },
+      }),
+    );
+    const store = new ConnectSecretStore({
+      vaultId: VAULT_ID,
+      env: makeEnv('https://connect.example.invalid', 't'),
+      maxDetailBytes: 4,
+      fetchImpl,
+    });
+    await expect(
+      store.createItem({
+        title: 't',
+        category: 'SECURE_NOTE',
+        tags: [],
+        fields: [{ type: 'CONCEALED', value: 'v' }],
+      }),
+    ).resolves.toEqual({ status: 'uncertain', attempts: 1 });
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(cancel).toHaveBeenCalledTimes(1);
+    expect(read).toHaveBeenCalledTimes(declared ? 0 : 1);
+  });
+
   function makeRegistry() {
     const items = new Map<string, ConnectItemDetail>();
     return items;
