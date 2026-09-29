@@ -1,3 +1,9 @@
+## [0.41.1](https://github.com/egose/repo-toolkit/compare/v0.41.0...v0.41.1) (2026-09-29)
+
+### Documentation
+
+* update task evidence and temp-directory paths ([3f6bf94](https://github.com/egose/repo-toolkit/commit/3f6bf9436af1c2b4b2a4b2febd83a21fe67958b8))
+
 ## [0.41.0](https://github.com/egose/repo-toolkit/compare/v0.40.0...v0.41.0) (2026-09-21)
 
 ### Features
