@@ -38,6 +38,7 @@
     "publish-docker-publish": "pnpm --filter @repo-toolkit/docker-publish... build && node packages/docker-publish/dist/cli-publish.js",
     "docker-publish": "pnpm --filter @repo-toolkit/docker-publish... build && node packages/docker-publish/dist/cli.js",
     "secret-sync": "pnpm --filter @repo-toolkit/secret-sync... build && node packages/secret-sync/dist/cli.js",
+    "release-tag": "pnpm --filter @repo-toolkit/release-tag... build && node packages/release-tag/dist/cli.js",
     "release": "release-it",
     "test": "pnpm -r --workspace-concurrency=1 --if-present test"
   },

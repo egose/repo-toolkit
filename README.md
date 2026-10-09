@@ -13,6 +13,7 @@ Shared monorepo for repository tooling packages.
 - `@repo-toolkit/go-release`: build and verify deterministic cross-platform Go binary releases
 - `@repo-toolkit/docker-publish`: plan, build, publish, and verify Docker/OCI container images to target registries
 - `@repo-toolkit/secret-sync`: synchronize explicitly selected local files with 1Password Connect or directly with the 1Password SDK
+- `@repo-toolkit/release-tag`: determine the next release tag, run the release on a changelog branch, and open a GitHub release pull request
 
 ## Workspace Layout
 
@@ -25,6 +26,7 @@ Shared monorepo for repository tooling packages.
 - `packages/go-release`: Go release builder/verifier and `repo-toolkit-go-release` / `repo-toolkit-build-go-release` / `repo-toolkit-verify-go-release` CLIs
 - `packages/docker-publish`: Docker image publisher and `repo-toolkit-docker-publish` / `repo-toolkit-build-docker-publish` / `repo-toolkit-publish-docker-publish` CLIs
 - `packages/secret-sync`: secret file syncer and `repo-toolkit-secret-sync` CLI
+- `packages/release-tag`: release tag determiner and `repo-toolkit-release-tag` CLI
 - `website/`: standalone Docusaurus docs site for the workspace packages
 
 ## Development
@@ -90,6 +92,7 @@ Available commands after install:
 - `repo-toolkit-docker-publish` (`build`/`publish` subcommands, aliases `repo-toolkit-build-docker-publish` / `repo-toolkit-publish-docker-publish` remain available)
 - `repo-toolkit-build-docker-publish`
 - `repo-toolkit-publish-docker-publish`
+- `repo-toolkit-release-tag`
 
 Useful asdf commands:
 

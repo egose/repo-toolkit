@@ -18,5 +18,6 @@ This site is the primary documentation home for the `repo-toolkit` workspace pac
 - [`@repo-toolkit/go-release`](./go-release): build and verify deterministic cross-platform Go binary releases.
 - [`@repo-toolkit/docker-publish`](./docker-publish): plan, build, publish, and verify Docker/OCI container images to target registries.
 - [`@repo-toolkit/secret-sync`](./secret-sync): synchronize explicitly selected local files with 1Password Connect.
+- [`@repo-toolkit/release-tag`](./release-tag): determine the next release tag, run the release on a changelog branch, and open a GitHub release pull request.
 
 Package-local `README.md` files stay intentionally short and point back here for the full guides.
