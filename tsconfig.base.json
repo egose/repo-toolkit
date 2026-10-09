@@ -19,7 +19,9 @@
       "@repo-toolkit/docker-publish": ["packages/docker-publish/src/index.ts"],
       "@repo-toolkit/docker-publish/*": ["packages/docker-publish/src/*"],
       "@repo-toolkit/secret-sync": ["packages/secret-sync/src/index.ts"],
-      "@repo-toolkit/secret-sync/*": ["packages/secret-sync/src/*"]
+      "@repo-toolkit/secret-sync/*": ["packages/secret-sync/src/*"],
+      "@repo-toolkit/release-tag": ["packages/release-tag/src/index.ts"],
+      "@repo-toolkit/release-tag/*": ["packages/release-tag/src/*"]
     }
   }
 }
