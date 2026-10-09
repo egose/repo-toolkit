@@ -1,3 +1,5 @@
+## [0.41.2](https://github.com/egose/repo-toolkit/compare/v0.41.1...v0.41.2) (2026-10-09)
+
 ## [0.41.1](https://github.com/egose/repo-toolkit/compare/v0.41.0...v0.41.1) (2026-09-29)
 
 ### Documentation
