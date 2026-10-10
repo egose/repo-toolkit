@@ -133,6 +133,13 @@ function _createMdxContent(props) {
             children: "@repo-toolkit/secret-sync"
           })
         }), ": synchronize explicitly selected local files with 1Password Connect."]
+      }), "\n", (0,jsx_runtime.jsxs)(_components.li, {
+        children: [(0,jsx_runtime.jsx)(_components.a, {
+          href: "./release-tag",
+          children: (0,jsx_runtime.jsx)(_components.code, {
+            children: "@repo-toolkit/release-tag"
+          })
+        }), ": determine the next release tag, run the release on a changelog branch, and open a GitHub release pull request."]
       }), "\n"]
     }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
       children: ["Package-local ", (0,jsx_runtime.jsx)(_components.code, {
