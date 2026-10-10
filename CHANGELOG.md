@@ -1,3 +1,9 @@
+## [0.42.0](https://github.com/egose/repo-toolkit/compare/v0.41.2...v0.42.0) (2026-10-10)
+
+### Features
+
+* add release-tag package and workspace integration ([0ac68c5](https://github.com/egose/repo-toolkit/commit/0ac68c5562d78d148c2e4d6a8f32bf41002addc0))
+
 ## [0.41.2](https://github.com/egose/repo-toolkit/compare/v0.41.1...v0.41.2) (2026-10-09)
 
 ## [0.41.1](https://github.com/egose/repo-toolkit/compare/v0.41.0...v0.41.1) (2026-09-29)
