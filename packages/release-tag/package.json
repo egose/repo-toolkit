@@ -1,0 +1,43 @@
+{
+  "name": "@repo-toolkit/release-tag",
+  "description": "Determine the next release tag, run the release on a changelog branch, and open a GitHub release pull request",
+  "version": "0.0.0-PLACEHOLDER",
+  "license": "PLACEHOLDER",
+  "repository": "PLACEHOLDER",
+  "type": "module",
+  "sideEffects": false,
+  "keywords": [
+    "github",
+    "release",
+    "release-it",
+    "semver",
+    "tooling"
+  ],
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "bin": {
+    "repo-toolkit-release-tag": "dist/cli.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsup --config tsup.config.ts",
+    "test": "pnpm --filter @repo-toolkit/release-tag... build && vitest run --config vitest.config.ts",
+    "release-tag": "node dist/cli.js"
+  },
+  "files": [
+    "README.md",
+    "dist"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@repo-toolkit/publish-package": "workspace:*"
+  }
+}

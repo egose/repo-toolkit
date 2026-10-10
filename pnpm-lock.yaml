@@ -105,6 +105,12 @@ importers:
         specifier: workspace:*
         version: link:../publish-package
 
+  packages/release-tag:
+    dependencies:
+      '@repo-toolkit/publish-package':
+        specifier: workspace:*
+        version: link:../publish-package
+
   packages/secret-sync:
     dependencies:
       '@1password/sdk':
