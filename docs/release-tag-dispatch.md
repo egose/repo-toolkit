@@ -7,6 +7,8 @@ To work around this, you can set up an **SSH key** to fetch the repository in th
 
 `.github/workflows/release-tag-changelog.yml` builds and runs the local release-tag package with `pnpm release-tag`. It signs the release commit, creates and labels the release-candidate PR, merges it, and deletes the changelog branch after a successful merge. Appended tag signatures are removed from generated PR descriptions.
 
+The Git preflight preserves the `core.sshCommand` configured by `actions/checkout`, so the same deploy key is used for the authentication probe and subsequent pushes.
+
 The workflow uses these repository secrets:
 
 | Secret                    | Purpose                                              |
