@@ -1,3 +1,9 @@
+## [0.43.0](https://github.com/egose/repo-toolkit/compare/v0.42.0...v0.43.0) (2026-10-11)
+
+### Features
+
+* add fail-fast preflight checks for release-tag ([564062b](https://github.com/egose/repo-toolkit/commit/564062be5a8f61b668ff053b94d81078d93e6430))
+
 ## [0.42.0](https://github.com/egose/repo-toolkit/compare/v0.41.2...v0.42.0) (2026-10-10)
 
 ### Features
