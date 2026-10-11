@@ -43,6 +43,18 @@ const toc = [{
   "id": "install",
   "level": 2
 }, {
+  "value": "Prerequisites",
+  "id": "prerequisites",
+  "level": 2
+}, {
+  "value": "Non-interactive git authentication",
+  "id": "non-interactive-git-authentication",
+  "level": 3
+}, {
+  "value": "Token permissions",
+  "id": "token-permissions",
+  "level": 3
+}, {
   "value": "How the three stages fit",
   "id": "how-the-three-stages-fit",
   "level": 2
@@ -201,6 +213,107 @@ function _createMdxContent(props) {
         children: "@repo-toolkit/publish-package"
       }), "."]
     }), "\n", (0,jsx_runtime.jsx)(_components.h2, {
+      id: "prerequisites",
+      children: "Prerequisites"
+    }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
+      children: ["Stage 2 pushes and stage 3 API calls need working credentials before the run starts. A fail-fast preflight verifies both automatically after determine and before any mutation; bypass it with ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "--skip-preflight"
+      }), " only for exotic setups."]
+    }), "\n", (0,jsx_runtime.jsx)(_components.h3, {
+      id: "non-interactive-git-authentication",
+      children: "Non-interactive git authentication"
+    }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
+      children: ["Every git-over-SSH connection prompts for a passphrase unless an agent holds the key. One stalled prompt mid-run strands a half-pushed ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "changelog/*"
+      }), " branch, so set this up first:"]
+    }), "\n", (0,jsx_runtime.jsx)(_components.pre, {
+      children: (0,jsx_runtime.jsx)(_components.code, {
+        className: "language-sh",
+        children: "eval \"$(ssh-agent -s)\" && ssh-add ~/.ssh/<key>\nssh -T git@github.com\nGIT_SSH_COMMAND=\"ssh -o BatchMode=yes\" git ls-remote origin HEAD\n"
+      })
+    }), "\n", (0,jsx_runtime.jsx)(_components.p, {
+      children: "All three must succeed with no prompt; the last proves fully non-interactive auth. The agent does not survive reboots or re-logins — persist it via your OS keychain, a systemd unit, or a shell-profile snippet, or re-add the key each session. Alternatives: a passphrase-less deploy key restricted to the repo (convenient, but weaker if the key leaks), or an HTTPS remote with a credential helper holding a PAT (one credential for git and API, at the cost of a token on disk)."
+    }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
+      children: ["The preflight probe runs ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "git ls-remote origin HEAD"
+      }), " with ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "GIT_TERMINAL_PROMPT=0"
+      }), " and ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "ssh -o BatchMode=yes"
+      }), ", unless you already set ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "GIT_SSH_COMMAND"
+      }), " — a preset value is respected and never overridden."]
+    }), "\n", (0,jsx_runtime.jsx)(_components.h3, {
+      id: "token-permissions",
+      children: "Token permissions"
+    }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
+      children: ["The token needs these repository permissions (job ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "permissions"
+      }), " for ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "GITHUB_TOKEN"
+      }), ", repository access for a fine-grained PAT):"]
+    }), "\n", (0,jsx_runtime.jsxs)(_components.table, {
+      children: [(0,jsx_runtime.jsx)(_components.thead, {
+        children: (0,jsx_runtime.jsxs)(_components.tr, {
+          children: [(0,jsx_runtime.jsx)(_components.th, {
+            children: "Operation"
+          }), (0,jsx_runtime.jsx)(_components.th, {
+            children: "Minimum permission"
+          })]
+        })
+      }), (0,jsx_runtime.jsxs)(_components.tbody, {
+        children: [(0,jsx_runtime.jsxs)(_components.tr, {
+          children: [(0,jsx_runtime.jsxs)(_components.td, {
+            children: ["Push the ", (0,jsx_runtime.jsx)(_components.code, {
+              children: "changelog/*"
+            }), " branch, merge the PR, delete the ref"]
+          }), (0,jsx_runtime.jsx)(_components.td, {
+            children: "Contents: read and write"
+          })]
+        }), (0,jsx_runtime.jsxs)(_components.tr, {
+          children: [(0,jsx_runtime.jsx)(_components.td, {
+            children: "Create the PR"
+          }), (0,jsx_runtime.jsx)(_components.td, {
+            children: "Pull requests: read and write"
+          })]
+        }), (0,jsx_runtime.jsxs)(_components.tr, {
+          children: [(0,jsx_runtime.jsxs)(_components.td, {
+            children: ["Add the ", (0,jsx_runtime.jsx)(_components.code, {
+              children: "changelog"
+            }), ", ", (0,jsx_runtime.jsx)(_components.code, {
+              children: "release-candidate"
+            }), ", ", (0,jsx_runtime.jsx)(_components.code, {
+              children: "<tag>"
+            }), " labels"]
+          }), (0,jsx_runtime.jsx)(_components.td, {
+            children: "Issues: read and write"
+          })]
+        })]
+      })]
+    }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
+      children: ["The same set covers runs with and without ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "--auto-merge-pr"
+      }), ", since merge and ref deletion fall under Contents. A classic PAT needs the ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "repo"
+      }), " scope (", (0,jsx_runtime.jsx)(_components.code, {
+        children: "public_repo"
+      }), " for public-only repos). GitHub reports insufficient permission as ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "404"
+      }), ", not ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "403"
+      }), ", so a 404 from a labels or repo endpoint means the token lacks access. Verify a token file before relying on it:"]
+    }), "\n", (0,jsx_runtime.jsx)(_components.pre, {
+      children: (0,jsx_runtime.jsx)(_components.code, {
+        className: "language-sh",
+        children: "GH_TOKEN=$(cat ./token.txt) gh api repos/owner/repo --jq .permissions\n"
+      })
+    }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
+      children: [(0,jsx_runtime.jsx)(_components.code, {
+        children: "push"
+      }), " must be ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "true"
+      }), ". The value never lands in shell history with this form."]
+    }), "\n", (0,jsx_runtime.jsx)(_components.h2, {
       id: "how-the-three-stages-fit",
       children: "How the three stages fit"
     }), "\n", (0,jsx_runtime.jsxs)(_components.p, {
@@ -228,7 +341,11 @@ function _createMdxContent(props) {
         children: "only: ['pr']"
       }), ", and ", (0,jsx_runtime.jsx)(_components.code, {
         children: "only: ['determine', 'pr']"
-      }), " throw with guidance to select the prefix. Any stage throw propagates with secrets redacted and stops later stages. Token bytes never appear in plans, results, JSON output, or errors."]
+      }), " throw with guidance to select the prefix. After determine and before any mutation, a preflight verifies non-interactive git auth (when ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "release"
+      }), " is selected) and token validity plus push permission (when ", (0,jsx_runtime.jsx)(_components.code, {
+        children: "pr"
+      }), " is selected, not skipped, and a token is available); a missing token still yields the graceful stage-3 skip rather than a preflight error. Any throw propagates with secrets redacted and stops later stages. Token bytes never appear in plans, results, JSON output, or errors."]
     }), "\n", (0,jsx_runtime.jsx)(_components.h2, {
       id: "versioning-rules",
       children: "Versioning rules"
@@ -834,6 +951,22 @@ function _createMdxContent(props) {
         }), (0,jsx_runtime.jsxs)(_components.tr, {
           children: [(0,jsx_runtime.jsx)(_components.td, {
             children: (0,jsx_runtime.jsx)(_components.code, {
+              children: "--skip-preflight"
+            })
+          }), (0,jsx_runtime.jsx)(_components.td, {
+            children: (0,jsx_runtime.jsx)(_components.code, {
+              children: "skipPreflight"
+            })
+          }), (0,jsx_runtime.jsx)(_components.td, {
+            children: "none"
+          }), (0,jsx_runtime.jsx)(_components.td, {
+            children: (0,jsx_runtime.jsx)(_components.code, {
+              children: "false"
+            })
+          })]
+        }), (0,jsx_runtime.jsxs)(_components.tr, {
+          children: [(0,jsx_runtime.jsx)(_components.td, {
+            children: (0,jsx_runtime.jsx)(_components.code, {
               children: "--only"
             })
           }), (0,jsx_runtime.jsx)(_components.td, {
@@ -1245,6 +1378,17 @@ function _createMdxContent(props) {
         }), " for dry-run branch validation."]
       }), "\n", (0,jsx_runtime.jsxs)(_components.li, {
         children: [(0,jsx_runtime.jsx)(_components.code, {
+          children: "preflight failed: git ls-remote origin HEAD did not succeed."
+        }), " Non-interactive git auth is missing (usually a passphrase-protected SSH key with no agent). Load the key (", (0,jsx_runtime.jsx)(_components.code, {
+          children: "eval \"$(ssh-agent -s)\" && ssh-add ~/.ssh/<key>"
+        }), "), verify with ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "GIT_SSH_COMMAND=\"ssh -o BatchMode=yes\" git ls-remote origin HEAD"
+        }), ", then retry. See ", (0,jsx_runtime.jsx)(_components.a, {
+          href: "#prerequisites",
+          children: "Prerequisites"
+        }), ". Nothing was mutated."]
+      }), "\n", (0,jsx_runtime.jsxs)(_components.li, {
+        children: [(0,jsx_runtime.jsx)(_components.code, {
           children: "release command not available: <cmd>."
         }), " Install or correct ", (0,jsx_runtime.jsx)(_components.code, {
           children: "--release-command"
@@ -1263,6 +1407,15 @@ function _createMdxContent(props) {
         }), " The file must contain non-whitespace; empty files throw without env fallback."]
       }), "\n", (0,jsx_runtime.jsxs)(_components.li, {
         children: [(0,jsx_runtime.jsx)(_components.code, {
+          children: "preflight failed: GitHub token check ..."
+        }), " Either the token is invalid (non-2xx, including permission-404s) or it lacks push permission. Grant Contents, Pull requests, and Issues read/write on the repo as listed in ", (0,jsx_runtime.jsx)(_components.a, {
+          href: "#prerequisites",
+          children: "Prerequisites"
+        }), ", verify with ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "GH_TOKEN=$(cat ./token.txt) gh api repos/owner/repo --jq .permissions"
+        }), ", then retry. Nothing was mutated."]
+      }), "\n", (0,jsx_runtime.jsxs)(_components.li, {
+        children: [(0,jsx_runtime.jsx)(_components.code, {
           children: "GitHub API response ... exceeding the ...-byte response limit."
         }), " Lower history or raise ", (0,jsx_runtime.jsx)(_components.code, {
           children: "maxOutputBytes"
@@ -1275,6 +1428,38 @@ function _createMdxContent(props) {
         }), "/", (0,jsx_runtime.jsx)(_components.code, {
           children: "422"
         }), ". Branch protection or a non-mergeable state; the stage fails without deleting the branch."]
+      }), "\n", (0,jsx_runtime.jsxs)(_components.li, {
+        children: ["Stuck at release-it ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "Git push"
+        }), " (only possible with ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "--skip-preflight"
+        }), ", since the preflight catches missing non-interactive auth). The spinner hides an SSH passphrase prompt: type the passphrase blind and press Enter, or kill the run. Assess with ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "git status --short --branch"
+        }), ", ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "git log --oneline -3"
+        }), ", ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "git tag -l"
+        }), ", and ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "git ls-remote origin"
+        }), "; the release commit exists locally only. Either resume manually (", (0,jsx_runtime.jsx)(_components.code, {
+          children: "git push --follow-tags origin changelog/<version>"
+        }), ", then create the PR) or retry cleanly: ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "git checkout main"
+        }), ", ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "git tag -d v<version>"
+        }), ", load ssh-agent, and re-run."]
+      }), "\n", (0,jsx_runtime.jsxs)(_components.li, {
+        children: [(0,jsx_runtime.jsx)(_components.code, {
+          children: "could not add label: '<tag>' not found"
+        }), " from ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "gh pr create --label"
+        }), ". ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "gh"
+        }), " validates labels client-side and requires them to pre-exist; create them first (", (0,jsx_runtime.jsx)(_components.code, {
+          children: "gh label create"
+        }), ") or use ", (0,jsx_runtime.jsx)(_components.code, {
+          children: "gh api repos/owner/repo/issues/<n>/labels"
+        }), ", which auto-creates missing labels exactly like the tool's own REST call."]
       }), "\n"]
     }), "\n", (0,jsx_runtime.jsxs)(_components.h2, {
       id: "migration-from-egoseactionsrelease-tag",
