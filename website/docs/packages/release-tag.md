@@ -15,9 +15,45 @@ pnpm add -D @repo-toolkit/release-tag
 
 Requires Node.js 20 or newer and `git` on `PATH` for the release stage. The package has no runtime dependencies beyond `@repo-toolkit/publish-package`.
 
+## Prerequisites
+
+Stage 2 pushes and stage 3 API calls need working credentials before the run starts. A fail-fast preflight verifies both automatically after determine and before any mutation; bypass it with `--skip-preflight` only for exotic setups.
+
+### Non-interactive git authentication
+
+Every git-over-SSH connection prompts for a passphrase unless an agent holds the key. One stalled prompt mid-run strands a half-pushed `changelog/*` branch, so set this up first:
+
+```sh
+eval "$(ssh-agent -s)" && ssh-add ~/.ssh/<key>
+ssh -T git@github.com
+GIT_SSH_COMMAND="ssh -o BatchMode=yes" git ls-remote origin HEAD
+```
+
+All three must succeed with no prompt; the last proves fully non-interactive auth. The agent does not survive reboots or re-logins — persist it via your OS keychain, a systemd unit, or a shell-profile snippet, or re-add the key each session. Alternatives: a passphrase-less deploy key restricted to the repo (convenient, but weaker if the key leaks), or an HTTPS remote with a credential helper holding a PAT (one credential for git and API, at the cost of a token on disk).
+
+The preflight probe runs `git ls-remote origin HEAD` with `GIT_TERMINAL_PROMPT=0` and `ssh -o BatchMode=yes`, unless you already set `GIT_SSH_COMMAND` — a preset value is respected and never overridden.
+
+### Token permissions
+
+The token needs these repository permissions (job `permissions` for `GITHUB_TOKEN`, repository access for a fine-grained PAT):
+
+| Operation                                                   | Minimum permission            |
+| ----------------------------------------------------------- | ----------------------------- |
+| Push the `changelog/*` branch, merge the PR, delete the ref | Contents: read and write      |
+| Create the PR                                               | Pull requests: read and write |
+| Add the `changelog`, `release-candidate`, `<tag>` labels    | Issues: read and write        |
+
+The same set covers runs with and without `--auto-merge-pr`, since merge and ref deletion fall under Contents. A classic PAT needs the `repo` scope (`public_repo` for public-only repos). GitHub reports insufficient permission as `404`, not `403`, so a 404 from a labels or repo endpoint means the token lacks access. Verify a token file before relying on it:
+
+```sh
+GH_TOKEN=$(cat ./token.txt) gh api repos/owner/repo --jq .permissions
+```
+
+`push` must be `true`. The value never lands in shell history with this form.
+
 ## How the three stages fit
 
-`runReleaseTag` resolves a validated plan, then runs `determine` -> `release` -> `pr` in order. `only` filters which stages run; unselected stages yield `null` results. `skipRelease` and `skipPr` still invoke their stage, which returns a skipped result, so `null` means not-selected while a skipped result means selected-but-skipped. Downstream stages require their upstream stages: `only: ['release']`, `only: ['pr']`, and `only: ['determine', 'pr']` throw with guidance to select the prefix. Any stage throw propagates with secrets redacted and stops later stages. Token bytes never appear in plans, results, JSON output, or errors.
+`runReleaseTag` resolves a validated plan, then runs `determine` -> `release` -> `pr` in order. `only` filters which stages run; unselected stages yield `null` results. `skipRelease` and `skipPr` still invoke their stage, which returns a skipped result, so `null` means not-selected while a skipped result means selected-but-skipped. Downstream stages require their upstream stages: `only: ['release']`, `only: ['pr']`, and `only: ['determine', 'pr']` throw with guidance to select the prefix. After determine and before any mutation, a preflight verifies non-interactive git auth (when `release` is selected) and token validity plus push permission (when `pr` is selected, not skipped, and a token is available); a missing token still yields the graceful stage-3 skip rather than a preflight error. Any throw propagates with secrets redacted and stops later stages. Token bytes never appear in plans, results, JSON output, or errors.
 
 ## Versioning rules
 
@@ -97,6 +133,7 @@ Each option resolves independently as CLI flag > explicit option > environment >
 | `--delete-merged-branch`                 | `deleteMergedBranch` | none                        | `false`                                        |
 | `--skip-release`                         | `skipRelease`        | none                        | `false`                                        |
 | `--skip-pr`                              | `skipPr`             | none                        | `false`                                        |
+| `--skip-preflight`                       | `skipPreflight`      | none                        | `false`                                        |
 | `--only`                                 | `only`               | none                        | all three stages                               |
 | `--dry-run`                              | `dryRun`             | none                        | `false`                                        |
 
@@ -385,11 +422,15 @@ CLI `--dry-run` resolves and prints the plan summary and exits 0 without mutatio
 - `Last tag '<tag>' does not follow 'vX.Y.Z' format.` Rename or delete the non-conforming tag; leading zeros and prereleases are rejected.
 - `This workflow must be run on a branch, not a tag.` Run on a branch, or pass `--base-branch main`; tag-shaped `GITHUB_REF_NAME` values are rejected.
 - `baseBranch could not be resolved in dry-run without git.` Pass `--base-branch` or set `GITHUB_REF_NAME` for dry-run branch validation.
+- `preflight failed: git ls-remote origin HEAD did not succeed.` Non-interactive git auth is missing (usually a passphrase-protected SSH key with no agent). Load the key (`eval "$(ssh-agent -s)" && ssh-add ~/.ssh/<key>`), verify with `GIT_SSH_COMMAND="ssh -o BatchMode=yes" git ls-remote origin HEAD`, then retry. See [Prerequisites](#prerequisites). Nothing was mutated.
 - `release command not available: <cmd>.` Install or correct `--release-command`; the branch is still created and pushed.
 - `githubRepository is required.` Pass `--github-repository owner/repo` or set `GITHUB_REPOSITORY`.
 - `githubTokenFile at <path> is empty.` The file must contain non-whitespace; empty files throw without env fallback.
+- `preflight failed: GitHub token check ...` Either the token is invalid (non-2xx, including permission-404s) or it lacks push permission. Grant Contents, Pull requests, and Issues read/write on the repo as listed in [Prerequisites](#prerequisites), verify with `GH_TOKEN=$(cat ./token.txt) gh api repos/owner/repo --jq .permissions`, then retry. Nothing was mutated.
 - `GitHub API response ... exceeding the ...-byte response limit.` Lower history or raise `maxOutputBytes`; the PR cap is `min(maxOutputBytes, 1MiB)`.
 - Merge `405`/`422`. Branch protection or a non-mergeable state; the stage fails without deleting the branch.
+- Stuck at release-it `Git push` (only possible with `--skip-preflight`, since the preflight catches missing non-interactive auth). The spinner hides an SSH passphrase prompt: type the passphrase blind and press Enter, or kill the run. Assess with `git status --short --branch`, `git log --oneline -3`, `git tag -l`, and `git ls-remote origin`; the release commit exists locally only. Either resume manually (`git push --follow-tags origin changelog/<version>`, then create the PR) or retry cleanly: `git checkout main`, `git tag -d v<version>`, load ssh-agent, and re-run.
+- `could not add label: '<tag>' not found` from `gh pr create --label`. `gh` validates labels client-side and requires them to pre-exist; create them first (`gh label create`) or use `gh api repos/owner/repo/issues/<n>/labels`, which auto-creates missing labels exactly like the tool's own REST call.
 
 ## Migration from `egose/actions/release-tag`
 

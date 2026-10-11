@@ -1,7 +1,8 @@
 import { isPlainObject, redactSensitiveValues } from '@repo-toolkit/publish-package';
 
 import { determineNextTag, type DeterminedTag } from './determine';
-import { resolveReleaseTagPlan, type ReleaseTagOptions, type ReleaseTagPlan } from './plan';
+import { resolveReleaseTagPlan, type ReleaseTagOptions, type ReleaseTagPlan, type ReleaseTagStage } from './plan';
+import { runPreflight } from './preflight';
 import { runReleaseBranch, type ReleaseBranchResult } from './release';
 import { createReleasePullRequest, type PullRequestResult } from './pull-request';
 
@@ -45,6 +46,17 @@ function resolveExplicitToken(options: ReleaseTagOptions): string | undefined {
   return undefined;
 }
 
+function assertStagePrefix(only: ReadonlyArray<ReleaseTagStage>): void {
+  if (only.includes('release') && !only.includes('determine')) {
+    throw new Error("Stage 'release' requires stage 'determine' to be selected (use --only determine,release).");
+  }
+  if (only.includes('pr') && (!only.includes('determine') || !only.includes('release'))) {
+    throw new Error(
+      "Stage 'pr' requires stages 'determine' and 'release' to be selected (use --only determine,release,pr).",
+    );
+  }
+}
+
 export async function runReleaseTag(options: ReleaseTagOptions = {}): Promise<ReleaseTagResult> {
   if (!isPlainObject(options)) {
     throw new Error('options must be an object');
@@ -55,25 +67,19 @@ export async function runReleaseTag(options: ReleaseTagOptions = {}): Promise<Re
     return { plan, determined: null, release: null, pullRequest: null };
   }
   try {
+    assertStagePrefix(plan.only);
+    const explicitToken = resolveExplicitToken(options);
     let determined: DeterminedTag | null = null;
     let release: ReleaseBranchResult | null = null;
     let pullRequest: PullRequestResult | null = null;
     if (plan.only.includes('determine')) {
       determined = await determineNextTag({ plan });
     }
-    if (plan.only.includes('release')) {
-      if (determined === null) {
-        throw new Error("Stage 'release' requires stage 'determine' to be selected (use --only determine,release).");
-      }
+    await runPreflight({ plan, githubToken: explicitToken });
+    if (determined !== null && plan.only.includes('release')) {
       release = await runReleaseBranch({ plan, determined });
     }
-    if (plan.only.includes('pr')) {
-      if (determined === null || release === null) {
-        throw new Error(
-          "Stage 'pr' requires stages 'determine' and 'release' to be selected (use --only determine,release,pr).",
-        );
-      }
-      const explicitToken = resolveExplicitToken(options);
+    if (determined !== null && release !== null && plan.only.includes('pr')) {
       pullRequest =
         explicitToken === undefined
           ? await createReleasePullRequest({ plan, determined, release })

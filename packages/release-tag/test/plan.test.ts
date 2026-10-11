@@ -52,6 +52,7 @@ describe('resolveReleaseTagPlan', () => {
       expect(plan.autoMergePr).toBe(false);
       expect(plan.deleteMergedBranch).toBe(false);
       expect(plan.skipPr).toBe(false);
+      expect(plan.skipPreflight).toBe(false);
       expect(plan.tokenSource).toBe('none');
       expect(plan.tokenAvailable).toBe(false);
       expect(plan.dryRun).toBe(false);
@@ -195,6 +196,7 @@ describe('resolveReleaseTagPlan', () => {
   it('rejects non-boolean flags', () => {
     expect(() => resolveReleaseTagPlan({ dryRun: 'yes' as unknown as boolean })).toThrow(/dryRun/);
     expect(() => resolveReleaseTagPlan({ skipRelease: 1 as unknown as boolean })).toThrow(/skipRelease/);
+    expect(() => resolveReleaseTagPlan({ skipPreflight: 0 as unknown as boolean })).toThrow(/skipPreflight/);
   });
 
   it('accepts a capturing runner and rejects invalid runner shapes', () => {

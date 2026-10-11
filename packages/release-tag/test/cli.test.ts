@@ -202,18 +202,27 @@ describe('release-tag cli flags', () => {
   it('maps boolean flags', () => {
     withEnv({ GITHUB_API_URL: undefined }, () => {
       const options = buildOptions(
-        flagResult(['--auto-merge-pr', '--delete-merged-branch', '--skip-release', '--skip-pr', '--dry-run']),
+        flagResult([
+          '--auto-merge-pr',
+          '--delete-merged-branch',
+          '--skip-release',
+          '--skip-pr',
+          '--skip-preflight',
+          '--dry-run',
+        ]),
       );
       expect(options.autoMergePr).toBe(true);
       expect(options.deleteMergedBranch).toBe(true);
       expect(options.skipRelease).toBe(true);
       expect(options.skipPr).toBe(true);
+      expect(options.skipPreflight).toBe(true);
       expect(options.dryRun).toBe(true);
       const empty = buildOptions(flagResult([]));
       expect(empty.autoMergePr).toBeUndefined();
       expect(empty.deleteMergedBranch).toBeUndefined();
       expect(empty.skipRelease).toBeUndefined();
       expect(empty.skipPr).toBeUndefined();
+      expect(empty.skipPreflight).toBeUndefined();
       expect(empty.dryRun).toBeUndefined();
     });
   });
@@ -258,6 +267,7 @@ describe('release-tag cli help and strict parsing', () => {
     expect(help.stdout).toContain('GITHUB_API_URL');
     expect(help.stdout).toContain('--github-token-file');
     expect(help.stdout).toContain('--release-it-path');
+    expect(help.stdout).toContain('--skip-preflight');
     const short = runCli(['-h'], { GITHUB_TOKEN: undefined });
     expect(short.status).toBe(0);
     expect(short.stdout).toContain('Usage:');
@@ -412,7 +422,17 @@ describe('release-tag cli stage selection', () => {
           'octo/hello',
         ]),
       );
-      const runner = makeRunner([ok(''), ok(''), ok(''), ok(''), ok(''), ok(''), ok(''), ok('')]);
+      const runner = makeRunner([
+        ok('f00dcafe HEAD\n'),
+        ok(''),
+        ok(''),
+        ok(''),
+        ok(''),
+        ok(''),
+        ok(''),
+        ok(''),
+        ok(''),
+      ]);
       const { calls, fetchFn } = makeFetch();
       const outcome = await runReleaseTag({ ...options, cwd: '/fake/workdir', runner, fetchFn });
       expect(outcome.release?.skippedReason).toBe('skipped via skipRelease');
@@ -450,7 +470,17 @@ describe('release-tag cli output formatting', () => {
       delete process.env.GITHUB_REPOSITORY;
       delete process.env.GITHUB_REF_NAME;
       try {
-        const runner = makeRunner([ok(''), ok(''), ok(''), ok(''), ok(''), ok(''), ok(''), ok('notes')]);
+        const runner = makeRunner([
+          ok('f00dcafe HEAD\n'),
+          ok(''),
+          ok(''),
+          ok(''),
+          ok(''),
+          ok(''),
+          ok(''),
+          ok(''),
+          ok('notes'),
+        ]);
         const { fetchFn } = makeFetch();
         const outcome = await runReleaseTag({
           cwd: dir,
@@ -497,7 +527,17 @@ describe('release-tag cli output formatting', () => {
     const savedToken = process.env.GITHUB_TOKEN;
     delete process.env.GITHUB_TOKEN;
     try {
-      const runner = makeRunner([ok(''), ok(''), ok(''), ok(''), ok(''), ok(''), ok(''), ok('')]);
+      const runner = makeRunner([
+        ok('f00dcafe HEAD\n'),
+        ok(''),
+        ok(''),
+        ok(''),
+        ok(''),
+        ok(''),
+        ok(''),
+        ok(''),
+        ok(''),
+      ]);
       const { fetchFn } = makeFetch();
       const full = await runReleaseTag({
         cwd: '/fake/workdir',

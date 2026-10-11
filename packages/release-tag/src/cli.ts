@@ -24,6 +24,7 @@ export const SPECS: FlagSpec[] = [
   { name: 'delete-merged-branch', boolean: true },
   { name: 'skip-release', boolean: true },
   { name: 'skip-pr', boolean: true },
+  { name: 'skip-preflight', boolean: true },
   { name: 'only', list: true },
   { name: 'dry-run', boolean: true },
   { name: 'json', boolean: true },
@@ -91,6 +92,9 @@ export function buildOptions(result: Exclude<ReturnType<typeof parseFlags>, null
   if (values['skip-pr'] !== undefined) {
     options.skipPr = values['skip-pr'] === 'true';
   }
+  if (values['skip-preflight'] !== undefined) {
+    options.skipPreflight = values['skip-preflight'] === 'true';
+  }
   const only = result.repeat.only;
   if (only !== undefined && only.length > 0) {
     options.only = [...only];
@@ -116,6 +120,7 @@ export function planSummary(plan: ReleaseTagPlan): Record<string, unknown> {
     autoMergePr: plan.autoMergePr,
     deleteMergedBranch: plan.deleteMergedBranch,
     skipPr: plan.skipPr,
+    skipPreflight: plan.skipPreflight,
     tokenSource: plan.tokenSource,
     tokenAvailable: plan.tokenAvailable,
     dryRun: plan.dryRun,
@@ -258,6 +263,9 @@ Stages (run in order by default):
   release    Create/reset changelog/<version>, configure the git author, run the release command, push, read tag message
   pr         Create pull request changelog/<version> -> base branch with labels and optional merge/delete
 
+A fail-fast preflight (non-interactive git auth plus token permission check) runs
+after determine and before any mutation; bypass it with --skip-preflight.
+
 Conditional skips:
   --only determine[,release][,pr]  Run only selected stages; unselected stages yield null results
   --skip-release                   Create and push the branch but skip the release command (skipped result, not null)
@@ -298,6 +306,7 @@ Options:
   --delete-merged-branch       Delete the release branch after a successful merge (requires --auto-merge-pr)
   --skip-release               Create and push the branch but skip the release command
   --skip-pr                    Skip pull request creation
+  --skip-preflight             Skip the fail-fast git-auth and token-permission checks
   --only <stage>[,...]         Run only selected stages: determine, release, pr (repeatable, comma-split)
   --dry-run                    Print the plan summary without mutations, processes, or network
   --json                       Print a single JSON object with schema version, plan, and stage results

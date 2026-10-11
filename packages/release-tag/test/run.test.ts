@@ -202,6 +202,14 @@ function releaseCaptures(tagMessage: string): ReadonlyArray<ProcessCaptureResult
   return [ok(''), ok(''), ok(''), ok(''), ok(''), ok(''), ok(''), ok(tagMessage)];
 }
 
+function lsRemoteOk(): ProcessCaptureResult {
+  return ok('f00dcafe HEAD\n');
+}
+
+function withPreflight(captures: ReadonlyArray<ProcessCaptureResult>): ReadonlyArray<ProcessCaptureResult> {
+  return [lsRemoteOk(), ...captures];
+}
+
 function determinedFixture(): DeterminedTag {
   return { version: '1.2.3', tagVersion: 'v1.2.3', bump: null, lastTag: null, manual: true };
 }
@@ -224,15 +232,18 @@ describe('runReleaseTag end to end', () => {
       await writeFile(releasePath, '#!/usr/bin/env node\n', 'utf8');
       await chmod(releasePath, 0o755);
       await withEnv({ GITHUB_TOKEN: undefined, GITHUB_REPOSITORY: undefined, GITHUB_REF_NAME: undefined }, async () => {
-        const runner = createFakeRunner(queueHandler(releaseCaptures('Release 1.2.3 notes\n')));
+        const runner = createFakeRunner(queueHandler(withPreflight(releaseCaptures('Release 1.2.3 notes\n'))));
         const { calls, fetchFn } = createRecordingFetch((call, index) => {
           if (index === 0) {
-            return makeResponse(201, { number: 42, html_url: 'https://github.com/octo/hello/pull/42' });
+            return makeResponse(200, { permissions: { push: true } });
           }
           if (index === 1) {
-            return makeResponse(200, {});
+            return makeResponse(201, { number: 42, html_url: 'https://github.com/octo/hello/pull/42' });
           }
           if (index === 2) {
+            return makeResponse(200, {});
+          }
+          if (index === 3) {
             return makeResponse(200, { merged: true });
           }
           return makeResponse(204, '');
@@ -270,18 +281,21 @@ describe('runReleaseTag end to end', () => {
         expect(result.pullRequest?.url).toBe('https://github.com/octo/hello/pull/42');
         expect(result.pullRequest?.merged).toBe(true);
         expect(result.pullRequest?.branchDeleted).toBe(true);
-        expect(calls).toHaveLength(4);
-        expect(calls[0]?.method).toBe('POST');
-        expect(calls[0]?.url).toBe('https://api.github.com/repos/octo/hello/pulls');
-        const createBody = JSON.parse(calls[0]?.body ?? '{}') as Record<string, unknown>;
+        expect(runner.captures[0]?.args).toEqual(['ls-remote', 'origin', 'HEAD']);
+        expect(calls).toHaveLength(5);
+        expect(calls[0]?.method).toBe('GET');
+        expect(calls[0]?.url).toBe('https://api.github.com/repos/octo/hello');
+        expect(calls[1]?.method).toBe('POST');
+        expect(calls[1]?.url).toBe('https://api.github.com/repos/octo/hello/pulls');
+        const createBody = JSON.parse(calls[1]?.body ?? '{}') as Record<string, unknown>;
         expect(createBody.head).toBe('changelog/1.2.3');
         expect(createBody.base).toBe('main');
         expect(createBody.title).toBe('chore(release): release candidate v1.2.3');
         expect(typeof createBody.body).toBe('string');
         expect(String(createBody.body)).toContain('Release 1.2.3 notes');
-        const labelsBody = JSON.parse(calls[1]?.body ?? '{}') as Record<string, unknown>;
+        const labelsBody = JSON.parse(calls[2]?.body ?? '{}') as Record<string, unknown>;
         expect(labelsBody.labels).toEqual(['changelog', 'release-candidate', 'v1.2.3']);
-        expect(headerValue(calls[0]?.headers ?? {}, 'authorization')).toBe(`Bearer ${TOKEN_CANARY}`);
+        expect(headerValue(calls[1]?.headers ?? {}, 'authorization')).toBe(`Bearer ${TOKEN_CANARY}`);
         expect(JSON.stringify(result)).not.toContain(TOKEN_CANARY);
         expect(JSON.stringify(result.plan)).not.toContain(TOKEN_CANARY);
       });
@@ -362,7 +376,7 @@ describe('runReleaseTag only filtering', () => {
 
   it('yields null for unselected stages', async () => {
     await withEnv({ GITHUB_TOKEN: undefined, GITHUB_REPOSITORY: undefined, GITHUB_REF_NAME: undefined }, async () => {
-      const runner = createFakeRunner(queueHandler(releaseCaptures('')));
+      const runner = createFakeRunner(queueHandler(withPreflight(releaseCaptures(''))));
       const { calls, fetchFn } = createRecordingFetch(() => {
         throw new Error('fetch must not be called');
       });
@@ -440,7 +454,7 @@ describe('runReleaseTag only filtering', () => {
 describe('runReleaseTag skip versus not selected', () => {
   it('invokes release when skipRelease is true and returns a skipped result', async () => {
     await withEnv({ GITHUB_TOKEN: undefined, GITHUB_REPOSITORY: undefined, GITHUB_REF_NAME: undefined }, async () => {
-      const runner = createFakeRunner(queueHandler(releaseCaptures('')));
+      const runner = createFakeRunner(queueHandler(withPreflight(releaseCaptures(''))));
       const { calls, fetchFn } = createRecordingFetch(() => {
         throw new Error('fetch must not be called');
       });
@@ -466,7 +480,7 @@ describe('runReleaseTag skip versus not selected', () => {
 
   it('invokes pr when skipPr is true and returns a skipped result', async () => {
     await withEnv({ GITHUB_TOKEN: undefined, GITHUB_REPOSITORY: undefined, GITHUB_REF_NAME: undefined }, async () => {
-      const runner = createFakeRunner(queueHandler(releaseCaptures('msg')));
+      const runner = createFakeRunner(queueHandler(withPreflight(releaseCaptures('msg'))));
       const { calls, fetchFn } = createRecordingFetch(() => {
         throw new Error('fetch must not be called');
       });
@@ -505,7 +519,7 @@ describe('runReleaseTag skip versus not selected', () => {
       });
       expect(unselected.release).toBeNull();
       expect(unselected.pullRequest).toBeNull();
-      const skippedRunner = createFakeRunner(queueHandler(releaseCaptures('')));
+      const skippedRunner = createFakeRunner(queueHandler(withPreflight(releaseCaptures(''))));
       const { fetchFn: skippedFetch } = createRecordingFetch(() => {
         throw new Error('fetch must not be called');
       });
@@ -597,7 +611,7 @@ describe('runReleaseTag errors and redaction', () => {
       await writeFile(releasePath, '#!/usr/bin/env node\n', 'utf8');
       await chmod(releasePath, 0o755);
       await withEnv({ GITHUB_TOKEN: undefined, GITHUB_REPOSITORY: undefined, GITHUB_REF_NAME: undefined }, async () => {
-        const runner = createFakeRunner(queueHandler(releaseCaptures('')), () => {
+        const runner = createFakeRunner(queueHandler(withPreflight(releaseCaptures(''))), () => {
           throw new Error('controlled release failure');
         });
         const { calls, fetchFn } = createRecordingFetch(() => {
@@ -623,8 +637,13 @@ describe('runReleaseTag errors and redaction', () => {
 
   it('redacts explicit and env tokens from propagated errors', async () => {
     await withEnv({ GITHUB_TOKEN: ENV_TOKEN, GITHUB_REPOSITORY: undefined, GITHUB_REF_NAME: undefined }, async () => {
-      const runner = createFakeRunner(queueHandler(releaseCaptures('notes')));
-      const { fetchFn } = createRecordingFetch(() => makeResponse(401, `bad credentials ${TOKEN_CANARY} ${ENV_TOKEN}`));
+      const runner = createFakeRunner(queueHandler(withPreflight(releaseCaptures('notes'))));
+      const { fetchFn } = createRecordingFetch((call, index) => {
+        if (index === 0) {
+          return makeResponse(200, { permissions: { push: true } });
+        }
+        return makeResponse(401, `bad credentials ${TOKEN_CANARY} ${ENV_TOKEN}`);
+      });
       const message = await errorMessage(
         runReleaseTag({
           cwd: FAKE_CWD,
@@ -645,7 +664,7 @@ describe('runReleaseTag errors and redaction', () => {
 
   it('never includes token bytes in the result', async () => {
     await withEnv({ GITHUB_TOKEN: undefined, GITHUB_REPOSITORY: undefined, GITHUB_REF_NAME: undefined }, async () => {
-      const runner = createFakeRunner(queueHandler(releaseCaptures('')));
+      const runner = createFakeRunner(queueHandler(withPreflight(releaseCaptures(''))));
       const { fetchFn } = createRecordingFetch(() => {
         throw new Error('fetch must not be called');
       });
@@ -673,5 +692,84 @@ describe('runReleaseTag errors and redaction', () => {
   it('exposes determined and release fixtures without drift', () => {
     expect(determinedFixture().tagVersion).toBe('v1.2.3');
     expect(releaseFixture().prTitle).toBe('chore(release): release candidate v1.2.3');
+  });
+});
+
+describe('runReleaseTag preflight', () => {
+  it('runs determine first, then stops before mutation when the git check fails', async () => {
+    await withEnv(
+      { GITHUB_TOKEN: undefined, GITHUB_REPOSITORY: 'octo/hello', GITHUB_REF_NAME: undefined },
+      async () => {
+        const runner = createFakeRunner(
+          queueHandler([
+            ok('v1.2.2\n'),
+            ok('feat: new thing\n'),
+            failed(128, '', 'git@github.com: Permission denied (publickey).'),
+          ]),
+        );
+        const { calls, fetchFn } = createRecordingFetch(() => {
+          throw new Error('fetch must not be called');
+        });
+        const message = await errorMessage(runReleaseTag({ cwd: FAKE_CWD, baseBranch: 'main', runner, fetchFn }));
+        expect(message).toContain('preflight failed');
+        expect(message).toContain('ssh-agent');
+        expect(runner.captures).toHaveLength(3);
+        expect(runner.captures.map((entry) => entry.args[0])).toEqual(['describe', 'log', 'ls-remote']);
+        expect(runner.runs).toHaveLength(0);
+        expect(calls).toHaveLength(0);
+      },
+    );
+  });
+
+  it('stops before release when the token check fails', async () => {
+    await withEnv({ GITHUB_TOKEN: undefined, GITHUB_REPOSITORY: undefined, GITHUB_REF_NAME: undefined }, async () => {
+      const runner = createFakeRunner((executable, args) => {
+        if (args[0] === 'ls-remote') {
+          return ok('f00dcafe HEAD\n');
+        }
+        throw new Error('stage 2 must not run when preflight fails');
+      });
+      const { fetchFn } = createRecordingFetch(() => makeResponse(401, 'Bad credentials'));
+      const message = await errorMessage(
+        runReleaseTag({
+          cwd: FAKE_CWD,
+          tag: '1.2.3',
+          baseBranch: 'main',
+          githubToken: TOKEN_CANARY,
+          githubRepository: 'octo/hello',
+          runner,
+          fetchFn,
+        }),
+      );
+      expect(message).toContain('preflight failed');
+      expect(message).toContain('status=401');
+      expect(message).not.toContain(TOKEN_CANARY);
+      expect(runner.captures).toHaveLength(1);
+      expect(runner.runs).toHaveLength(0);
+    });
+  });
+
+  it('runs stages with zero preflight invocations when skipPreflight is true', async () => {
+    await withEnv({ GITHUB_TOKEN: undefined, GITHUB_REPOSITORY: undefined, GITHUB_REF_NAME: undefined }, async () => {
+      const runner = createFakeRunner(queueHandler(releaseCaptures('')));
+      const { calls, fetchFn } = createRecordingFetch(() => {
+        throw new Error('fetch must not be called');
+      });
+      const result = await runReleaseTag({
+        cwd: FAKE_CWD,
+        tag: '1.2.3',
+        baseBranch: 'main',
+        only: ['determine', 'release'],
+        skipRelease: true,
+        skipPreflight: true,
+        githubRepository: 'octo/hello',
+        runner,
+        fetchFn,
+      });
+      expect(result.release?.skippedReason).toBe('skipped via skipRelease');
+      expect(runner.captures).toHaveLength(8);
+      expect(runner.captures[0]?.args[0]).toBe('config');
+      expect(calls).toHaveLength(0);
+    });
   });
 });
