@@ -73,6 +73,8 @@ Exports: `resolveReleaseTagPlan`, `runReleaseTag`, `determineNextTag`, `runRelea
 
 Preflight checks Git authentication before release mutations. It preserves `GIT_SSH_COMMAND`, `GIT_SSH`, and Git's `core.sshCommand` (including the deploy key configured by `actions/checkout`). The default `ssh -o BatchMode=yes` is used only when no SSH override is configured; Git terminal prompts are disabled and the probe is bounded by `timeoutMs`.
 
+Token preflight reads the repository metadata and accepts `permissions.push: true`. When that user-permission flag is absent or false, it confirms an App installation token with a read-only `HEAD /installation/repositories?per_page=1` probe. This supports the built-in Actions `GITHUB_TOKEN`; its endpoint-specific write permissions come from the workflow's `permissions` block and are enforced by GitHub when creating, labeling, or merging the PR. Read-only personal tokens still fail preflight.
+
 ## Stage contracts
 
 Stage 1 validates a manual `--tag` by stripping at most one leading `v` and requiring strict numeric `X.Y.Z` with no prerelease or build metadata. This fixes the reference shell `${input_tag//v}`, which strips every `v`. Without `--tag`, the latest tag comes from `git describe --tags --abbrev=0`, must match `vX.Y.Z` (no leading zeros), and the bump comes from `git log <lastTag>..HEAD` with the exact shell regexes: major on `BREAKING CHANGE:`, `feat(...):` with `!`, `fix(...):` with `!`, or any `!:`; else minor on `feat:`; else patch. Any `!:` inside a scope or subject triggers major, matching the shell quirk.
