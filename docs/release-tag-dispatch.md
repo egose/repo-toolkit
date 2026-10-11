@@ -3,6 +3,21 @@
 When creating a new tag using the repository’s default `GITHUB_TOKEN` to perform tasks on behalf of GitHub Actions, events triggered by the `GITHUB_TOKEN` **will not** start a new workflow run.
 To work around this, you can set up an **SSH key** to fetch the repository in the pipeline instead of relying on `GITHUB_TOKEN`.
 
+## Repository workflow
+
+`.github/workflows/release-tag-changelog.yml` builds and runs the local release-tag package with `pnpm release-tag`. It signs the release commit, creates and labels the release-candidate PR, merges it, and deletes the changelog branch after a successful merge. Appended tag signatures are removed from generated PR descriptions.
+
+The workflow uses these repository secrets:
+
+| Secret                    | Purpose                                              |
+| ------------------------- | ---------------------------------------------------- |
+| `SSH_KEY`                 | Git authentication for branch and tag pushes.        |
+| `RELEASE_GPG_PRIVATE_KEY` | ASCII-armored private key for release signing.       |
+| `RELEASE_GPG_PASSPHRASE`  | Key passphrase; may be empty for an unprotected key. |
+| `RELEASE_USER_EMAIL`      | Git author email associated with the signing key.    |
+
+The built-in `GITHUB_TOKEN` is passed through the environment for GitHub API requests. The private key is imported through stdin into a temporary `GNUPGHOME` under `RUNNER_TEMP` with owner-only permissions, then removed from the release command's environment. The signing wrapper passes the passphrase through a file descriptor. The GPG agent is stopped and the temporary keyring is removed when the step exits.
+
 ## Steps
 
 1. **Generate a new OpenSSH key**:
