@@ -423,6 +423,7 @@ describe('release-tag cli stage selection', () => {
         ]),
       );
       const runner = makeRunner([
+        ok(''),
         ok('f00dcafe HEAD\n'),
         ok(''),
         ok(''),
@@ -471,6 +472,7 @@ describe('release-tag cli output formatting', () => {
       delete process.env.GITHUB_REF_NAME;
       try {
         const runner = makeRunner([
+          ok(''),
           ok('f00dcafe HEAD\n'),
           ok(''),
           ok(''),
@@ -528,6 +530,7 @@ describe('release-tag cli output formatting', () => {
     delete process.env.GITHUB_TOKEN;
     try {
       const runner = makeRunner([
+        ok(''),
         ok('f00dcafe HEAD\n'),
         ok(''),
         ok(''),

@@ -73,8 +73,8 @@ function gitGuidance(details: string): string {
     `preflight failed: git ls-remote ${GIT_REMOTE} HEAD did not succeed${details}.`,
     'Stage 2 pushes require non-interactive git authentication:',
     'load your SSH key into an agent (eval "$(ssh-agent -s)" && ssh-add ~/.ssh/<key>)',
-    'or configure an HTTPS credential helper, then verify with',
-    `GIT_SSH_COMMAND="ssh -o BatchMode=yes" git ls-remote ${GIT_REMOTE} HEAD and retry.`,
+    'configure core.sshCommand with your key and -o BatchMode=yes, or configure an HTTPS credential helper,',
+    `then verify with GIT_TERMINAL_PROMPT=0 git ls-remote ${GIT_REMOTE} HEAD and retry.`,
     `See ${GUIDE_PREREQUISITES_URL}. Bypass with --skip-preflight.`,
   ].join(' ');
 }
@@ -91,8 +91,21 @@ function tokenGuidance(repository: string, problem: string): string {
 async function checkGitAuth(plan: ReleaseTagPlan, runner: CapturingProcessRunner): Promise<void> {
   const env: Record<string, string> = { GIT_TERMINAL_PROMPT: '0' };
   const sshCommand = process.env.GIT_SSH_COMMAND;
-  if (sshCommand === undefined || sshCommand.length === 0) {
-    env.GIT_SSH_COMMAND = 'ssh -o BatchMode=yes';
+  const sshExecutable = process.env.GIT_SSH;
+  if (
+    (sshCommand === undefined || sshCommand.length === 0) &&
+    (sshExecutable === undefined || sshExecutable.length === 0)
+  ) {
+    const configuredSsh = await runner.capture(plan.gitExecutable, ['config', '--get', 'core.sshCommand'], {
+      cwd: plan.cwd,
+      timeoutMs: plan.timeoutMs,
+      env: { ...env },
+    });
+    if (!configuredSsh.error && configuredSsh.code === 1) {
+      env.GIT_SSH_COMMAND = 'ssh -o BatchMode=yes';
+    } else if (!configuredSsh.error && configuredSsh.code === 0 && sshCommand === '') {
+      env.GIT_SSH_COMMAND = configuredSsh.stdout.trim();
+    }
   }
   const result = await runner.capture(plan.gitExecutable, ['ls-remote', GIT_REMOTE, 'HEAD'], {
     cwd: plan.cwd,

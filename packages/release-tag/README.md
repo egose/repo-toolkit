@@ -71,6 +71,8 @@ Exports: `resolveReleaseTagPlan`, `runReleaseTag`, `determineNextTag`, `runRelea
 
 `runReleaseTag` resolves the plan, then runs `determine` -> `release` -> `pr` in order. `only` filters which stages run; unselected stages yield `null`. `skipRelease` and `skipPr` still invoke their stage, which returns a skipped result, so callers can distinguish not-selected (`null`) from selected-but-skipped. Downstream stages require their upstream stages to be selected; `only: ['release']` or `only: ['pr']` alone throws. Errors propagate with the token redacted and stop subsequent stages.
 
+Preflight checks Git authentication before release mutations. It preserves `GIT_SSH_COMMAND`, `GIT_SSH`, and Git's `core.sshCommand` (including the deploy key configured by `actions/checkout`). The default `ssh -o BatchMode=yes` is used only when no SSH override is configured; Git terminal prompts are disabled and the probe is bounded by `timeoutMs`.
+
 ## Stage contracts
 
 Stage 1 validates a manual `--tag` by stripping at most one leading `v` and requiring strict numeric `X.Y.Z` with no prerelease or build metadata. This fixes the reference shell `${input_tag//v}`, which strips every `v`. Without `--tag`, the latest tag comes from `git describe --tags --abbrev=0`, must match `vX.Y.Z` (no leading zeros), and the bump comes from `git log <lastTag>..HEAD` with the exact shell regexes: major on `BREAKING CHANGE:`, `feat(...):` with `!`, `fix(...):` with `!`, or any `!:`; else minor on `feat:`; else patch. Any `!:` inside a scope or subject triggers major, matching the shell quirk.

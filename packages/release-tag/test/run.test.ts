@@ -207,7 +207,7 @@ function lsRemoteOk(): ProcessCaptureResult {
 }
 
 function withPreflight(captures: ReadonlyArray<ProcessCaptureResult>): ReadonlyArray<ProcessCaptureResult> {
-  return [lsRemoteOk(), ...captures];
+  return [failed(1, '', ''), lsRemoteOk(), ...captures];
 }
 
 function determinedFixture(): DeterminedTag {
@@ -281,7 +281,8 @@ describe('runReleaseTag end to end', () => {
         expect(result.pullRequest?.url).toBe('https://github.com/octo/hello/pull/42');
         expect(result.pullRequest?.merged).toBe(true);
         expect(result.pullRequest?.branchDeleted).toBe(true);
-        expect(runner.captures[0]?.args).toEqual(['ls-remote', 'origin', 'HEAD']);
+        expect(runner.captures[0]?.args).toEqual(['config', '--get', 'core.sshCommand']);
+        expect(runner.captures[1]?.args).toEqual(['ls-remote', 'origin', 'HEAD']);
         expect(calls).toHaveLength(5);
         expect(calls[0]?.method).toBe('GET');
         expect(calls[0]?.url).toBe('https://api.github.com/repos/octo/hello');
@@ -704,6 +705,7 @@ describe('runReleaseTag preflight', () => {
           queueHandler([
             ok('v1.2.2\n'),
             ok('feat: new thing\n'),
+            failed(1, '', ''),
             failed(128, '', 'git@github.com: Permission denied (publickey).'),
           ]),
         );
@@ -713,8 +715,8 @@ describe('runReleaseTag preflight', () => {
         const message = await errorMessage(runReleaseTag({ cwd: FAKE_CWD, baseBranch: 'main', runner, fetchFn }));
         expect(message).toContain('preflight failed');
         expect(message).toContain('ssh-agent');
-        expect(runner.captures).toHaveLength(3);
-        expect(runner.captures.map((entry) => entry.args[0])).toEqual(['describe', 'log', 'ls-remote']);
+        expect(runner.captures).toHaveLength(4);
+        expect(runner.captures.map((entry) => entry.args[0])).toEqual(['describe', 'log', 'config', 'ls-remote']);
         expect(runner.runs).toHaveLength(0);
         expect(calls).toHaveLength(0);
       },
@@ -724,6 +726,9 @@ describe('runReleaseTag preflight', () => {
   it('stops before release when the token check fails', async () => {
     await withEnv({ GITHUB_TOKEN: undefined, GITHUB_REPOSITORY: undefined, GITHUB_REF_NAME: undefined }, async () => {
       const runner = createFakeRunner((executable, args) => {
+        if (args[0] === 'config' && args[1] === '--get') {
+          return failed(1, '', '');
+        }
         if (args[0] === 'ls-remote') {
           return ok('f00dcafe HEAD\n');
         }
@@ -744,7 +749,7 @@ describe('runReleaseTag preflight', () => {
       expect(message).toContain('preflight failed');
       expect(message).toContain('status=401');
       expect(message).not.toContain(TOKEN_CANARY);
-      expect(runner.captures).toHaveLength(1);
+      expect(runner.captures).toHaveLength(2);
       expect(runner.runs).toHaveLength(0);
     });
   });
