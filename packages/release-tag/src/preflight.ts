@@ -117,7 +117,7 @@ async function checkGitAuth(plan: ReleaseTagPlan, runner: CapturingProcessRunner
   }
 }
 
-function parsePushPermission(text: string, status: number, repository: string, token: string): void {
+function hasPushPermission(text: string, status: number, repository: string, token: string): boolean {
   let parsed: unknown;
   try {
     parsed = JSON.parse(text);
@@ -138,9 +138,7 @@ function parsePushPermission(text: string, status: number, repository: string, t
     );
   }
   const permissions = (parsed as Record<string, unknown>).permissions;
-  if (!isPlainObject(permissions) || (permissions as Record<string, unknown>).push !== true) {
-    throw new Error(redactSensitiveValues(tokenGuidance(repository, 'lacks push permission'), [token]));
-  }
+  return isPlainObject(permissions) && (permissions as Record<string, unknown>).push === true;
 }
 
 export async function runPreflight(input: RunPreflightInput): Promise<PreflightResult> {
@@ -208,7 +206,30 @@ export async function runPreflight(input: RunPreflightInput): Promise<PreflightR
           ),
         );
       }
-      parsePushPermission(result.text, result.status, repository, resolved);
+      if (!hasPushPermission(result.text, result.status, repository, resolved)) {
+        const installation = await sendGitHubRequest(
+          fetchFn,
+          `${apiBase}/installation/repositories?per_page=1`,
+          'HEAD',
+          createGitHubHeaders(resolved),
+          undefined,
+          plan.timeoutMs,
+          responseLimit,
+          'HEAD /installation/repositories',
+          resolved,
+        );
+        if (installation.status < 200 || installation.status >= 300) {
+          throw new Error(
+            redactSensitiveValues(
+              tokenGuidance(
+                repository,
+                `lacks push permission and HEAD /installation/repositories could not confirm an installation token (status=${installation.status}): ${truncateChars(installation.text)}`,
+              ),
+              [resolved],
+            ),
+          );
+        }
+      }
       token = passed('token');
     }
   }

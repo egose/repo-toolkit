@@ -226,7 +226,7 @@ function releaseFixture(): ReleaseBranchResult {
 }
 
 describe('runReleaseTag end to end', () => {
-  it('runs manual tag through release and pr with merge and delete', async () => {
+  it('runs manual tag through release and pr with merge and delete using an installation token', async () => {
     await withTempDir(async (dir) => {
       const releasePath = join(dir, 'fake-release-it');
       await writeFile(releasePath, '#!/usr/bin/env node\n', 'utf8');
@@ -235,15 +235,18 @@ describe('runReleaseTag end to end', () => {
         const runner = createFakeRunner(queueHandler(withPreflight(releaseCaptures('Release 1.2.3 notes\n'))));
         const { calls, fetchFn } = createRecordingFetch((call, index) => {
           if (index === 0) {
-            return makeResponse(200, { permissions: { push: true } });
+            return makeResponse(200, { permissions: { push: false, pull: false } });
           }
           if (index === 1) {
-            return makeResponse(201, { number: 42, html_url: 'https://github.com/octo/hello/pull/42' });
+            return makeResponse(200, '');
           }
           if (index === 2) {
-            return makeResponse(200, {});
+            return makeResponse(201, { number: 42, html_url: 'https://github.com/octo/hello/pull/42' });
           }
           if (index === 3) {
+            return makeResponse(200, {});
+          }
+          if (index === 4) {
             return makeResponse(200, { merged: true });
           }
           return makeResponse(204, '');
@@ -283,20 +286,22 @@ describe('runReleaseTag end to end', () => {
         expect(result.pullRequest?.branchDeleted).toBe(true);
         expect(runner.captures[0]?.args).toEqual(['config', '--get', 'core.sshCommand']);
         expect(runner.captures[1]?.args).toEqual(['ls-remote', 'origin', 'HEAD']);
-        expect(calls).toHaveLength(5);
+        expect(calls).toHaveLength(6);
         expect(calls[0]?.method).toBe('GET');
         expect(calls[0]?.url).toBe('https://api.github.com/repos/octo/hello');
-        expect(calls[1]?.method).toBe('POST');
-        expect(calls[1]?.url).toBe('https://api.github.com/repos/octo/hello/pulls');
-        const createBody = JSON.parse(calls[1]?.body ?? '{}') as Record<string, unknown>;
+        expect(calls[1]?.method).toBe('HEAD');
+        expect(calls[1]?.url).toBe('https://api.github.com/installation/repositories?per_page=1');
+        expect(calls[2]?.method).toBe('POST');
+        expect(calls[2]?.url).toBe('https://api.github.com/repos/octo/hello/pulls');
+        const createBody = JSON.parse(calls[2]?.body ?? '{}') as Record<string, unknown>;
         expect(createBody.head).toBe('changelog/1.2.3');
         expect(createBody.base).toBe('main');
         expect(createBody.title).toBe('chore(release): release candidate v1.2.3');
         expect(typeof createBody.body).toBe('string');
         expect(String(createBody.body)).toContain('Release 1.2.3 notes');
-        const labelsBody = JSON.parse(calls[2]?.body ?? '{}') as Record<string, unknown>;
+        const labelsBody = JSON.parse(calls[3]?.body ?? '{}') as Record<string, unknown>;
         expect(labelsBody.labels).toEqual(['changelog', 'release-candidate', 'v1.2.3']);
-        expect(headerValue(calls[1]?.headers ?? {}, 'authorization')).toBe(`Bearer ${TOKEN_CANARY}`);
+        expect(headerValue(calls[2]?.headers ?? {}, 'authorization')).toBe(`Bearer ${TOKEN_CANARY}`);
         expect(JSON.stringify(result)).not.toContain(TOKEN_CANARY);
         expect(JSON.stringify(result.plan)).not.toContain(TOKEN_CANARY);
       });
