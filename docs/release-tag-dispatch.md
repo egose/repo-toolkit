@@ -9,6 +9,8 @@ To work around this, you can set up an **SSH key** to fetch the repository in th
 
 The Git preflight preserves the `core.sshCommand` configured by `actions/checkout`, so the same deploy key is used for the authentication probe and subsequent pushes.
 
+The built-in `GITHUB_TOKEN` is an App installation token. Repository metadata may omit `permissions` or report `permissions.push: false` for this token even when the workflow grants write access. Preflight confirms the token type with a read-only installation probe; the workflow grants `contents: write`, `issues: write`, and `pull-requests: write` for the release requests.
+
 The workflow uses these repository secrets:
 
 | Secret                    | Purpose                                              |

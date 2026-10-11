@@ -366,6 +366,39 @@ describe('runPreflight git check', () => {
 });
 
 describe('runPreflight token check', () => {
+  it.each([
+    {
+      name: 'missing user permissions',
+      body: { full_name: 'octo/hello' },
+      apiBase: 'https://api.github.com',
+    },
+    {
+      name: 'false user permissions',
+      body: { full_name: 'octo/hello', permissions: { admin: false, push: false, pull: false } },
+      apiBase: 'https://ghe.example.com/api/v3',
+    },
+  ])('recognizes installation tokens with $name', async ({ body, apiBase }) => {
+    await withEnv(cleanEnv(), async () => {
+      const plan = makePlan({ githubRepository: 'octo/hello', githubApiUrl: apiBase, only: ['determine', 'pr'] });
+      const runner = createFakeRunner(() => {
+        throw new Error('git must not be probed when release is unselected');
+      });
+      const { calls, fetchFn } = createRecordingFetch((index) =>
+        index === 0 ? makeResponse(200, body) : makeResponse(200, ''),
+      );
+      const result = await runPreflight({ plan, githubToken: TOKEN_CANARY, runner, fetchFn });
+      expect(result.token).toEqual({ name: 'token', skipped: false, skippedReason: null });
+      expect(calls).toHaveLength(2);
+      expect(calls[0]?.url).toBe(`${apiBase}/repos/octo/hello`);
+      expect(calls[1]?.url).toBe(`${apiBase}/installation/repositories?per_page=1`);
+      expect(calls[1]?.method).toBe('HEAD');
+      expect(calls[1]?.body).toBeUndefined();
+      expect(calls[1]?.hasSignal).toBe(true);
+      expect(calls[1]?.headers['Authorization']).toBe(`Bearer ${TOKEN_CANARY}`);
+      expect(JSON.stringify(result)).not.toContain(TOKEN_CANARY);
+    });
+  });
+
   it('passes on 200 with push permission and sends an exact GET request', async () => {
     await withEnv({ ...cleanEnv(), GITHUB_TOKEN: ENV_TOKEN }, async () => {
       const plan = makePlan({ githubRepository: 'octo/hello', only: ['determine', 'pr'] });
@@ -413,20 +446,44 @@ describe('runPreflight token check', () => {
     });
   });
 
-  it('throws permission guidance when push is false', async () => {
-    await withEnv({ ...cleanEnv(), GITHUB_TOKEN: TOKEN_CANARY }, async () => {
+  it('rejects a read-only personal token even inside GitHub Actions', async () => {
+    await withEnv(
+      { ...cleanEnv(), GITHUB_TOKEN: TOKEN_CANARY, GITHUB_ACTIONS: 'true', GITHUB_ACTION: 'release' },
+      async () => {
+        const plan = makePlan({ githubRepository: 'octo/hello', only: ['determine', 'pr'] });
+        const runner = createFakeRunner(() => {
+          throw new Error('git must not be probed when release is unselected');
+        });
+        const { calls, fetchFn } = createRecordingFetch((index) =>
+          index === 0
+            ? makeResponse(200, { permissions: { push: false, pull: true } })
+            : makeResponse(403, 'Resource not accessible by personal access token'),
+        );
+        const message = await errorMessage(runPreflight({ plan, runner, fetchFn }));
+        expect(message).toContain('preflight failed');
+        expect(message).toContain('lacks push permission');
+        expect(message).toContain('octo/hello');
+        expect(message).toContain('Contents (read/write)');
+        expect(message).toContain('--skip-preflight');
+        expect(calls).toHaveLength(2);
+        expect(calls[1]?.method).toBe('HEAD');
+        expect(message).not.toContain(TOKEN_CANARY);
+      },
+    );
+  });
+
+  it.each([401, 403, 404, 500])('rejects a failed installation probe (status=%s) with redaction', async (status) => {
+    await withEnv(cleanEnv(), async () => {
       const plan = makePlan({ githubRepository: 'octo/hello', only: ['determine', 'pr'] });
-      const runner = createFakeRunner(() => {
-        throw new Error('git must not be probed when release is unselected');
-      });
-      const { fetchFn } = createRecordingFetch(() => makeResponse(200, { permissions: { push: false, pull: true } }));
-      const message = await errorMessage(runPreflight({ plan, runner, fetchFn }));
+      const { calls, fetchFn } = createRecordingFetch((index) =>
+        index === 0 ? makeResponse(200, { full_name: 'octo/hello' }) : makeResponse(status, `denied ${TOKEN_CANARY}`),
+      );
+      const message = await errorMessage(runPreflight({ plan, githubToken: TOKEN_CANARY, fetchFn }));
       expect(message).toContain('preflight failed');
-      expect(message).toContain('lacks push permission');
-      expect(message).toContain('octo/hello');
-      expect(message).toContain('Contents (read/write)');
-      expect(message).toContain('--skip-preflight');
+      expect(message).toContain('HEAD /installation/repositories');
+      expect(message).toContain(`status=${status}`);
       expect(message).not.toContain(TOKEN_CANARY);
+      expect(calls).toHaveLength(2);
     });
   });
 
