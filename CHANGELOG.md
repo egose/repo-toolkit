@@ -1,3 +1,20 @@
+## [0.44.0](https://github.com/egose/repo-toolkit/compare/v0.43.0...v0.44.0) (2026-10-11)
+
+### Features
+
+* pass GitHub token to tool setup action ([775b81b](https://github.com/egose/repo-toolkit/commit/775b81bcc107eb8a59c4c28031f1ce3176018ba0))
+* **release-tag:** accept installation tokens during preflight ([2ef46be](https://github.com/egose/repo-toolkit/commit/2ef46be64c90efa6a75c3487c3ffb2673354438e))
+* **release-tag:** strip signed tag annotations from release outputs ([2fbd94a](https://github.com/egose/repo-toolkit/commit/2fbd94ae2b4647e3a4914e76726bbec2cbbcb0fe))
+
+### Bug Fixes
+
+* **release-tag:** preserve configured ssh authentication during preflight ([c25ab24](https://github.com/egose/repo-toolkit/commit/c25ab2467d1a45ae8908655429e66fc83d74f954))
+
+### Documentation
+
+* **release-tag:** document installation-token release-tag preflight ([9ceaf42](https://github.com/egose/repo-toolkit/commit/9ceaf42c2997979f6350b557785fd1b8b22e87e4))
+* **release-tag:** document ssh auth behavior for release-tag preflight ([561bc5e](https://github.com/egose/repo-toolkit/commit/561bc5ee4e254ea24a916e2978a88d3af4cd259d))
+
 ## [0.43.0](https://github.com/egose/repo-toolkit/compare/v0.42.0...v0.43.0) (2026-10-11)
 
 ### Features
