@@ -2,7 +2,7 @@
 
 Created: 2026-10-09 09:16:44 (local timestamp)
 
-Status: complete; RELTAG-01 through RELTAG-06 all completed via sequential sub-agents with V1/V2/V3/V4 green.
+Status: complete; RELTAG-01 through RELTAG-07 all completed with V1/V2/V3 green (RELTAG-07: fail-fast preflight follow-up from live-fire session).
 
 ## Objective And Scope
 
@@ -439,6 +439,67 @@ Completion evidence:
 - Result: PASS — all RELTAG-01 through RELTAG-05 acceptance criteria attested; response-cap follow-up resolved as min(plan.maxOutputBytes, 1MiB); no blocking defects
 - Follow-up: RELTAG-07 GPG import and GHES live contract remain deferred non-goals; website Docusaurus build not run per AGENTS.md separation (frontmatter verified)
 
+### Task RELTAG-07: Fail-Fast Preflight For Git Auth And Token Permissions
+
+Status: completed
+
+Priority: P1
+
+Suggested agent: implement directly (single cohesive change across shared modules)
+
+Dependencies: RELTAG-06
+
+Primary ownership:
+
+- `packages/release-tag/src/github.ts` (new; shared REST helpers extracted from `pull-request.ts`)
+- `packages/release-tag/src/preflight.ts` (new; `runPreflight` + result types)
+- `packages/release-tag/src/plan.ts` (`skipPreflight` option/plan field + validation)
+- `packages/release-tag/src/run.ts` (hoisted prefix check, determine-first ordering, preflight wiring)
+- `packages/release-tag/src/cli.ts` (`--skip-preflight` flag, help, plan summary)
+- `packages/release-tag/src/index.ts` (additive exports only)
+- `packages/release-tag/src/pull-request.ts` (import shared helpers; behavior identical)
+- `packages/release-tag/test/preflight.test.ts` (new), `test/run.test.ts`, `test/cli.test.ts`, `test/plan.test.ts` (queue shifts + new cases)
+- `packages/release-tag/README.md` (one table row), `website/docs/packages/release-tag.md` (Prerequisites + Troubleshooting)
+
+Finding:
+
+Live-fire session (2026-10-10, `egose/krypton` 0.1.0): with a passphrase-protected SSH key and no agent, stage 2's pushes prompted 3 times, then release-it's `Git push` stalled on a 4th prompt hidden under its spinner — after the pre-release remote branch was already pushed. Recovery was manual (checkout main, delete local tag, ssh-agent, re-run). Separately, `gh` label commands 404'd on insufficient token permissions while PR creation (read-only) worked, and `./token.txt` permissions were untested because stage 3 never ran. No preflight exists: auth failures surface mid-run after remote mutation.
+
+References:
+
+- `packages/release-tag/src/release.ts:227-241` (branch pushed before release-it runs)
+- `packages/release-tag/src/run.ts:48-86` (current determine/release/pr wiring, inline prefix guards)
+- `packages/release-tag/src/pull-request.ts:94-156,178-232,276-306` (token/repo resolution, skip order, REST helpers to extract)
+- `packages/publish-package/src/runner.ts:3-17` (`ProcessRunOptions.env` merge semantics)
+
+Implementation requirements:
+
+1. New `src/github.ts` with verbatim-extracted `resolveGitHubToken`, `resolveOwnerRepo`, `resolveFetchFn`, `sendGitHubRequest`, `createGitHubHeaders`, `truncateChars`, plus `GITHUB_API_VERSION`, `USER_AGENT`, `MAX_RESPONSE_BYTES_CAP`. `pull-request.ts` imports them; stage-3 behavior byte-identical (existing tests must pass unmodified except where noted below).
+2. New `src/preflight.ts` exporting `runPreflight({ plan, githubToken?, runner?, fetchFn? }): Promise<{ git, token }>` where each check is `{ name, skipped, skippedReason }`. Never invoke when `plan.skipPreflight` or `plan.dryRun` (defense-in-depth; `run.ts` also returns before preflight on dry-run).
+3. Git check runs only when `only` includes `release`: `capture(gitExecutable, ['ls-remote', 'origin', 'HEAD'], { cwd, timeoutMs, env })` with `env` always setting `GIT_TERMINAL_PROMPT=0` and setting `GIT_SSH_COMMAND="ssh -o BatchMode=yes"` only when `process.env.GIT_SSH_COMMAND` is unset/empty (never clobber custom SSH commands; document the tradeoff). Non-zero exit or spawn error throws a guidance error naming ssh-agent setup, the BatchMode verify command, the guide URL, and `--skip-preflight`. Include a truncated (2048-char) stderr tail, redacted for URL credentials.
+4. Token check runs only when `only` includes `pr` and `!skipPr`: resolve token (explicit > file > env); when absent return skipped (`github token not available`) with zero fetch, preserving the stage-3 skip contract. When present, `GET /repos/{owner}/{repo}` with stage-3 headers/timeout/response-cap; require 2xx and `.permissions.push === true`. Non-2xx (including permission-404s), missing push, and malformed JSON throw guidance errors naming the required Contents/PRs/Issues write permissions, the 404-means-permission note, the guide URL, and `--skip-preflight`. Token canary absent from all messages.
+5. `run.ts`: hoist prefix validation before any I/O with the exact existing messages (`Stage 'release' requires stage 'determine' to be selected (use --only determine,release).`, `Stage 'pr' requires stages 'determine' and 'release' to be selected (use --only determine,release,pr).`), remove the now-dead inline guards, then order determine -> preflight -> release -> pr. `skipPreflight` flows from options through plan. Preflight errors propagate through the existing redaction wrapper. `plan.ts`: `skipPreflight?: boolean` option/plan field, default false, strict boolean validation. `cli.ts`: `--skip-preflight` boolean flag, `planSummary` entry, help text line.
+6. Update shifted queues: every `runReleaseTag` test running the release stage prepends one capture `ok` (preflight ls-remote); every test reaching stage 3 with a token makes index 0 the GET-repo 200 `{permissions:{push:true}}` response. `cli.test.ts` scripts likewise. Extend `plan.test.ts` (default + non-boolean), `cli.test.ts` (flag mapping + help contains). No changes to determine/release/pull-request stage tests.
+
+Acceptance criteria:
+
+- Fake-runner tests assert ls-remote args/env (BatchMode default, custom `GIT_SSH_COMMAND` respected, `GIT_TERMINAL_PROMPT=0` always), success and both failure modes with guidance substrings (`preflight failed`, `ssh-agent`, `BatchMode`).
+- Fake-fetch tests cover 200+push / 200+no-push / 401 / 403 / 404 / malformed / oversized / missing-repo (identical message to stage 3) with redaction and token-canary absence.
+- Skip matrix: `skipPreflight`, dry-run, determine-only, `skipPr`, and token-absent all yield zero preflight invocations with correct skipped reasons; empty token file still throws without fallback.
+- Orchestrator: preflight failure stops stages with `determined` populated and `release`/`pullRequest` null; `skipPreflight: true` runs all stages with zero preflight invocations; prefix-rule messages byte-identical with zero captures.
+- Docs: website Prerequisites (ssh-agent setup + persistence options, deploy-key tradeoff, HTTPS helper, PAT creation + permission table) and Troubleshooting (both preflight failures, stuck-at-push recovery, gh-vs-REST label quirk) agree with implementation; README gains the `--skip-preflight` row.
+
+Verification: V1, V2, V3.
+
+Completion evidence:
+
+- Changed: `packages/release-tag/src/github.ts` (new, verbatim extraction), `src/preflight.ts` (new), `src/plan.ts` (skipPreflight), `src/run.ts` (hoisted prefix check, determine -> preflight -> release -> pr), `src/cli.ts` (--skip-preflight, summary, help), `src/index.ts` (additive), `src/pull-request.ts` (shared imports, behavior identical), `test/preflight.test.ts` (new, 25 tests), `test/run.test.ts` (+3, queue shifts), `test/cli.test.ts` (queue shifts + flag/help), `test/plan.test.ts` (+2 assertions), `website/docs/packages/release-tag.md` (Prerequisites, How-stages, config table, Troubleshooting), `packages/release-tag/README.md` (--skip-preflight row)
+- Verified: `pnpm lint` pass, `pnpm typecheck` pass, `pnpm --filter @repo-toolkit/release-tag test` 197/197 pass (169 prior + 28 new), `pnpm --filter @repo-toolkit/publish-packages test` 85/85 pass; live `runPreflight` demos against real git (BatchMode Permission-denied guidance, no prompt/hang) and real api.github.com (401 permission guidance with redaction)
+- Result: preflight fails fast before mutation with actionable guidance; missing-token skip contract preserved; prefix messages byte-identical; --skip-preflight escape hatch kept per maintainer non-veto
+- Follow-up: none; maintainer live checklist (agent persistence, weak-token message) remains a manual runbook item, not CI-able
+- Numbering note: RELTAG-06 evidence referenced a hypothetical future "RELTAG-07 GPG import"; since RELTAG-07 is now the preflight task, that deferred GPG-import item is renumbered RELTAG-08 (still deferred, no section yet), as is the GHES live-contract item (RELTAG-09, still deferred)
+- Final regression: root `pnpm build` + full serial `pnpm test` pass with exit 0 (all workspace packages, incl. release-tag 197/197 and secret-sync 643/643)
+
 ## Dependency And Parallelization Guidance
 
 - RELTAG-01 must land first; it owns the scaffold, plan contract, and workspace membership that all later tasks import.
@@ -458,6 +519,7 @@ Recommended agent allocation for sequential execution (user-requested one-by-one
 | 4     | RELTAG-04 | pr-agent       | RELTAG-01, RELTAG-02            |
 | 5     | RELTAG-05 | cli-agent      | RELTAG-02, RELTAG-03, RELTAG-04 |
 | 6     | RELTAG-06 | review-agent   | RELTAG-05                       |
+| 7     | RELTAG-07 | implementer    | RELTAG-06                       |
 
 ## Deferred Decisions Requiring Maintainer Input
 

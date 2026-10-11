@@ -41,6 +41,7 @@ repo-toolkit-release-tag --dry-run --json
 | `--delete-merged-branch`             | Delete the branch after a successful merge (requires `--auto-merge-pr`)      |
 | `--skip-release`                     | Create and push the branch but skip the release command                      |
 | `--skip-pr`                          | Skip pull request creation                                                   |
+| `--skip-preflight`                   | Skip the fail-fast git-auth and token-permission checks                      |
 | `--only <stage>[,...]`               | Run only `determine`, `release`, `pr` (repeatable, comma-split)              |
 | `--dry-run`                          | Print the plan summary without processes or network; `determined` is null    |
 | `--json`                             | Print a single JSON object with schema version, plan, and stage results      |

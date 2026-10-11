@@ -14,3 +14,4 @@ export {
   type PullRequestResult,
 } from './pull-request';
 export { runReleaseTag, type ReleaseTagResult } from './run';
+export { runPreflight, type PreflightCheckResult, type PreflightResult, type RunPreflightInput } from './preflight';

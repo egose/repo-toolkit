@@ -38,6 +38,7 @@ export interface ReleaseTagOptions {
   autoMergePr?: boolean;
   deleteMergedBranch?: boolean;
   skipPr?: boolean;
+  skipPreflight?: boolean;
   dryRun?: boolean;
   only?: ReadonlyArray<string>;
   timeoutMs?: number;
@@ -65,6 +66,7 @@ export interface ReleaseTagPlan {
   autoMergePr: boolean;
   deleteMergedBranch: boolean;
   skipPr: boolean;
+  skipPreflight: boolean;
   tokenSource: ReleaseTagTokenSource;
   tokenAvailable: boolean;
   dryRun: boolean;
@@ -308,6 +310,7 @@ export function resolveReleaseTagPlan(options: ReleaseTagOptions = {}): ReleaseT
     autoMergePr: booleanOrDefault(options.autoMergePr, 'autoMergePr', false),
     deleteMergedBranch: booleanOrDefault(options.deleteMergedBranch, 'deleteMergedBranch', false),
     skipPr: booleanOrDefault(options.skipPr, 'skipPr', false),
+    skipPreflight: booleanOrDefault(options.skipPreflight, 'skipPreflight', false),
     tokenSource,
     tokenAvailable: tokenSource !== 'none',
     dryRun: booleanOrDefault(options.dryRun, 'dryRun', false),
