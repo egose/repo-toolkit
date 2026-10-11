@@ -13,6 +13,7 @@ import {
 } from './github';
 import type { ReleaseTagPlan } from './plan';
 import type { ReleaseBranchResult } from './release';
+import { stripTagSignature } from './tag-message';
 
 export interface PullRequestResult {
   skipped: boolean;
@@ -35,7 +36,7 @@ export function formatPullRequestBody(tagMessage: string): string {
   if (typeof tagMessage !== 'string') {
     throw new Error('tagMessage must be a string');
   }
-  return `### Release Candidate Details\n\n${tagMessage}\n\n---\n\n> This PR was automatically generated.`;
+  return `### Release Candidate Details\n\n${stripTagSignature(tagMessage)}\n\n---\n\n> This PR was automatically generated.`;
 }
 
 function skippedResult(reason: string): PullRequestResult {

@@ -13,6 +13,7 @@ import {
 
 import type { DeterminedTag } from './determine';
 import type { ReleaseTagPlan } from './plan';
+import { stripTagSignature } from './tag-message';
 
 export interface ReleaseBranchResult {
   baseBranch: string;
@@ -291,7 +292,7 @@ export async function runReleaseBranch(input: RunReleaseBranchInput): Promise<Re
     releaseBranch,
     releaseRan,
     skippedReason,
-    tagMessage: stripTrailingNewlines(tagResult.stdout),
+    tagMessage: stripTrailingNewlines(stripTagSignature(tagResult.stdout)),
     prTitle,
   };
 }

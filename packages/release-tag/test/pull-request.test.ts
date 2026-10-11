@@ -170,6 +170,56 @@ describe('formatPullRequestBody', () => {
     );
   });
 
+  it.each(['PGP SIGNATURE', 'PGP MESSAGE', 'SSH SIGNATURE', 'SIGNED MESSAGE'])(
+    'omits appended %s armor while preserving the annotation',
+    (signatureType) => {
+      const tagMessage = [
+        'krypton',
+        'release candidate',
+        '',
+        '* feat: add secret previews',
+        '',
+        `-----BEGIN ${signatureType}-----`,
+        'Version: test fixture',
+        '',
+        'signature-payload-fixture',
+        '=TEST',
+        `-----END ${signatureType}-----`,
+        '',
+      ].join('\n');
+      expect(formatPullRequestBody(tagMessage)).toBe(
+        '### Release Candidate Details\n\nkrypton\nrelease candidate\n\n* feat: add secret previews\n\n---\n\n> This PR was automatically generated.',
+      );
+    },
+  );
+
+  it('omits a CRLF signature without changing the annotation line endings', () => {
+    const tagMessage =
+      'krypton\r\n\r\n* fix: validate secrets\r\n\r\n-----BEGIN PGP SIGNATURE-----\r\nsignature-payload-fixture\r\n-----END PGP SIGNATURE-----\r\n';
+    expect(formatPullRequestBody(tagMessage)).toBe(
+      '### Release Candidate Details\n\nkrypton\r\n\r\n* fix: validate secrets\n\n---\n\n> This PR was automatically generated.',
+    );
+  });
+
+  it('omits a signature-only tag message', () => {
+    const tagMessage = '-----BEGIN PGP SIGNATURE-----\nsignature-payload-fixture\n-----END PGP SIGNATURE-----\n';
+    expect(formatPullRequestBody(tagMessage)).toBe(
+      '### Release Candidate Details\n\n\n\n---\n\n> This PR was automatically generated.',
+    );
+  });
+
+  it('omits truncated signature data', () => {
+    expect(formatPullRequestBody('notes\n\n-----BEGIN PGP SIGNATURE-----\nsignature-payload-fixture')).toBe(
+      '### Release Candidate Details\n\nnotes\n\n---\n\n> This PR was automatically generated.',
+    );
+  });
+
+  it('preserves inline mentions of signature markers', () => {
+    expect(formatPullRequestBody('Explain the `-----BEGIN PGP SIGNATURE-----` marker.')).toBe(
+      '### Release Candidate Details\n\nExplain the `-----BEGIN PGP SIGNATURE-----` marker.\n\n---\n\n> This PR was automatically generated.',
+    );
+  });
+
   it('rejects non-string input', () => {
     expect(() => formatPullRequestBody(42 as unknown as string)).toThrowError('tagMessage must be a string');
   });
@@ -438,6 +488,26 @@ describe('createReleasePullRequest repository resolution', () => {
 });
 
 describe('createReleasePullRequest success paths', () => {
+  it('excludes a raw tag signature from the GitHub request body', async () => {
+    const { calls, fetchFn } = createRecordingFetch(() =>
+      makeResponse(201, { number: 42, html_url: 'https://github.com/octo/hello/pull/42' }),
+    );
+    const tagMessage = `${RELEASE.tagMessage}\n\n-----BEGIN PGP SIGNATURE-----\nsignature-payload-fixture\n-----END PGP SIGNATURE-----\n`;
+    await createReleasePullRequest({
+      plan: makePlan(),
+      determined: DETERMINED,
+      release: { ...RELEASE, tagMessage },
+      githubToken: TOKEN_CANARY,
+      fetchFn,
+    });
+    const payload = JSON.parse(calls[0].body ?? '{}') as Record<string, unknown>;
+    expect(payload.body).toBe(
+      '### Release Candidate Details\n\nRelease 1.2.3 notes\n\n---\n\n> This PR was automatically generated.',
+    );
+    expect(calls[0].body).not.toContain('PGP SIGNATURE');
+    expect(calls[0].body).not.toContain('signature-payload-fixture');
+  });
+
   it('creates a PR and applies labels with exact shapes and headers', async () => {
     await withEnv({ GITHUB_TOKEN: undefined, GITHUB_REPOSITORY: undefined }, async () => {
       const plan = makePlan();
