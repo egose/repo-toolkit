@@ -33,13 +33,55 @@ jobs:
       uses: ./.github/actions/setup-npm
 
     - name: Create Release Tag
-      uses: egose/actions/release-tag@ea10b34d7e00b9c23b5699d39993b53c17141dea
-      with:
-        tag: ${{ github.event.inputs.tag }}
-        github-token: ${{ secrets.GITHUB_TOKEN }}
-        auto-merge-pr: 'true'
-        delete-merged-branch: 'true'
-        sign-commit: 'true'
-        gpg-private-key: ${{ secrets.RELEASE_GPG_PRIVATE_KEY }}
-        gpg-passphrase: ${{ secrets.RELEASE_GPG_PASSPHRASE }}
-        git-user-email: ${{ secrets.RELEASE_USER_EMAIL }}
+      shell: bash
+      env:
+        RELEASE_TAG_INPUT: ${{ inputs.tag }}
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        GPG_PRIVATE_KEY: ${{ secrets.RELEASE_GPG_PRIVATE_KEY }}
+        GPG_PASSPHRASE: ${{ secrets.RELEASE_GPG_PASSPHRASE }}
+        GIT_USER_EMAIL: ${{ secrets.RELEASE_USER_EMAIL }}
+      run: |
+        set -euo pipefail
+        if [[ "$GITHUB_REF" != refs/heads/* ]]; then
+          printf '%s\n' '::error::This workflow must be run on a branch, not a tag.' >&2
+          exit 1
+        fi
+        : "${GPG_PRIVATE_KEY:?RELEASE_GPG_PRIVATE_KEY is required}"
+        : "${GIT_USER_EMAIL:?RELEASE_USER_EMAIL is required}"
+
+        umask 077
+        GNUPGHOME="$(mktemp -d "$RUNNER_TEMP/release-tag-gpg.XXXXXX")"
+        export GNUPGHOME
+        cleanup() {
+          gpgconf --kill gpg-agent || true
+          rm -rf -- "$GNUPGHOME"
+        }
+        trap cleanup EXIT
+
+        printf '%s' "$GPG_PRIVATE_KEY" | gpg --batch --import
+        unset GPG_PRIVATE_KEY
+        signing_key="$(gpg --batch --with-colons --fingerprint --list-secret-keys | awk -F: '$1 == "fpr" && !key { key = $10 } END { print key }')"
+        : "${signing_key:?No GPG secret key was imported}"
+
+        cat > "$GNUPGHOME/gpg-wrapper" <<'EOF'
+        #!/usr/bin/env bash
+        set -euo pipefail
+        exec gpg --batch --pinentry-mode loopback --passphrase-fd 3 "$@" 3<<<"${GPG_PASSPHRASE:-}"
+        EOF
+        chmod 700 "$GNUPGHOME/gpg-wrapper"
+        git config --local gpg.format openpgp
+        git config --local gpg.program "$GNUPGHOME/gpg-wrapper"
+        git config --local user.signingkey "$signing_key"
+
+        args=(
+          "--base-branch=$GITHUB_REF_NAME"
+          "--github-repository=$GITHUB_REPOSITORY"
+          "--git-user-email=$GIT_USER_EMAIL"
+          --auto-merge-pr
+          --delete-merged-branch
+          --sign-commit
+        )
+        if [[ -n "$RELEASE_TAG_INPUT" ]]; then
+          args+=("--tag=$RELEASE_TAG_INPUT")
+        fi
+        pnpm release-tag -- "${args[@]}"
