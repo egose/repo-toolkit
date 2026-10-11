@@ -174,7 +174,7 @@ async function errorMessage(promise: Promise<unknown>): Promise<string> {
 }
 
 function cleanEnv(): Record<string, undefined> {
-  return { GITHUB_TOKEN: undefined, GITHUB_REPOSITORY: undefined, GIT_SSH_COMMAND: undefined };
+  return { GITHUB_TOKEN: undefined, GITHUB_REPOSITORY: undefined, GIT_SSH_COMMAND: undefined, GIT_SSH: undefined };
 }
 
 function makePlan(overrides: Record<string, unknown> = {}): ReleaseTagPlan {
@@ -199,18 +199,27 @@ describe('runPreflight git check', () => {
   it('probes ls-remote with explicit args, cwd, timeout, and non-interactive env', async () => {
     await withEnv(cleanEnv(), async () => {
       const plan = makePlan({ githubRepository: 'octo/hello', skipPr: true });
-      const runner = createFakeRunner(() => ok('f00dcafe HEAD\n'));
+      const runner = createFakeRunner((_executable, args) =>
+        args[0] === 'config' ? failed(1, '', '') : ok('f00dcafe HEAD\n'),
+      );
       const { calls, fetchFn } = createRecordingFetch(() => {
         throw new Error('fetch must not be called');
       });
       const result = await runPreflight({ plan, runner, fetchFn });
       expect(result.git).toEqual({ name: 'git', skipped: false, skippedReason: null });
-      expect(runner.calls).toHaveLength(1);
+      expect(runner.calls).toHaveLength(2);
       expect(runner.calls[0]?.executable).toBe('git');
-      expect(runner.calls[0]?.args).toEqual(['ls-remote', 'origin', 'HEAD']);
-      expect(runner.calls[0]?.options.cwd).toBe(FAKE_CWD);
-      expect(runner.calls[0]?.options.timeoutMs).toBe(1234);
-      expect(runner.calls[0]?.options.env).toEqual({
+      expect(runner.calls[0]?.args).toEqual(['config', '--get', 'core.sshCommand']);
+      expect(runner.calls[0]?.options).toEqual({
+        cwd: FAKE_CWD,
+        timeoutMs: 1234,
+        env: { GIT_TERMINAL_PROMPT: '0' },
+      });
+      expect(runner.calls[1]?.executable).toBe('git');
+      expect(runner.calls[1]?.args).toEqual(['ls-remote', 'origin', 'HEAD']);
+      expect(runner.calls[1]?.options.cwd).toBe(FAKE_CWD);
+      expect(runner.calls[1]?.options.timeoutMs).toBe(1234);
+      expect(runner.calls[1]?.options.env).toEqual({
         GIT_TERMINAL_PROMPT: '0',
         GIT_SSH_COMMAND: 'ssh -o BatchMode=yes',
       });
@@ -227,19 +236,55 @@ describe('runPreflight git check', () => {
       });
       const result = await runPreflight({ plan, runner, fetchFn });
       expect(result.git.skipped).toBe(false);
+      expect(runner.calls).toHaveLength(1);
+      expect(runner.calls[0]?.args).toEqual(['ls-remote', 'origin', 'HEAD']);
       expect(runner.calls[0]?.options.env).toEqual({ GIT_TERMINAL_PROMPT: '0' });
     });
+  });
+
+  it('respects a preset GIT_SSH executable instead of overriding it', async () => {
+    await withEnv({ ...cleanEnv(), GIT_SSH: '/keys/custom-ssh' }, async () => {
+      const plan = makePlan({ skipPr: true });
+      const runner = createFakeRunner(() => ok('f00dcafe HEAD\n'));
+      const result = await runPreflight({ plan, runner });
+      expect(result.git.skipped).toBe(false);
+      expect(runner.calls).toHaveLength(1);
+      expect(runner.calls[0]?.args).toEqual(['ls-remote', 'origin', 'HEAD']);
+      expect(runner.calls[0]?.options.env).toEqual({ GIT_TERMINAL_PROMPT: '0' });
+    });
+  });
+
+  it('preserves core.sshCommand when GIT_SSH_COMMAND is unset or empty', async () => {
+    for (const sshCommand of [undefined, '']) {
+      await withEnv({ ...cleanEnv(), GIT_SSH_COMMAND: sshCommand }, async () => {
+        const configured = 'ssh -i "/keys/checkout key" -o StrictHostKeyChecking=yes';
+        const plan = makePlan({ skipPr: true });
+        const runner = createFakeRunner((_executable, args) =>
+          args[0] === 'config' ? ok(`${configured}\n`) : ok('f00dcafe HEAD\n'),
+        );
+        const result = await runPreflight({ plan, runner });
+        expect(result.git.skipped).toBe(false);
+        expect(runner.calls).toHaveLength(2);
+        expect(runner.calls[0]?.args).toEqual(['config', '--get', 'core.sshCommand']);
+        expect(runner.calls[1]?.args).toEqual(['ls-remote', 'origin', 'HEAD']);
+        expect(runner.calls[1]?.options.env).toEqual(
+          sshCommand === '' ? { GIT_TERMINAL_PROMPT: '0', GIT_SSH_COMMAND: configured } : { GIT_TERMINAL_PROMPT: '0' },
+        );
+      });
+    }
   });
 
   it('treats an empty GIT_SSH_COMMAND as unset', async () => {
     await withEnv({ ...cleanEnv(), GIT_SSH_COMMAND: '' }, async () => {
       const plan = makePlan({ githubRepository: 'octo/hello', skipPr: true });
-      const runner = createFakeRunner(() => ok('f00dcafe HEAD\n'));
+      const runner = createFakeRunner((_executable, args) =>
+        args[0] === 'config' ? failed(1, '', '') : ok('f00dcafe HEAD\n'),
+      );
       const { fetchFn } = createRecordingFetch(() => {
         throw new Error('fetch must not be called');
       });
       await runPreflight({ plan, runner, fetchFn });
-      expect(runner.calls[0]?.options.env).toEqual({
+      expect(runner.calls[1]?.options.env).toEqual({
         GIT_TERMINAL_PROMPT: '0',
         GIT_SSH_COMMAND: 'ssh -o BatchMode=yes',
       });
@@ -314,7 +359,7 @@ describe('runPreflight git check', () => {
       });
       const result = await runPreflight({ plan, runner: explicit, fetchFn });
       expect(result.git.skipped).toBe(false);
-      expect(explicit.calls).toHaveLength(1);
+      expect(explicit.calls).toHaveLength(2);
       expect(planRunner.calls).toHaveLength(0);
     });
   });
@@ -572,7 +617,7 @@ describe('runPreflight skips', () => {
       const result = await runPreflight({ plan, runner, fetchFn });
       expect(result.git).toEqual({ name: 'git', skipped: false, skippedReason: null });
       expect(result.token).toEqual({ name: 'token', skipped: true, skippedReason: 'stage not selected' });
-      expect(runner.calls).toHaveLength(1);
+      expect(runner.calls).toHaveLength(2);
       expect(calls).toHaveLength(0);
     });
   });
