@@ -1,24 +1,31 @@
-import { access } from 'node:fs/promises';
+import { access, stat } from 'node:fs/promises';
 import { constants } from 'node:fs';
 import { resolve as resolvePath } from 'node:path';
 
-import {
-  defaultProcessRunner,
-  isCapturingProcessRunner,
-  isPlainObject,
-  redactSensitiveValues,
-  type CapturingProcessRunner,
-  type ProcessCaptureResult,
-} from '@repo-toolkit/publish-package';
+import { isPlainObject, type CapturingProcessRunner } from '@repo-toolkit/publish-package';
 
+import { stageCredentialContext, type CredentialContext } from './credentials';
 import type { DeterminedTag } from './determine';
+import { safeError, safeMetadata } from './diagnostics';
 import type { ReleaseTagPlan } from './plan';
+import { captureCommand, resolveProcessRunner } from './process';
+import { captureGit, inspectReleasePreparation, pushReleaseBranch, verifyReleasedHead } from './release-git';
 import { stripTagSignature } from './tag-message';
+import {
+  BRANCH_GUARD_MESSAGE,
+  assertBaseBranch,
+  assertDetermined,
+  assertDistinctBranches,
+  assertPlanIdentity,
+  resolveBaseBranchInput,
+  resolveReleaseBranchName,
+} from './validation';
 
 export interface ReleaseBranchResult {
   baseBranch: string;
   releaseBranch: string;
   releaseRan: boolean;
+  releasedHead?: string;
   skippedReason: string | null;
   tagMessage: string;
   prTitle: string;
@@ -27,42 +34,11 @@ export interface ReleaseBranchResult {
 export interface RunReleaseBranchInput {
   plan: ReleaseTagPlan;
   determined: DeterminedTag;
+  githubToken?: string;
   runner?: CapturingProcessRunner;
 }
 
-const BRANCH_GUARD_MESSAGE = 'This workflow must be run on a branch, not a tag.';
-const TAG_SHAPE_PATTERN = /^v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
-const WHITESPACE_PATTERN = /\s/;
-const STDERR_TAIL_MAX_CHARS = 2048;
 const VERSION_PROBE_TIMEOUT_MS = 10000;
-
-function truncateTail(text: string): string {
-  if (text.length <= STDERR_TAIL_MAX_CHARS) {
-    return text;
-  }
-  return `...[truncated] ${text.slice(text.length - STDERR_TAIL_MAX_CHARS)}`;
-}
-
-function failureDetails(result: ProcessCaptureResult): string {
-  const parts: string[] = [];
-  if (result.error) {
-    parts.push(`error: ${result.error.message}`);
-  }
-  const tail = result.stderr.trim();
-  if (tail.length > 0) {
-    parts.push(`stderr: ${truncateTail(tail)}`);
-  }
-  return parts.length === 0 ? '' : ` (${parts.join('; ')})`;
-}
-
-function firstLine(text: string): string {
-  const trimmed = text.trim();
-  if (trimmed.length === 0) {
-    return '';
-  }
-  const lines = trimmed.split('\n');
-  return lines[0].trim();
-}
 
 function stripTrailingNewlines(text: string): string {
   let end = text.length;
@@ -77,222 +53,218 @@ function stripTrailingNewlines(text: string): string {
   return text.slice(0, end);
 }
 
-function resolveReleaseBranchName(plan: ReleaseTagPlan, determined: DeterminedTag): string {
-  const branch = plan.releaseBranch === undefined ? `changelog/${determined.version}` : plan.releaseBranch;
-  if (branch.includes('\0')) {
-    throw new Error('releaseBranch must not contain NUL bytes');
-  }
-  if (branch.length === 0) {
-    throw new Error('releaseBranch must be a non-empty string');
-  }
-  if (WHITESPACE_PATTERN.test(branch)) {
-    throw new Error('releaseBranch must not contain whitespace');
-  }
-  if (branch === 'HEAD') {
-    throw new Error('releaseBranch must not be HEAD');
-  }
-  return branch;
-}
-
-function assertBranchGuard(value: string): void {
-  if (value.length === 0 || value === 'HEAD' || value.startsWith('refs/tags/') || TAG_SHAPE_PATTERN.test(value)) {
-    throw new Error(BRANCH_GUARD_MESSAGE);
-  }
-}
-
-function explicitOrEnvBaseBranch(plan: ReleaseTagPlan): string | undefined {
-  if (plan.baseBranch !== undefined) {
-    return plan.baseBranch;
-  }
-  const refName = process.env.GITHUB_REF_NAME;
-  if (refName !== undefined && refName.trim().length > 0) {
-    return refName.trim();
-  }
-  return undefined;
-}
-
-async function resolveBaseBranch(plan: ReleaseTagPlan, runner: CapturingProcessRunner): Promise<string> {
-  const direct = explicitOrEnvBaseBranch(plan);
+async function resolveBaseBranch(
+  plan: ReleaseTagPlan,
+  runner: CapturingProcessRunner | undefined,
+  context: CredentialContext,
+): Promise<string> {
+  const direct = resolveBaseBranchInput(plan, process.env);
   if (direct !== undefined) {
-    assertBranchGuard(direct);
     return direct;
   }
-  const result = await runner.capture(plan.gitExecutable, ['symbolic-ref', '--short', 'HEAD'], {
-    cwd: plan.cwd,
-    timeoutMs: plan.timeoutMs,
+  const result = await captureCommand(runner, plan, plan.gitExecutable, ['symbolic-ref', '--short', 'HEAD'], {
+    ...context.diagnostics(plan),
+    label: 'git symbolic-ref --short HEAD',
+    failureMessage: BRANCH_GUARD_MESSAGE,
   });
-  if (result.error || result.code !== 0) {
-    throw new Error(redactSensitiveValues(`${BRANCH_GUARD_MESSAGE}${failureDetails(result)}`, []));
-  }
-  const branch = firstLine(result.stdout);
-  assertBranchGuard(branch);
+  const branch = result.stdout.replace(/\r?\n$/, '');
+  assertBaseBranch(branch);
   return branch;
 }
 
-function throwGitFailure(label: string, result: ProcessCaptureResult): never {
-  throw new Error(redactSensitiveValues(`${label} failed${failureDetails(result)}`, []));
-}
-
-async function captureOrThrow(
-  runner: CapturingProcessRunner,
+async function assertReleaseCommandAvailable(
   plan: ReleaseTagPlan,
-  args: ReadonlyArray<string>,
-  label: string,
-): Promise<ProcessCaptureResult> {
-  const result = await runner.capture(plan.gitExecutable, args, {
-    cwd: plan.cwd,
-    timeoutMs: plan.timeoutMs,
-  });
-  if (result.error || result.code !== 0) {
-    throwGitFailure(label, result);
+  runner: CapturingProcessRunner | undefined,
+  context: CredentialContext,
+): Promise<void> {
+  const guidance = `Release command ${JSON.stringify(plan.releaseCommand)} is not available. Install an executable release command or configure releaseCommand; use skipRelease only for deliberate branch preparation.`;
+  if (plan.releaseCommand.includes('/')) {
+    const resolved = resolvePath(plan.cwd, plan.releaseCommand);
+    try {
+      if (!(await stat(resolved)).isFile()) {
+        throw new Error('not a regular executable file');
+      }
+      await access(resolved, constants.X_OK);
+    } catch {
+      throw new Error(guidance);
+    }
+    return;
   }
-  return result;
-}
-
-async function isPathReleaseCommandAvailable(plan: ReleaseTagPlan): Promise<boolean> {
-  const resolved = resolvePath(plan.cwd, plan.releaseCommand);
-  try {
-    await access(resolved, constants.X_OK);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-async function isBareReleaseCommandAvailable(plan: ReleaseTagPlan, runner: CapturingProcessRunner): Promise<boolean> {
   const timeoutMs = Math.min(plan.timeoutMs, VERSION_PROBE_TIMEOUT_MS);
-  const result = await runner.capture(plan.releaseCommand, ['--version'], {
-    cwd: plan.cwd,
+  await captureCommand(runner, plan, plan.releaseCommand, ['--version'], {
+    ...context.diagnostics(plan),
+    label: 'release command --version probe',
+    failureMessage: `${guidance} --version probe failed`,
     timeoutMs,
+    includeStdout: true,
   });
-  return !result.error && result.code === 0;
 }
 
-function assertDetermined(value: unknown): asserts value is DeterminedTag {
-  if (!isPlainObject(value)) {
-    throw new Error('determined must be an object');
-  }
-  const candidate = value as Partial<DeterminedTag>;
-  if (typeof candidate.version !== 'string' || candidate.version.length === 0) {
-    throw new Error('determined.version must be a non-empty string');
-  }
-  if (typeof candidate.tagVersion !== 'string' || candidate.tagVersion.length === 0) {
-    throw new Error('determined.tagVersion must be a non-empty string');
-  }
-}
-
-export async function runReleaseBranch(input: RunReleaseBranchInput): Promise<ReleaseBranchResult> {
+export async function resolveReleaseBranchRefsWithContext(
+  input: RunReleaseBranchInput,
+  context: CredentialContext,
+): Promise<Pick<ReleaseBranchResult, 'baseBranch' | 'releaseBranch'>> {
   if (!isPlainObject(input)) {
     throw new Error('input must be an object');
   }
   if (!isPlainObject(input.plan)) {
     throw new Error('plan must be an object');
   }
-  assertDetermined(input.determined);
   const plan = input.plan;
+  assertPlanIdentity(plan, process.env);
+  assertDetermined(input.determined, plan);
   const determined = input.determined;
   const releaseBranch = resolveReleaseBranchName(plan, determined);
-  const prTitle = `chore(release): release candidate ${determined.tagVersion}`;
+  const direct = resolveBaseBranchInput(plan, process.env);
+  if (direct !== undefined) {
+    assertDistinctBranches(direct, releaseBranch);
+    return { baseBranch: direct, releaseBranch };
+  }
+  if (plan.dryRun || !plan.only.includes('release')) {
+    throw new Error(
+      `baseBranch could not be resolved in ${plan.dryRun ? 'dry-run' : 'an unselected release stage'} without git: provide explicit baseBranch or GITHUB_REF_NAME`,
+    );
+  }
 
-  if (plan.dryRun) {
-    const baseBranch = explicitOrEnvBaseBranch(plan);
-    if (baseBranch === undefined) {
-      throw new Error(
-        'baseBranch could not be resolved in dry-run without git: provide explicit baseBranch or GITHUB_REF_NAME',
-      );
-    }
-    assertBranchGuard(baseBranch);
+  const runner = resolveProcessRunner(plan, input.runner);
+  const baseBranch = await resolveBaseBranch(plan, runner, context);
+  assertDistinctBranches(baseBranch, releaseBranch);
+  return { baseBranch, releaseBranch };
+}
+
+export async function runReleaseBranchWithContext(
+  input: RunReleaseBranchInput,
+  context: CredentialContext,
+): Promise<ReleaseBranchResult> {
+  const { baseBranch, releaseBranch } = await resolveReleaseBranchRefsWithContext(input, context);
+  const plan = input.plan;
+  const determined = input.determined;
+  const prTitle = `chore(release): release candidate ${determined.tagVersion}`;
+  if (plan.dryRun || !plan.only.includes('release')) {
     return {
       baseBranch,
       releaseBranch,
       releaseRan: false,
-      skippedReason: 'dry-run',
+      skippedReason: plan.dryRun ? 'dry-run' : 'stage not selected',
       tagMessage: '',
       prTitle,
     };
   }
 
-  const runner = input.runner ?? plan.runner ?? defaultProcessRunner;
-  if (!isCapturingProcessRunner(runner)) {
-    throw new Error('runner must be a CapturingProcessRunner with a capture function');
+  await context.prepare(plan);
+  const runner = resolveProcessRunner(plan, input.runner);
+  const diagnostics = context.diagnostics(plan);
+
+  if (!plan.skipRelease) {
+    await assertReleaseCommandAvailable(plan, runner, context);
   }
-
-  const baseBranch = await resolveBaseBranch(plan, runner);
-
-  await captureOrThrow(runner, plan, ['config', 'user.name', plan.gitUserName], 'git config user.name');
-  await captureOrThrow(runner, plan, ['config', 'user.email', plan.gitUserEmail], 'git config user.email');
-  if (plan.signCommit) {
-    await captureOrThrow(runner, plan, ['config', 'commit.gpgsign', 'true'], 'git config commit.gpgsign');
-  }
-
-  await runner.capture(plan.gitExecutable, ['push', 'origin', '--delete', releaseBranch], {
-    cwd: plan.cwd,
-    timeoutMs: plan.timeoutMs,
-  });
-  await runner.capture(plan.gitExecutable, ['branch', '-D', releaseBranch], {
-    cwd: plan.cwd,
-    timeoutMs: plan.timeoutMs,
-  });
-  await captureOrThrow(runner, plan, ['checkout', '-b', releaseBranch], `git checkout -b ${releaseBranch}`);
-  await captureOrThrow(
+  const preparation = await inspectReleasePreparation(
     runner,
     plan,
-    ['push', '--set-upstream', 'origin', releaseBranch],
-    `git push --set-upstream origin ${releaseBranch}`,
+    baseBranch,
+    releaseBranch,
+    determined.tagVersion,
+    diagnostics,
   );
 
-  let releaseRan = false;
-  let skippedReason: string | null = null;
-  if (plan.skipRelease) {
-    skippedReason = 'skipped via skipRelease';
-  } else if (!plan.only.includes('release')) {
-    skippedReason = 'stage not selected';
-  } else {
-    const available = plan.releaseCommand.includes('/')
-      ? await isPathReleaseCommandAvailable(plan)
-      : await isBareReleaseCommandAvailable(plan, runner);
-    if (!available) {
-      skippedReason = `release command not available: ${plan.releaseCommand}`;
-    } else {
-      const releaseArgs: string[] = [determined.version, '--ci', ...plan.releaseArgs];
-      if (plan.signCommit) {
-        releaseArgs.push('--git.commitArgs=--gpg-sign');
-      }
-      const startedAt = Date.now();
-      try {
-        await runner.run(plan.releaseCommand, releaseArgs, { cwd: plan.cwd });
-      } catch (error) {
-        const durationMs = Date.now() - startedAt;
-        const message = error instanceof Error ? error.message : String(error);
-        const wrapped = new Error(
-          redactSensitiveValues(
-            `release command ${JSON.stringify(plan.releaseCommand)} failed after ${durationMs}ms: ${message}`,
-            [],
-          ),
-        ) as Error & { cause?: unknown };
-        wrapped.cause = error;
-        throw wrapped;
-      }
-      releaseRan = true;
-    }
+  await captureGit(
+    runner,
+    plan,
+    ['config', 'user.name', plan.gitUserName],
+    'git config user.name',
+    undefined,
+    diagnostics,
+  );
+  await captureGit(
+    runner,
+    plan,
+    ['config', 'user.email', plan.gitUserEmail],
+    'git config user.email',
+    undefined,
+    diagnostics,
+  );
+  if (plan.signCommit) {
+    await captureGit(
+      runner,
+      plan,
+      ['config', 'commit.gpgsign', 'true'],
+      'git config commit.gpgsign',
+      undefined,
+      diagnostics,
+    );
   }
 
-  await captureOrThrow(runner, plan, ['push', 'origin', releaseBranch], `git push origin ${releaseBranch}`);
-  const tagResult = await runner.capture(
-    plan.gitExecutable,
-    ['tag', '-l', '--format=%(contents)', determined.tagVersion],
-    { cwd: plan.cwd, timeoutMs: plan.timeoutMs },
+  await captureGit(
+    runner,
+    plan,
+    ['checkout', plan.resetReleaseBranch === true ? '-B' : '-b', releaseBranch, preparation.sourceCommit],
+    undefined,
+    undefined,
+    diagnostics,
   );
-  if (tagResult.error || tagResult.code !== 0) {
-    throwGitFailure(`git tag -l --format=%(contents) ${determined.tagVersion}`, tagResult);
+  await pushReleaseBranch(
+    runner,
+    plan,
+    releaseBranch,
+    `refs/heads/${releaseBranch}`,
+    preparation.remoteReleaseCommit,
+    true,
+    diagnostics,
+  );
+
+  let releasedHead: string | undefined;
+  if (!plan.skipRelease) {
+    const releaseArgs: string[] = [determined.version, '--ci', ...plan.releaseArgs];
+    if (plan.signCommit) {
+      releaseArgs.push('--git.commitArgs=--gpg-sign');
+    }
+    await captureCommand(runner, plan, plan.releaseCommand, releaseArgs, {
+      ...diagnostics,
+      label: `release command ${JSON.stringify(plan.releaseCommand)}`,
+      includeStdout: true,
+    });
+    releasedHead = await verifyReleasedHead(runner, plan, releaseBranch, determined.tagVersion, diagnostics);
+  }
+
+  const tagResult = await captureGit(
+    runner,
+    plan,
+    ['tag', '-l', '--format=%(contents)', determined.tagVersion],
+    undefined,
+    undefined,
+    diagnostics,
+  );
+  if (releasedHead !== undefined) {
+    await pushReleaseBranch(runner, plan, releaseBranch, releasedHead, preparation.sourceCommit, false, diagnostics);
   }
 
   return {
     baseBranch,
     releaseBranch,
-    releaseRan,
-    skippedReason,
+    releaseRan: releasedHead !== undefined,
+    ...(releasedHead === undefined ? {} : { releasedHead }),
+    skippedReason: plan.skipRelease ? 'skipped via skipRelease' : null,
     tagMessage: stripTrailingNewlines(stripTagSignature(tagResult.stdout)),
     prTitle,
   };
+}
+
+export async function resolveReleaseBranchRefs(
+  input: RunReleaseBranchInput,
+): Promise<Pick<ReleaseBranchResult, 'baseBranch' | 'releaseBranch'>> {
+  const context = stageCredentialContext(input);
+  try {
+    return safeMetadata(await resolveReleaseBranchRefsWithContext(input, context), context.secrets());
+  } catch (error) {
+    throw safeError(error, context.secrets());
+  }
+}
+
+export async function runReleaseBranch(input: RunReleaseBranchInput): Promise<ReleaseBranchResult> {
+  const context = stageCredentialContext(input);
+  try {
+    return safeMetadata(await runReleaseBranchWithContext(input, context), context.secrets());
+  } catch (error) {
+    throw safeError(error, context.secrets());
+  }
 }

@@ -1,10 +1,24 @@
-import { isPlainObject, redactSensitiveValues } from '@repo-toolkit/publish-package';
+import { isPlainObject } from '@repo-toolkit/publish-package';
 
-import { determineNextTag, type DeterminedTag } from './determine';
-import { resolveReleaseTagPlan, type ReleaseTagOptions, type ReleaseTagPlan, type ReleaseTagStage } from './plan';
-import { runPreflight } from './preflight';
-import { runReleaseBranch, type ReleaseBranchResult } from './release';
-import { createReleasePullRequest, type PullRequestResult } from './pull-request';
+import { createCredentialContext } from './credentials';
+import { determineNextTagWithContext, type DeterminedTag } from './determine';
+import { readProperty, safeError, safeMetadata } from './diagnostics';
+import {
+  cloneStagePlan,
+  resolveReleaseTagPlan,
+  snapshotReleaseTagPlan,
+  type ReleaseTagOptions,
+  type ReleaseTagPlan,
+} from './plan';
+import { runPreflightWithContext } from './preflight';
+import { resolveReleaseBranchRefsWithContext, runReleaseBranchWithContext, type ReleaseBranchResult } from './release';
+import {
+  createReleasePullRequestWithContext,
+  preparePullRequestWithContext,
+  type PullRequestResult,
+} from './pull-request';
+import { assertRecoveryInputs, readReleaseRecoveryWithContext } from './recovery';
+import { assertPlanIdentity } from './validation';
 
 export interface ReleaseTagResult {
   plan: ReleaseTagPlan;
@@ -13,80 +27,87 @@ export interface ReleaseTagResult {
   pullRequest: PullRequestResult | null;
 }
 
-function collectSecrets(options: ReleaseTagOptions, plan: ReleaseTagPlan): string[] {
-  const secrets: string[] = [];
-  if (typeof options.githubToken === 'string' && options.githubToken.length > 0) {
-    secrets.push(options.githubToken);
+function assertStageSelection(plan: ReleaseTagPlan): void {
+  const only = plan.only;
+  if (only.length === 1 && only[0] === 'pr') {
+    assertRecoveryInputs(plan);
+    return;
   }
-  const envValue = process.env[plan.githubTokenEnv];
-  if (typeof envValue === 'string' && envValue.length > 0 && secrets.indexOf(envValue) < 0) {
-    secrets.push(envValue);
-  }
-  return secrets;
-}
-
-function redactError(error: unknown, secrets: ReadonlyArray<string>): unknown {
-  const message = error instanceof Error ? error.message : String(error);
-  const redacted = redactSensitiveValues(message, secrets);
-  if (error instanceof Error && redacted === message) {
-    return error;
-  }
-  const wrapped = new Error(redacted) as Error & { cause?: unknown };
-  wrapped.cause = error;
-  if (error instanceof Error && error.name !== 'Error') {
-    wrapped.name = error.name;
-  }
-  return wrapped;
-}
-
-function resolveExplicitToken(options: ReleaseTagOptions): string | undefined {
-  if (typeof options.githubToken === 'string' && options.githubToken.length > 0) {
-    return options.githubToken;
-  }
-  return undefined;
-}
-
-function assertStagePrefix(only: ReadonlyArray<ReleaseTagStage>): void {
   if (only.includes('release') && !only.includes('determine')) {
     throw new Error("Stage 'release' requires stage 'determine' to be selected (use --only determine,release).");
   }
   if (only.includes('pr') && (!only.includes('determine') || !only.includes('release'))) {
     throw new Error(
-      "Stage 'pr' requires stages 'determine' and 'release' to be selected (use --only determine,release,pr).",
+      "Stage 'pr' requires stages 'determine' and 'release' to be selected, or PR-only recovery with explicit tag and baseBranch (use --only determine,release,pr or --only pr --tag X.Y.Z --base-branch main).",
     );
   }
 }
 
 export async function runReleaseTag(options: ReleaseTagOptions = {}): Promise<ReleaseTagResult> {
-  if (!isPlainObject(options)) {
-    throw new Error('options must be an object');
-  }
-  const plan = resolveReleaseTagPlan(options);
-  const secrets = collectSecrets(options, plan);
-  if (plan.dryRun) {
-    return { plan, determined: null, release: null, pullRequest: null };
-  }
+  const context = createCredentialContext(
+    readProperty(options, 'githubToken'),
+    readProperty(options, 'githubTokenEnv'),
+  );
   try {
-    assertStagePrefix(plan.only);
-    const explicitToken = resolveExplicitToken(options);
+    if (!isPlainObject(options)) {
+      throw new Error('options must be an object');
+    }
+    const plan = resolveReleaseTagPlan(options);
+    assertStageSelection(plan);
+    if (plan.dryRun) {
+      assertPlanIdentity(plan, process.env);
+      return {
+        plan: snapshotReleaseTagPlan(plan, context.secrets()),
+        determined: null,
+        release: null,
+        pullRequest: null,
+      };
+    }
     let determined: DeterminedTag | null = null;
     let release: ReleaseBranchResult | null = null;
     let pullRequest: PullRequestResult | null = null;
-    if (plan.only.includes('determine')) {
-      determined = await determineNextTag({ plan });
+    if (plan.only.length === 1 && plan.only[0] === 'pr') {
+      assertPlanIdentity(plan, process.env);
+      const preparation = await preparePullRequestWithContext(plan, context);
+      if ('skipped' in preparation) {
+        pullRequest = preparation.skipped;
+      } else {
+        const recovery = await readReleaseRecoveryWithContext(plan, context);
+        await runPreflightWithContext({ plan }, context);
+        pullRequest = await createReleasePullRequestWithContext(
+          { plan, determined: recovery.determined, release: recovery.release },
+          context,
+          recovery,
+        );
+      }
+    } else if (plan.only.includes('determine')) {
+      determined = await determineNextTagWithContext({ plan }, context);
     }
-    await runPreflight({ plan, githubToken: explicitToken });
-    if (determined !== null && plan.only.includes('release')) {
-      release = await runReleaseBranch({ plan, determined });
+    if (determined !== null && !determined.noChanges) {
+      assertPlanIdentity(plan, process.env);
+      const stagePlan = plan.only.includes('release')
+        ? cloneStagePlan(
+            plan,
+            await resolveReleaseBranchRefsWithContext({ plan, determined }, context),
+            context.secrets(),
+          )
+        : plan;
+      await runPreflightWithContext({ plan: stagePlan }, context);
+      if (determined !== null && plan.only.includes('release')) {
+        release = await runReleaseBranchWithContext({ plan: stagePlan, determined }, context);
+      }
+      if (determined !== null && release !== null && plan.only.includes('pr')) {
+        pullRequest = await createReleasePullRequestWithContext({ plan: stagePlan, determined, release }, context);
+      }
     }
-    if (determined !== null && release !== null && plan.only.includes('pr')) {
-      pullRequest =
-        explicitToken === undefined
-          ? await createReleasePullRequest({ plan, determined, release })
-          : await createReleasePullRequest({ plan, determined, release, githubToken: explicitToken });
-    }
-    return { plan, determined, release, pullRequest };
+    const secrets = context.secrets();
+    return {
+      plan: snapshotReleaseTagPlan(plan, secrets),
+      determined: determined === null ? null : safeMetadata(determined, secrets),
+      release: release === null ? null : safeMetadata(release, secrets),
+      pullRequest: pullRequest === null ? null : safeMetadata(pullRequest, secrets),
+    };
   } catch (error) {
-    throw redactError(error, secrets);
+    throw safeError(error, context.secrets());
   }
 }
