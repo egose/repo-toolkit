@@ -12,11 +12,20 @@ import {
   type ReleaseBranchResult,
   type ReleaseTagPlan,
 } from '../src/index';
+import {
+  makeResponse,
+  pullRequestData,
+  successfulGitHubResponse,
+  type PullRequestFixtureOptions,
+} from './http-fixture';
+import { RELEASED_HEAD } from './release-fixture';
 
 const TOKEN_CANARY = 'pr-canary-token-3f8a2c-do-not-leak';
 const FILE_TOKEN = 'pr-file-token-7b1e9d-do-not-leak';
 const ENV_TOKEN = 'pr-env-token-5c4a8f-do-not-leak';
 const EXPLICIT_TOKEN = 'pr-explicit-token-9d2b6e-do-not-leak';
+const LOOKUP_URL =
+  'https://api.github.com/repos/octo/hello/pulls?state=all&head=octo%3Achangelog%2F1.2.3&base=main&per_page=2&page=1';
 
 const DETERMINED: DeterminedTag = {
   version: '1.2.3',
@@ -24,6 +33,7 @@ const DETERMINED: DeterminedTag = {
   bump: 'minor',
   lastTag: 'v1.2.2',
   manual: false,
+  noChanges: false,
 };
 
 const RELEASE: ReleaseBranchResult = {
@@ -41,16 +51,6 @@ interface RecordedFetch {
   headers: Record<string, string>;
   body: string | undefined;
   hasSignal: boolean;
-}
-
-function makeResponse(status: number, body: unknown): Response {
-  const text = typeof body === 'string' ? body : JSON.stringify(body);
-  return {
-    ok: status >= 200 && status < 300,
-    status,
-    headers: new Headers(),
-    text: async () => text,
-  } as Response;
 }
 
 function normalizeHeaders(input: unknown): Record<string, string> {
@@ -97,6 +97,10 @@ function makePlan(options?: Parameters<typeof resolveReleaseTagPlan>[0]): Releas
     githubRepository: 'octo/hello',
     ...(options ?? {}),
   });
+}
+
+function successfulFetch(options: PullRequestFixtureOptions = {}) {
+  return createRecordingFetch((call) => successfulGitHubResponse(call.url, { method: call.method }, options));
 }
 
 function withEnv(vars: Record<string, string | undefined>, fn: () => Promise<void>): Promise<void>;
@@ -243,6 +247,7 @@ describe('createReleasePullRequest skips', () => {
         skippedReason: 'skipped via skipPr',
         number: null,
         url: null,
+        reused: false,
         merged: false,
         branchDeleted: false,
       });
@@ -312,9 +317,7 @@ describe('createReleasePullRequest token resolution', () => {
       await writeFile(tokenFile, `${FILE_TOKEN}\n`, 'utf8');
       await withEnv({ GITHUB_TOKEN: ENV_TOKEN }, async () => {
         const plan = makePlan({ cwd: dir, githubTokenFile: 'token.txt' });
-        const { calls, fetchFn } = createRecordingFetch(() =>
-          makeResponse(201, { number: 7, html_url: 'https://github.com/octo/hello/pull/7' }),
-        );
+        const { calls, fetchFn } = successfulFetch({ number: 7 });
         const result = await createReleasePullRequest({
           plan,
           determined: DETERMINED,
@@ -335,9 +338,7 @@ describe('createReleasePullRequest token resolution', () => {
       await writeFile(tokenFile, `  ${FILE_TOKEN}  \n`, 'utf8');
       await withEnv({ GITHUB_TOKEN: ENV_TOKEN }, async () => {
         const plan = makePlan({ cwd: dir, githubTokenFile: 'token.txt' });
-        const { calls, fetchFn } = createRecordingFetch(() =>
-          makeResponse(201, { number: 8, html_url: 'https://github.com/octo/hello/pull/8' }),
-        );
+        const { calls, fetchFn } = successfulFetch({ number: 8 });
         const result = await createReleasePullRequest({ plan, determined: DETERMINED, release: RELEASE, fetchFn });
         expect(result.skipped).toBe(false);
         expect(headerValue(calls[0].headers, 'authorization')).toBe(`Bearer ${FILE_TOKEN}`);
@@ -349,9 +350,7 @@ describe('createReleasePullRequest token resolution', () => {
   it('uses env token when no explicit or file token exists', async () => {
     await withEnv({ GITHUB_TOKEN: ENV_TOKEN }, async () => {
       const plan = makePlan();
-      const { calls, fetchFn } = createRecordingFetch(() =>
-        makeResponse(201, { number: 9, html_url: 'https://github.com/octo/hello/pull/9' }),
-      );
+      const { calls, fetchFn } = successfulFetch({ number: 9 });
       const result = await createReleasePullRequest({ plan, determined: DETERMINED, release: RELEASE, fetchFn });
       expect(result.skipped).toBe(false);
       expect(headerValue(calls[0].headers, 'authorization')).toBe(`Bearer ${ENV_TOKEN}`);
@@ -362,9 +361,7 @@ describe('createReleasePullRequest token resolution', () => {
   it('uses a custom token env name', async () => {
     await withEnv({ GITHUB_TOKEN: undefined, CUSTOM_PR_TOKEN: ENV_TOKEN }, async () => {
       const plan = makePlan({ githubTokenEnv: 'CUSTOM_PR_TOKEN' });
-      const { calls, fetchFn } = createRecordingFetch(() =>
-        makeResponse(201, { number: 10, html_url: 'https://github.com/octo/hello/pull/10' }),
-      );
+      const { calls, fetchFn } = successfulFetch({ number: 10 });
       const result = await createReleasePullRequest({ plan, determined: DETERMINED, release: RELEASE, fetchFn });
       expect(result.skipped).toBe(false);
       expect(headerValue(calls[0].headers, 'authorization')).toBe(`Bearer ${ENV_TOKEN}`);
@@ -421,9 +418,7 @@ describe('createReleasePullRequest repository resolution', () => {
   it('prefers explicit repository over GITHUB_REPOSITORY', async () => {
     await withEnv({ GITHUB_REPOSITORY: 'env-owner/env-repo' }, async () => {
       const plan = makePlan({ githubRepository: 'octo/hello' });
-      const { calls, fetchFn } = createRecordingFetch(() =>
-        makeResponse(201, { number: 11, html_url: 'https://github.com/octo/hello/pull/11' }),
-      );
+      const { calls, fetchFn } = successfulFetch({ number: 11 });
       await createReleasePullRequest({
         plan,
         determined: DETERMINED,
@@ -431,16 +426,14 @@ describe('createReleasePullRequest repository resolution', () => {
         githubToken: TOKEN_CANARY,
         fetchFn,
       });
-      expect(calls[0].url).toBe('https://api.github.com/repos/octo/hello/pulls');
+      expect(calls[0].url).toBe(LOOKUP_URL);
     });
   });
 
   it('uses GITHUB_REPOSITORY when no explicit repository exists', async () => {
     await withEnv({ GITHUB_TOKEN: undefined, GITHUB_REPOSITORY: 'env-owner/env-repo' }, async () => {
       const plan = resolveReleaseTagPlan({});
-      const { calls, fetchFn } = createRecordingFetch(() =>
-        makeResponse(201, { number: 12, html_url: 'https://github.com/env-owner/env-repo/pull/12' }),
-      );
+      const { calls, fetchFn } = successfulFetch({ number: 12, repository: 'env-owner/env-repo' });
       await createReleasePullRequest({
         plan,
         determined: DETERMINED,
@@ -448,7 +441,9 @@ describe('createReleasePullRequest repository resolution', () => {
         githubToken: TOKEN_CANARY,
         fetchFn,
       });
-      expect(calls[0].url).toBe('https://api.github.com/repos/env-owner/env-repo/pulls');
+      expect(calls[0].url).toBe(
+        'https://api.github.com/repos/env-owner/env-repo/pulls?state=all&head=env-owner%3Achangelog%2F1.2.3&base=main&per_page=2&page=1',
+      );
     });
   });
 
@@ -489,9 +484,7 @@ describe('createReleasePullRequest repository resolution', () => {
 
 describe('createReleasePullRequest success paths', () => {
   it('excludes a raw tag signature from the GitHub request body', async () => {
-    const { calls, fetchFn } = createRecordingFetch(() =>
-      makeResponse(201, { number: 42, html_url: 'https://github.com/octo/hello/pull/42' }),
-    );
+    const { calls, fetchFn } = successfulFetch();
     const tagMessage = `${RELEASE.tagMessage}\n\n-----BEGIN PGP SIGNATURE-----\nsignature-payload-fixture\n-----END PGP SIGNATURE-----\n`;
     await createReleasePullRequest({
       plan: makePlan(),
@@ -500,23 +493,18 @@ describe('createReleasePullRequest success paths', () => {
       githubToken: TOKEN_CANARY,
       fetchFn,
     });
-    const payload = JSON.parse(calls[0].body ?? '{}') as Record<string, unknown>;
+    const payload = JSON.parse(calls[1].body ?? '{}') as Record<string, unknown>;
     expect(payload.body).toBe(
       '### Release Candidate Details\n\nRelease 1.2.3 notes\n\n---\n\n> This PR was automatically generated.',
     );
-    expect(calls[0].body).not.toContain('PGP SIGNATURE');
-    expect(calls[0].body).not.toContain('signature-payload-fixture');
+    expect(calls[1].body).not.toContain('PGP SIGNATURE');
+    expect(calls[1].body).not.toContain('signature-payload-fixture');
   });
 
   it('creates a PR and applies labels with exact shapes and headers', async () => {
     await withEnv({ GITHUB_TOKEN: undefined, GITHUB_REPOSITORY: undefined }, async () => {
       const plan = makePlan();
-      const { calls, fetchFn } = createRecordingFetch((call, index) => {
-        if (index === 0) {
-          return makeResponse(201, { number: 42, html_url: 'https://github.com/octo/hello/pull/42' });
-        }
-        return makeResponse(200, [{ name: 'changelog' }]);
-      });
+      const { calls, fetchFn } = successfulFetch();
       const result: PullRequestResult = await createReleasePullRequest({
         plan,
         determined: DETERMINED,
@@ -529,20 +517,28 @@ describe('createReleasePullRequest success paths', () => {
         skippedReason: null,
         number: 42,
         url: 'https://github.com/octo/hello/pull/42',
+        reused: false,
         merged: false,
         branchDeleted: false,
       });
-      expect(calls.length).toBe(2);
+      expect(calls.length).toBe(3);
 
-      expect(calls[0].url).toBe('https://api.github.com/repos/octo/hello/pulls');
-      expect(calls[0].method).toBe('POST');
+      expect(calls[0].url).toBe(LOOKUP_URL);
+      expect(calls[0].method).toBe('GET');
+      expect(calls[0].body).toBeUndefined();
       expect(headerValue(calls[0].headers, 'accept')).toBe('application/vnd.github+json');
       expect(headerValue(calls[0].headers, 'x-github-api-version')).toBe('2022-11-28');
       expect(headerValue(calls[0].headers, 'user-agent')).toBe('repo-toolkit-release-tag');
       expect(headerValue(calls[0].headers, 'content-type')).toBe('application/json');
       expect(headerValue(calls[0].headers, 'authorization')).toBe(`Bearer ${TOKEN_CANARY}`);
       expect(calls[0].hasSignal).toBe(true);
-      const createPayload = JSON.parse(calls[0].body ?? '{}') as Record<string, unknown>;
+      expect(calls[1].url).toBe('https://api.github.com/repos/octo/hello/pulls');
+      expect(calls[1].method).toBe('POST');
+      for (const call of calls) {
+        expect(call.headers).toEqual(calls[0].headers);
+        expect(call.hasSignal).toBe(true);
+      }
+      const createPayload = JSON.parse(calls[1].body ?? '{}') as Record<string, unknown>;
       expect(createPayload).toEqual({
         head: 'changelog/1.2.3',
         base: 'main',
@@ -550,10 +546,10 @@ describe('createReleasePullRequest success paths', () => {
         body: '### Release Candidate Details\n\nRelease 1.2.3 notes\n\n---\n\n> This PR was automatically generated.',
       });
 
-      expect(calls[1].url).toBe('https://api.github.com/repos/octo/hello/issues/42/labels');
-      expect(calls[1].method).toBe('POST');
-      expect(headerValue(calls[1].headers, 'authorization')).toBe(`Bearer ${TOKEN_CANARY}`);
-      const labelsPayload = JSON.parse(calls[1].body ?? '{}') as Record<string, unknown>;
+      expect(calls[2].url).toBe('https://api.github.com/repos/octo/hello/issues/42/labels');
+      expect(calls[2].method).toBe('POST');
+      expect(headerValue(calls[2].headers, 'authorization')).toBe(`Bearer ${TOKEN_CANARY}`);
+      const labelsPayload = JSON.parse(calls[2].body ?? '{}') as Record<string, unknown>;
       expect(labelsPayload).toEqual({ labels: ['changelog', 'release-candidate', 'v1.2.3'] });
 
       expectCanaryAbsent(JSON.stringify(result), TOKEN_CANARY);
@@ -563,9 +559,7 @@ describe('createReleasePullRequest success paths', () => {
   it('trims trailing slashes from a custom API base URL', async () => {
     await withEnv({ GITHUB_TOKEN: undefined, GITHUB_REPOSITORY: undefined }, async () => {
       const plan = makePlan({ githubApiUrl: 'https://ghes.example.com/api/v3///' });
-      const { calls, fetchFn } = createRecordingFetch(() =>
-        makeResponse(201, { number: 43, html_url: 'https://ghes.example.com/octo/hello/pull/43' }),
-      );
+      const { calls, fetchFn } = successfulFetch({ number: 43, url: 'https://ghes.example.com/octo/hello/pull/43' });
       await createReleasePullRequest({
         plan,
         determined: DETERMINED,
@@ -573,25 +567,14 @@ describe('createReleasePullRequest success paths', () => {
         githubToken: TOKEN_CANARY,
         fetchFn,
       });
-      expect(calls[0].url).toBe('https://ghes.example.com/api/v3/repos/octo/hello/pulls');
+      expect(calls[0].url).toBe(LOOKUP_URL.replace('https://api.github.com', 'https://ghes.example.com/api/v3'));
     });
   });
 
   it('merges on autoMergePr and deletes the branch when both flags are set', async () => {
     await withEnv({ GITHUB_TOKEN: undefined, GITHUB_REPOSITORY: undefined }, async () => {
       const plan = makePlan({ autoMergePr: true, deleteMergedBranch: true });
-      const { calls, fetchFn } = createRecordingFetch((call, index) => {
-        if (index === 0) {
-          return makeResponse(201, { number: 44, html_url: 'https://github.com/octo/hello/pull/44' });
-        }
-        if (index === 1) {
-          return makeResponse(200, []);
-        }
-        if (index === 2) {
-          return makeResponse(200, { merged: true });
-        }
-        return makeResponse(204, '');
-      });
+      const { calls, fetchFn } = successfulFetch({ number: 44 });
       const result = await createReleasePullRequest({
         plan,
         determined: DETERMINED,
@@ -601,25 +584,24 @@ describe('createReleasePullRequest success paths', () => {
       });
       expect(result.merged).toBe(true);
       expect(result.branchDeleted).toBe(true);
-      expect(calls.length).toBe(4);
-      expect(calls[2].url).toBe('https://api.github.com/repos/octo/hello/pulls/44/merge');
-      expect(calls[2].method).toBe('PUT');
-      expect(JSON.parse(calls[2].body ?? '{}')).toEqual({ merge_method: 'merge' });
-      expect(calls[3].url).toBe('https://api.github.com/repos/octo/hello/git/refs/heads/changelog/1.2.3');
-      expect(calls[3].method).toBe('DELETE');
-      expect(calls[3].body).toBeUndefined();
+      expect(calls.length).toBe(7);
+      expect(calls[3].url).toBe('https://api.github.com/repos/octo/hello/pulls/44');
+      expect(calls[3].method).toBe('GET');
+      expect(calls[4].url).toBe('https://api.github.com/repos/octo/hello/pulls/44/merge');
+      expect(calls[4].method).toBe('PUT');
+      expect(JSON.parse(calls[4].body ?? '{}')).toEqual({ merge_method: 'merge', sha: RELEASED_HEAD });
+      expect(calls[5].url).toBe('https://api.github.com/repos/octo/hello/git/ref/heads/changelog/1.2.3');
+      expect(calls[5].method).toBe('GET');
+      expect(calls[6].url).toBe('https://api.github.com/repos/octo/hello/git/refs/heads/changelog/1.2.3');
+      expect(calls[6].method).toBe('DELETE');
+      expect(calls[6].body).toBeUndefined();
     });
   });
 
   it('ignores deleteMergedBranch when autoMergePr is false', async () => {
     await withEnv({ GITHUB_TOKEN: undefined, GITHUB_REPOSITORY: undefined }, async () => {
       const plan = makePlan({ autoMergePr: false, deleteMergedBranch: true });
-      const { calls, fetchFn } = createRecordingFetch((call, index) => {
-        if (index === 0) {
-          return makeResponse(201, { number: 45, html_url: 'https://github.com/octo/hello/pull/45' });
-        }
-        return makeResponse(200, []);
-      });
+      const { calls, fetchFn } = successfulFetch({ number: 45 });
       const result = await createReleasePullRequest({
         plan,
         determined: DETERMINED,
@@ -629,22 +611,14 @@ describe('createReleasePullRequest success paths', () => {
       });
       expect(result.merged).toBe(false);
       expect(result.branchDeleted).toBe(false);
-      expect(calls.length).toBe(2);
+      expect(calls.length).toBe(3);
     });
   });
 
   it('keeps the branch when only autoMergePr is set', async () => {
     await withEnv({ GITHUB_TOKEN: undefined, GITHUB_REPOSITORY: undefined }, async () => {
       const plan = makePlan({ autoMergePr: true, deleteMergedBranch: false });
-      const { calls, fetchFn } = createRecordingFetch((call, index) => {
-        if (index === 0) {
-          return makeResponse(201, { number: 46, html_url: 'https://github.com/octo/hello/pull/46' });
-        }
-        if (index === 1) {
-          return makeResponse(200, []);
-        }
-        return makeResponse(200, { merged: true });
-      });
+      const { calls, fetchFn } = successfulFetch({ number: 46 });
       const result = await createReleasePullRequest({
         plan,
         determined: DETERMINED,
@@ -654,18 +628,18 @@ describe('createReleasePullRequest success paths', () => {
       });
       expect(result.merged).toBe(true);
       expect(result.branchDeleted).toBe(false);
-      expect(calls.length).toBe(3);
+      expect(calls.length).toBe(5);
     });
   });
 
   it('accepts a 200 create response', async () => {
     await withEnv({ GITHUB_TOKEN: undefined, GITHUB_REPOSITORY: undefined }, async () => {
       const plan = makePlan();
-      const { calls, fetchFn } = createRecordingFetch((call, index) => {
-        if (index === 0) {
-          return makeResponse(200, { number: 47, html_url: 'https://github.com/octo/hello/pull/47' });
+      const { calls, fetchFn } = createRecordingFetch((call) => {
+        if (call.method === 'POST' && call.url.endsWith('/pulls')) {
+          return makeResponse(200, pullRequestData({ number: 47 }));
         }
-        return makeResponse(200, []);
+        return successfulGitHubResponse(call.url, { method: call.method }, { number: 47 });
       });
       const result = await createReleasePullRequest({
         plan,
@@ -675,7 +649,7 @@ describe('createReleasePullRequest success paths', () => {
         fetchFn,
       });
       expect(result.number).toBe(47);
-      expect(calls.length).toBe(2);
+      expect(calls.length).toBe(3);
     });
   });
 });
@@ -685,7 +659,9 @@ describe('createReleasePullRequest failures', () => {
     await withEnv({ GITHUB_TOKEN: undefined, GITHUB_REPOSITORY: undefined }, async () => {
       const plan = makePlan();
       const longBody = `bad credentials for ${TOKEN_CANARY} ` + 'x'.repeat(5000);
-      const { calls, fetchFn } = createRecordingFetch(() => makeResponse(401, longBody));
+      const { calls, fetchFn } = createRecordingFetch((call) =>
+        call.method === 'GET' ? makeResponse(200, []) : makeResponse(401, longBody),
+      );
       let message = '';
       try {
         await createReleasePullRequest({
@@ -703,15 +679,17 @@ describe('createReleasePullRequest failures', () => {
       expectCanaryAbsent(message, TOKEN_CANARY);
       expect(message.includes('[redacted]')).toBe(true);
       expect(message.length).toBeLessThan(longBody.length);
-      expect(calls.length).toBe(1);
+      expect(calls.length).toBe(2);
     });
   });
 
-  it('throws on a 422 create failure without retrying', async () => {
+  it('throws on a 422 create failure after one exact relookup without retrying creation', async () => {
     await withEnv({ GITHUB_TOKEN: undefined, GITHUB_REPOSITORY: undefined }, async () => {
       const plan = makePlan();
-      const { calls, fetchFn } = createRecordingFetch(() =>
-        makeResponse(422, { message: 'Validation Failed', errors: [{ code: 'custom' }] }),
+      const { calls, fetchFn } = createRecordingFetch((call) =>
+        call.method === 'GET'
+          ? makeResponse(200, [])
+          : makeResponse(422, { message: 'Validation Failed', errors: [{ code: 'custom' }] }),
       );
       await expect(
         createReleasePullRequest({
@@ -722,14 +700,19 @@ describe('createReleasePullRequest failures', () => {
           fetchFn,
         }),
       ).rejects.toThrowError(/status=422/);
-      expect(calls.length).toBe(1);
+      expect(calls.length).toBe(3);
+      expect(calls.map((call) => call.method)).toEqual(['GET', 'POST', 'GET']);
+      expect(calls[0].url).toBe(LOOKUP_URL);
+      expect(calls[2].url).toBe(LOOKUP_URL);
     });
   });
 
   it('throws when the create payload misses number or html_url', async () => {
     await withEnv({ GITHUB_TOKEN: undefined, GITHUB_REPOSITORY: undefined }, async () => {
       const plan = makePlan();
-      const missingNumber = createRecordingFetch(() => makeResponse(201, { html_url: 'https://x/pull/1' }));
+      const missingNumber = createRecordingFetch((call) =>
+        call.method === 'GET' ? makeResponse(200, []) : makeResponse(201, { html_url: 'https://x/pull/1' }),
+      );
       await expect(
         createReleasePullRequest({
           plan,
@@ -739,9 +722,11 @@ describe('createReleasePullRequest failures', () => {
           fetchFn: missingNumber.fetchFn,
         }),
       ).rejects.toThrowError(/numeric pull request number/);
-      expect(missingNumber.calls.length).toBe(1);
+      expect(missingNumber.calls.length).toBe(2);
 
-      const missingUrl = createRecordingFetch(() => makeResponse(201, { number: 50 }));
+      const missingUrl = createRecordingFetch((call) =>
+        call.method === 'GET' ? makeResponse(200, []) : makeResponse(201, { number: 50 }),
+      );
       await expect(
         createReleasePullRequest({
           plan,
@@ -751,14 +736,16 @@ describe('createReleasePullRequest failures', () => {
           fetchFn: missingUrl.fetchFn,
         }),
       ).rejects.toThrowError(/html_url/);
-      expect(missingUrl.calls.length).toBe(1);
+      expect(missingUrl.calls.length).toBe(2);
     });
   });
 
   it('throws on non-JSON create responses', async () => {
     await withEnv({ GITHUB_TOKEN: undefined, GITHUB_REPOSITORY: undefined }, async () => {
       const plan = makePlan();
-      const { calls, fetchFn } = createRecordingFetch(() => makeResponse(201, '<html>not json'));
+      const { calls, fetchFn } = createRecordingFetch((call) =>
+        call.method === 'GET' ? makeResponse(200, []) : makeResponse(201, '<html>not json'),
+      );
       await expect(
         createReleasePullRequest({
           plan,
@@ -768,19 +755,18 @@ describe('createReleasePullRequest failures', () => {
           fetchFn,
         }),
       ).rejects.toThrowError(/not valid JSON/);
-      expect(calls.length).toBe(1);
+      expect(calls.length).toBe(2);
     });
   });
 
   it('throws on labels failure without proceeding', async () => {
     await withEnv({ GITHUB_TOKEN: undefined, GITHUB_REPOSITORY: undefined }, async () => {
       const plan = makePlan({ autoMergePr: true, deleteMergedBranch: true });
-      const { calls, fetchFn } = createRecordingFetch((call, index) => {
-        if (index === 0) {
-          return makeResponse(201, { number: 51, html_url: 'https://github.com/octo/hello/pull/51' });
-        }
-        return makeResponse(403, { message: 'forbidden' });
-      });
+      const { calls, fetchFn } = createRecordingFetch((call) =>
+        call.url.endsWith('/labels')
+          ? makeResponse(403, { message: 'forbidden' })
+          : successfulGitHubResponse(call.url, { method: call.method }, { number: 51 }),
+      );
       await expect(
         createReleasePullRequest({
           plan,
@@ -790,22 +776,18 @@ describe('createReleasePullRequest failures', () => {
           fetchFn,
         }),
       ).rejects.toThrowError(/POST labels/);
-      expect(calls.length).toBe(2);
+      expect(calls.length).toBe(3);
     });
   });
 
   it('throws on merge failure without deleting the branch', async () => {
     await withEnv({ GITHUB_TOKEN: undefined, GITHUB_REPOSITORY: undefined }, async () => {
       const plan = makePlan({ autoMergePr: true, deleteMergedBranch: true });
-      const { calls, fetchFn } = createRecordingFetch((call, index) => {
-        if (index === 0) {
-          return makeResponse(201, { number: 52, html_url: 'https://github.com/octo/hello/pull/52' });
-        }
-        if (index === 1) {
-          return makeResponse(200, []);
-        }
-        return makeResponse(405, { message: 'not mergeable' });
-      });
+      const { calls, fetchFn } = createRecordingFetch((call) =>
+        call.method === 'PUT'
+          ? makeResponse(405, { message: 'not mergeable' })
+          : successfulGitHubResponse(call.url, { method: call.method }, { number: 52 }),
+      );
       await expect(
         createReleasePullRequest({
           plan,
@@ -815,25 +797,18 @@ describe('createReleasePullRequest failures', () => {
           fetchFn,
         }),
       ).rejects.toThrowError(/PUT merge/);
-      expect(calls.length).toBe(3);
+      expect(calls.length).toBe(5);
     });
   });
 
   it('throws on branch-delete failure', async () => {
     await withEnv({ GITHUB_TOKEN: undefined, GITHUB_REPOSITORY: undefined }, async () => {
       const plan = makePlan({ autoMergePr: true, deleteMergedBranch: true });
-      const { calls, fetchFn } = createRecordingFetch((call, index) => {
-        if (index === 0) {
-          return makeResponse(201, { number: 53, html_url: 'https://github.com/octo/hello/pull/53' });
-        }
-        if (index === 1) {
-          return makeResponse(200, []);
-        }
-        if (index === 2) {
-          return makeResponse(200, { merged: true });
-        }
-        return makeResponse(422, { message: 'no such ref' });
-      });
+      const { calls, fetchFn } = createRecordingFetch((call) =>
+        call.method === 'DELETE'
+          ? makeResponse(422, { message: 'no such ref' })
+          : successfulGitHubResponse(call.url, { method: call.method }, { number: 53 }),
+      );
       await expect(
         createReleasePullRequest({
           plan,
@@ -843,7 +818,7 @@ describe('createReleasePullRequest failures', () => {
           fetchFn,
         }),
       ).rejects.toThrowError(/DELETE ref/);
-      expect(calls.length).toBe(4);
+      expect(calls.length).toBe(7);
     });
   });
 
@@ -872,7 +847,7 @@ describe('createReleasePullRequest failures', () => {
     });
   });
 
-  it('surfaces timeout aborts with redaction', async () => {
+  it('surfaces transport aborts with redaction without claiming an elapsed deadline', async () => {
     await withEnv({ GITHUB_TOKEN: undefined, GITHUB_REPOSITORY: undefined }, async () => {
       const plan = makePlan({ timeoutMs: 5 });
       const { calls, fetchFn } = createRecordingFetch(() => {
@@ -893,7 +868,7 @@ describe('createReleasePullRequest failures', () => {
       } catch (error) {
         message = error instanceof Error ? error.message : String(error);
       }
-      expect(message.includes('timed out after 5ms')).toBe(true);
+      expect(message.includes('was aborted')).toBe(true);
       expectCanaryAbsent(message, TOKEN_CANARY);
       expect(calls.length).toBe(1);
     });
@@ -956,7 +931,7 @@ describe('createReleasePullRequest failures', () => {
       } catch (error) {
         message = error instanceof Error ? error.message : String(error);
       }
-      expect(message.includes('POST pulls')).toBe(true);
+      expect(message.includes('GET pulls')).toBe(true);
       expectCanaryAbsent(message, TOKEN_CANARY);
       expect(calls.length).toBe(1);
     });
@@ -970,9 +945,7 @@ describe('createReleasePullRequest input validation', () => {
 
   it('uses the plan fetchFn when no input fetchFn is given', async () => {
     await withEnv({ GITHUB_TOKEN: undefined, GITHUB_REPOSITORY: undefined }, async () => {
-      const { calls, fetchFn } = createRecordingFetch(() =>
-        makeResponse(201, { number: 55, html_url: 'https://github.com/octo/hello/pull/55' }),
-      );
+      const { calls, fetchFn } = successfulFetch({ number: 55 });
       const plan = makePlan({ fetchFn });
       const result = await createReleasePullRequest({
         plan,
@@ -981,7 +954,7 @@ describe('createReleasePullRequest input validation', () => {
         githubToken: TOKEN_CANARY,
       });
       expect(result.number).toBe(55);
-      expect(calls.length).toBe(2);
+      expect(calls.length).toBe(3);
     });
   });
 });

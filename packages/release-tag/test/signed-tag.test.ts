@@ -1,33 +1,13 @@
-import { execFileSync } from 'node:child_process';
-import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
-import type { CapturingProcessRunner } from '@repo-toolkit/publish-package';
-
 import { runReleaseTag } from '../src/index';
+import { recordingGitRunner, withGitFixture } from './git-fixture';
+import { successfulGitHubResponse } from './http-fixture';
 
 describe('runReleaseTag signed tag annotations', () => {
   it('keeps signature metadata out of results and the PR body when reading a real Git tag', async () => {
-    const cwd = await mkdtemp(join(tmpdir(), 'release-tag-signature-'));
-    try {
-      const runGit = (args: ReadonlyArray<string>, input?: string): string =>
-        execFileSync('git', args, {
-          cwd,
-          encoding: 'utf8',
-          input,
-          env: {
-            ...process.env,
-            GIT_AUTHOR_NAME: 'Repo Toolkit',
-            GIT_AUTHOR_EMAIL: 'repo-toolkit@example.com',
-            GIT_COMMITTER_NAME: 'Repo Toolkit',
-            GIT_COMMITTER_EMAIL: 'repo-toolkit@example.com',
-          },
-        });
-      runGit(['init', '--quiet']);
-      const tree = runGit(['mktree'], '').trim();
-      const commit = runGit(['-c', 'commit.gpgsign=false', 'commit-tree', tree], 'fixture commit\n').trim();
+    await withGitFixture(async (fixture) => {
+      const { cwd, git: runGit, sourceCommit: commit } = fixture;
       const annotation = 'krypton\nrelease candidate\n\n* feat: add secret previews';
       const signature = '-----BEGIN PGP SIGNATURE-----\n\nc2lnbmF0dXJlLWZpeHR1cmU=\n=TEST\n-----END PGP SIGNATURE-----';
       const tag = runGit(
@@ -37,26 +17,13 @@ describe('runReleaseTag signed tag annotations', () => {
       runGit(['update-ref', 'refs/tags/v1.2.3', tag]);
       expect(runGit(['tag', '-l', '--format=%(contents)', 'v1.2.3'])).toContain(signature);
 
-      const runner: CapturingProcessRunner = {
-        run() {
-          throw new Error('release execution must be skipped');
-        },
-        runShell() {
-          throw new Error('shell execution must not be used');
-        },
-        async capture(_executable, args) {
-          return { stdout: args[0] === 'tag' ? runGit(args) : '', stderr: '', code: 0 };
-        },
-      };
+      const runner = recordingGitRunner(fixture);
       const requests: Record<string, unknown>[] = [];
       const fetchFn: typeof fetch = async (_url, init) => {
         if (init?.method === 'POST') {
           requests.push(JSON.parse(String(init.body)) as Record<string, unknown>);
-          return new Response(JSON.stringify({ number: 42, html_url: 'https://github.com/octo/hello/pull/42' }), {
-            status: 201,
-          });
         }
-        return new Response(JSON.stringify({ permissions: { push: true } }));
+        return successfulGitHubResponse(_url, init, { sha: commit });
       };
       const result = await runReleaseTag({
         cwd,
@@ -68,6 +35,7 @@ describe('runReleaseTag signed tag annotations', () => {
         runner,
         fetchFn,
       });
+      expect(runner.runs).toEqual([]);
       expect(result.release?.tagMessage).toBe(annotation);
       expect(requests[0].body).toBe(
         `### Release Candidate Details\n\n${annotation}\n\n---\n\n> This PR was automatically generated.`,
@@ -77,8 +45,6 @@ describe('runReleaseTag signed tag annotations', () => {
         expect(output).not.toContain('c2lnbmF0dXJlLWZpeHR1cmU=');
         expect(output).not.toContain('=TEST');
       }
-    } finally {
-      await rm(cwd, { recursive: true, force: true });
-    }
+    });
   });
 });
