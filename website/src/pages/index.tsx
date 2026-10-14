@@ -12,25 +12,18 @@ function HomepageHeader() {
   const { siteConfig } = useDocusaurusContext();
   return (
     <header className={clsx('hero hero--primary', styles.heroBanner)}>
-
       <div className="container">
-
         <Heading as="h1" className="hero__title">
-                    {siteConfig.title}
-
+          {siteConfig.title}
         </Heading>
-                <p className="hero__subtitle">{siteConfig.tagline}</p>
+        <p className="hero__subtitle">{siteConfig.tagline}</p>
 
         <div className={styles.buttons}>
-
           <Link className="button button--secondary button--lg" to="/docs/packages">
-                        Browse Package Docs
+            Browse Package Docs
           </Link>
-
         </div>
-
       </div>
-
     </header>
   );
 }
@@ -39,15 +32,11 @@ export default function Home(): ReactElement {
   const { siteConfig } = useDocusaurusContext();
   return (
     <Layout title={siteConfig.title} description="Documentation for the repo-toolkit workspace packages.">
-
       <HomepageHeader />
 
       <main>
-
         <HomepageFeatures />
-
       </main>
-
     </Layout>
   );
 }
