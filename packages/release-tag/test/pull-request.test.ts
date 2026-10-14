@@ -1,7 +1,7 @@
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, afterEach, beforeEach, vi } from 'vitest';
 
 import {
   createReleasePullRequest,
@@ -35,6 +35,23 @@ const DETERMINED: DeterminedTag = {
   manual: false,
   noChanges: false,
 };
+
+beforeEach(() => {
+  for (const name of [
+    'GITHUB_TOKEN',
+    'GITHUB_API_URL',
+    'GITHUB_REPOSITORY',
+    'GITHUB_REF_NAME',
+    'GITHUB_REF_TYPE',
+    'GITHUB_REF',
+  ]) {
+    vi.stubEnv(name, undefined);
+  }
+});
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
 
 const RELEASE: ReleaseBranchResult = {
   baseBranch: 'main',
