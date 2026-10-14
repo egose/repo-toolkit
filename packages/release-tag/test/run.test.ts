@@ -1,7 +1,7 @@
-import { chmod, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import * as fs from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type {
   CapturingProcessRunner,
@@ -10,7 +10,12 @@ import type {
   ProcessRunOptions,
 } from '@repo-toolkit/publish-package';
 
-import { runReleaseTag, type DeterminedTag, type ReleaseBranchResult } from '../src/index';
+import { runReleaseTag, type DeterminedTag, type ReleaseBranchResult, type ReleaseTagOptions } from '../src/index';
+import { createReleaseRunner, RELEASED_HEAD } from './release-fixture';
+import { makeResponse, successfulGitHubResponse } from './http-fixture';
+import { commitLog } from './commit-fixture';
+
+vi.mock('node:fs/promises', async (importOriginal) => ({ ...(await importOriginal<typeof fs>()) }));
 
 const FAKE_CWD = '/fake/workdir';
 const TOKEN_CANARY = 'run-canary-token-9f3b1c-do-not-leak';
@@ -85,16 +90,6 @@ interface RecordedFetch {
   method: string;
   headers: Record<string, string>;
   body: string | undefined;
-}
-
-function makeResponse(status: number, body: unknown): Response {
-  const text = typeof body === 'string' ? body : JSON.stringify(body);
-  return {
-    ok: status >= 200 && status < 300,
-    status,
-    headers: new Headers(),
-    text: async () => text,
-  } as Response;
 }
 
 function normalizeHeaders(input: unknown): Record<string, string> {
@@ -181,11 +176,11 @@ function withEnv(vars: Record<string, string | undefined>, fn: () => void | Prom
 }
 
 async function withTempDir(fn: (dir: string) => Promise<void>): Promise<void> {
-  const dir = await mkdtemp(join(tmpdir(), 'release-tag-run-'));
+  const dir = await fs.mkdtemp(join(tmpdir(), 'release-tag-run-'));
   try {
     await fn(dir);
   } finally {
-    await rm(dir, { recursive: true, force: true });
+    await fs.rm(dir, { recursive: true, force: true });
   }
 }
 
@@ -198,20 +193,8 @@ async function errorMessage(promise: Promise<unknown>): Promise<string> {
   expect.unreachable();
 }
 
-function releaseCaptures(tagMessage: string): ReadonlyArray<ProcessCaptureResult> {
-  return [ok(''), ok(''), ok(''), ok(''), ok(''), ok(''), ok(''), ok(tagMessage)];
-}
-
-function lsRemoteOk(): ProcessCaptureResult {
-  return ok('f00dcafe HEAD\n');
-}
-
-function withPreflight(captures: ReadonlyArray<ProcessCaptureResult>): ReadonlyArray<ProcessCaptureResult> {
-  return [failed(1, '', ''), lsRemoteOk(), ...captures];
-}
-
 function determinedFixture(): DeterminedTag {
-  return { version: '1.2.3', tagVersion: 'v1.2.3', bump: null, lastTag: null, manual: true };
+  return { version: '1.2.3', tagVersion: 'v1.2.3', bump: null, lastTag: null, manual: true, noChanges: false };
 }
 
 function releaseFixture(): ReleaseBranchResult {
@@ -219,6 +202,7 @@ function releaseFixture(): ReleaseBranchResult {
     baseBranch: 'main',
     releaseBranch: 'changelog/1.2.3',
     releaseRan: true,
+    releasedHead: RELEASED_HEAD,
     skippedReason: null,
     tagMessage: 'notes',
     prTitle: 'chore(release): release candidate v1.2.3',
@@ -229,10 +213,10 @@ describe('runReleaseTag end to end', () => {
   it('runs manual tag through release and pr with merge and delete using an installation token', async () => {
     await withTempDir(async (dir) => {
       const releasePath = join(dir, 'fake-release-it');
-      await writeFile(releasePath, '#!/usr/bin/env node\n', 'utf8');
-      await chmod(releasePath, 0o755);
+      await fs.writeFile(releasePath, '#!/usr/bin/env node\n', 'utf8');
+      await fs.chmod(releasePath, 0o755);
       await withEnv({ GITHUB_TOKEN: undefined, GITHUB_REPOSITORY: undefined, GITHUB_REF_NAME: undefined }, async () => {
-        const runner = createFakeRunner(queueHandler(withPreflight(releaseCaptures('Release 1.2.3 notes\n'))));
+        const runner = createReleaseRunner({ tagMessage: 'Release 1.2.3 notes\n' });
         const { calls, fetchFn } = createRecordingFetch((call, index) => {
           if (index === 0) {
             return makeResponse(200, { permissions: { push: false, pull: false } });
@@ -240,16 +224,7 @@ describe('runReleaseTag end to end', () => {
           if (index === 1) {
             return makeResponse(200, '');
           }
-          if (index === 2) {
-            return makeResponse(201, { number: 42, html_url: 'https://github.com/octo/hello/pull/42' });
-          }
-          if (index === 3) {
-            return makeResponse(200, {});
-          }
-          if (index === 4) {
-            return makeResponse(200, { merged: true });
-          }
-          return makeResponse(204, '');
+          return successfulGitHubResponse(call.url, { method: call.method });
         });
         const result = await runReleaseTag({
           cwd: dir,
@@ -269,10 +244,12 @@ describe('runReleaseTag end to end', () => {
           bump: null,
           lastTag: null,
           manual: true,
+          noChanges: false,
         });
         expect(result.release?.releaseBranch).toBe('changelog/1.2.3');
         expect(result.release?.baseBranch).toBe('main');
         expect(result.release?.releaseRan).toBe(true);
+        expect(result.release?.releasedHead).toBe(RELEASED_HEAD);
         expect(result.release?.skippedReason).toBeNull();
         expect(result.release?.prTitle).toBe('chore(release): release candidate v1.2.3');
         expect(result.release?.tagMessage).toBe('Release 1.2.3 notes');
@@ -283,25 +260,35 @@ describe('runReleaseTag end to end', () => {
         expect(result.pullRequest?.number).toBe(42);
         expect(result.pullRequest?.url).toBe('https://github.com/octo/hello/pull/42');
         expect(result.pullRequest?.merged).toBe(true);
+        expect(result.pullRequest?.reused).toBe(false);
         expect(result.pullRequest?.branchDeleted).toBe(true);
         expect(runner.captures[0]?.args).toEqual(['config', '--get', 'core.sshCommand']);
         expect(runner.captures[1]?.args).toEqual(['ls-remote', 'origin', 'HEAD']);
-        expect(calls).toHaveLength(6);
+        expect(runner.captures.filter((call) => call.args[0] === 'config' && call.args[1] === '--get')).toHaveLength(1);
+        expect(runner.captures.every((call) => call.options.env?.GIT_TERMINAL_PROMPT === '0')).toBe(true);
+        expect(calls).toHaveLength(9);
         expect(calls[0]?.method).toBe('GET');
         expect(calls[0]?.url).toBe('https://api.github.com/repos/octo/hello');
         expect(calls[1]?.method).toBe('HEAD');
         expect(calls[1]?.url).toBe('https://api.github.com/installation/repositories?per_page=1');
-        expect(calls[2]?.method).toBe('POST');
-        expect(calls[2]?.url).toBe('https://api.github.com/repos/octo/hello/pulls');
-        const createBody = JSON.parse(calls[2]?.body ?? '{}') as Record<string, unknown>;
+        expect(calls[2]?.method).toBe('GET');
+        expect(calls[2]?.url).toBe(
+          'https://api.github.com/repos/octo/hello/pulls?state=all&head=octo%3Achangelog%2F1.2.3&base=main&per_page=2&page=1',
+        );
+        expect(calls[3]?.method).toBe('POST');
+        expect(calls[3]?.url).toBe('https://api.github.com/repos/octo/hello/pulls');
+        const createBody = JSON.parse(calls[3]?.body ?? '{}') as Record<string, unknown>;
         expect(createBody.head).toBe('changelog/1.2.3');
         expect(createBody.base).toBe('main');
         expect(createBody.title).toBe('chore(release): release candidate v1.2.3');
         expect(typeof createBody.body).toBe('string');
         expect(String(createBody.body)).toContain('Release 1.2.3 notes');
-        const labelsBody = JSON.parse(calls[3]?.body ?? '{}') as Record<string, unknown>;
+        const labelsBody = JSON.parse(calls[4]?.body ?? '{}') as Record<string, unknown>;
         expect(labelsBody.labels).toEqual(['changelog', 'release-candidate', 'v1.2.3']);
         expect(headerValue(calls[2]?.headers ?? {}, 'authorization')).toBe(`Bearer ${TOKEN_CANARY}`);
+        expect(JSON.parse(calls[6]?.body ?? '{}')).toEqual({ merge_method: 'merge', sha: RELEASED_HEAD });
+        expect(calls[7]?.method).toBe('GET');
+        expect(calls[7]?.url).toContain('/git/ref/heads/changelog/1.2.3');
         expect(JSON.stringify(result)).not.toContain(TOKEN_CANARY);
         expect(JSON.stringify(result.plan)).not.toContain(TOKEN_CANARY);
       });
@@ -311,18 +298,14 @@ describe('runReleaseTag end to end', () => {
   it('runs stages in determine release pr order', async () => {
     await withEnv({ GITHUB_TOKEN: undefined, GITHUB_REPOSITORY: undefined, GITHUB_REF_NAME: undefined }, async () => {
       const order: string[] = [];
-      const runner = createFakeRunner((executable, args) => {
-        order.push(`capture:${executable}:${args.join(' ')}`);
-        if (args[0] === 'describe') {
-          return ok('v1.2.2\n');
-        }
-        if (args[0] === 'log') {
-          return ok('feat: new thing\n');
-        }
-        if (args[0] === 'tag') {
-          return ok('');
-        }
-        return ok('');
+      const runner = createReleaseRunner({
+        capture(executable, args) {
+          order.push(`capture:${executable}:${args.join(' ')}`);
+          if (args[0] === 'log') {
+            return ok(commitLog('feat: new thing\n'));
+          }
+          return undefined;
+        },
       });
       const { fetchFn } = createRecordingFetch(() => {
         order.push('fetch:pr');
@@ -371,6 +354,7 @@ describe('runReleaseTag only filtering', () => {
         bump: null,
         lastTag: null,
         manual: true,
+        noChanges: false,
       });
       expect(result.release).toBeNull();
       expect(result.pullRequest).toBeNull();
@@ -382,7 +366,7 @@ describe('runReleaseTag only filtering', () => {
 
   it('yields null for unselected stages', async () => {
     await withEnv({ GITHUB_TOKEN: undefined, GITHUB_REPOSITORY: undefined, GITHUB_REF_NAME: undefined }, async () => {
-      const runner = createFakeRunner(queueHandler(withPreflight(releaseCaptures(''))));
+      const runner = createReleaseRunner();
       const { calls, fetchFn } = createRecordingFetch(() => {
         throw new Error('fetch must not be called');
       });
@@ -440,14 +424,14 @@ describe('runReleaseTag only filtering', () => {
     });
   });
 
-  it('rejects pr without determine and release', async () => {
+  it('rejects incomplete PR-only recovery inputs and determine/pr without release', async () => {
     await withEnv({ GITHUB_TOKEN: undefined, GITHUB_REPOSITORY: undefined, GITHUB_REF_NAME: undefined }, async () => {
       const runner = createFakeRunner(() => {
         throw new Error('must not invoke git');
       });
       const { calls, fetchFn } = createRecordingFetch(() => makeResponse(200, {}));
       const prOnly = await errorMessage(runReleaseTag({ cwd: FAKE_CWD, tag: '1.2.3', only: ['pr'], runner, fetchFn }));
-      expect(prOnly).toContain("Stage 'pr' requires stages 'determine' and 'release'");
+      expect(prOnly).toContain('PR-only recovery requires explicit tag and baseBranch');
       const determinePr = await errorMessage(
         runReleaseTag({ cwd: FAKE_CWD, tag: '1.2.3', only: ['determine', 'pr'], runner, fetchFn }),
       );
@@ -457,10 +441,196 @@ describe('runReleaseTag only filtering', () => {
   });
 });
 
+describe('runReleaseTag no-change policy', () => {
+  beforeEach(() => {
+    for (const key of [
+      'GITHUB_TOKEN',
+      'GITHUB_REPOSITORY',
+      'GITHUB_REF_NAME',
+      'GITHUB_REF_TYPE',
+      'GITHUB_REF',
+      'GITHUB_API_URL',
+      'GIT_SSH',
+      'GIT_SSH_COMMAND',
+    ]) {
+      vi.stubEnv(key, undefined);
+    }
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllEnvs();
+  });
+
+  it.each([
+    {},
+    { only: ['determine'] },
+    { only: ['determine', 'release'] },
+    { skipRelease: true, skipPr: true },
+    { skipPreflight: true },
+  ] satisfies ReleaseTagOptions[])(
+    'returns no-change before runtime identity, credential, preflight or mutation work with %j',
+    async (selection) => {
+      await withTempDir(async (dir) => {
+        vi.stubEnv('GITHUB_TOKEN', ENV_TOKEN);
+        vi.stubEnv('GITHUB_REF_NAME', '--mirror');
+        vi.stubEnv('GITHUB_REF_TYPE', 'tag');
+        vi.stubEnv('GITHUB_REF', 'refs/tags/v1.2.3');
+        vi.stubEnv('GITHUB_REPOSITORY', '../unused-repository');
+        const fileOperations = (['open', 'readFile', 'stat', 'access', 'writeFile'] as const).map((name) =>
+          vi.spyOn(fs, name),
+        );
+        const runner = createFakeRunner(queueHandler([ok('v1.2.3\n'), ok('')]));
+        Object.assign(runner, { privateState: ENV_TOKEN });
+        const { calls, fetchFn } = createRecordingFetch(() => {
+          throw new Error('no-change must not contact GitHub');
+        });
+        const result = await runReleaseTag({
+          cwd: dir,
+          releaseCommand: './missing-release-command',
+          githubTokenFile: 'unopened-token',
+          gitUserName: `bot ${ENV_TOKEN}`,
+          runner,
+          fetchFn,
+          ...selection,
+        });
+        expect(result.determined).toEqual({
+          version: '1.2.3',
+          tagVersion: 'v1.2.3',
+          bump: null,
+          lastTag: 'v1.2.3',
+          manual: false,
+          noChanges: true,
+        });
+        expect(result.release).toBeNull();
+        expect(result.pullRequest).toBeNull();
+        expect(runner.captures.map((call) => call.args[0])).toEqual(['describe', 'log']);
+        expect(runner.runs).toHaveLength(0);
+        expect(calls).toHaveLength(0);
+        for (const operation of fileOperations) {
+          expect(operation).not.toHaveBeenCalled();
+        }
+        expect(result.plan.allowEmptyRelease).toBe(false);
+        expect(result.plan.tokenSource).toBe('file');
+        expect(result.plan.gitUserName).toBe('bot [redacted]');
+        expect(result.plan).not.toHaveProperty('runner');
+        expect(result.plan).not.toHaveProperty('fetchFn');
+        expect(JSON.stringify(result)).not.toContain(ENV_TOKEN);
+      });
+    },
+  );
+
+  it('does not validate an unused generated release branch or resolve invalid environment credentials', async () => {
+    vi.stubEnv('GITHUB_TOKEN', `${ENV_TOKEN}\ninvalid`);
+    const runner = createFakeRunner(queueHandler([ok('v1.2.3\n'), ok('')]));
+    const { calls, fetchFn } = createRecordingFetch(() => {
+      throw new Error('no-change must not contact GitHub');
+    });
+    const result = await runReleaseTag({ cwd: FAKE_CWD, baseBranch: 'changelog/1.2.3', runner, fetchFn });
+    expect(result.determined?.noChanges).toBe(true);
+    expect(result.release).toBeNull();
+    expect(result.pullRequest).toBeNull();
+    expect(runner.captures.map((call) => call.args[0])).toEqual(['describe', 'log']);
+    expect(runner.runs).toHaveLength(0);
+    expect(calls).toHaveLength(0);
+  });
+
+  it.each([
+    { tag: 'v1.2.3' },
+    { tag: '1.2.3', allowEmptyRelease: true },
+    { allowEmptyRelease: true },
+  ] satisfies ReleaseTagOptions[])(
+    'executes explicit/opted-in releases and resolves file credentials once with %j',
+    async (request) => {
+      await withTempDir(async (dir) => {
+        await fs.writeFile(join(dir, 'token'), TOKEN_CANARY);
+        const open = vi.spyOn(fs, 'open');
+        const runner = createReleaseRunner({
+          capture: (_executable, args) => (args[0] === 'log' ? ok('') : undefined),
+        });
+        const { calls, fetchFn } = createRecordingFetch((call) =>
+          successfulGitHubResponse(call.url, { method: call.method }),
+        );
+        const result = await runReleaseTag({
+          cwd: dir,
+          baseBranch: 'main',
+          releaseCommand: 'controlled-release',
+          githubTokenFile: 'token',
+          githubRepository: 'octo/hello',
+          runner,
+          fetchFn,
+          ...request,
+        });
+        const manual = request.tag !== undefined;
+        expect(result.determined).toEqual({
+          version: '1.2.3',
+          tagVersion: 'v1.2.3',
+          bump: manual ? null : 'patch',
+          lastTag: manual ? null : 'v1.2.2',
+          manual,
+          noChanges: false,
+        });
+        expect(result.plan.allowEmptyRelease).toBe(request.allowEmptyRelease ?? false);
+        expect(
+          runner.captures.filter((call) => ['describe', 'log'].includes(call.args[0])).map((call) => call.args[0]),
+        ).toEqual(manual ? [] : ['describe', 'log']);
+        expect(open).toHaveBeenCalledOnce();
+        expect(runner.runs).toHaveLength(1);
+        expect(runner.runs[0].args).toEqual(['1.2.3', '--ci']);
+        expect(runner.captures.filter((call) => ['checkout', 'push'].includes(call.args[0])).length).toBeGreaterThan(0);
+        expect(result.release?.releasedHead).toBe(RELEASED_HEAD);
+        expect(result.pullRequest?.skipped).toBe(false);
+        expect(result.pullRequest?.reused).toBe(false);
+        expect(calls).toHaveLength(4);
+        for (const call of calls) {
+          expect(headerValue(call.headers, 'authorization')).toBe(`Bearer ${TOKEN_CANARY}`);
+        }
+        expect(JSON.stringify(result)).not.toContain(TOKEN_CANARY);
+      });
+    },
+  );
+
+  it.each([
+    { lastTag: 'v1.2.9007199254740991', log: commitLog('fix: repair') },
+    { lastTag: 'v1.9007199254740991.0', log: commitLog('feat: add widget') },
+    { lastTag: 'v9007199254740991.0.0', log: commitLog('refactor!: replace api') },
+    { lastTag: 'v1.2.9007199254740991', log: '', allowEmptyRelease: true },
+  ])(
+    'rejects numeric overflow before credential/auth/mutation work case %#',
+    async ({ lastTag, log, allowEmptyRelease }) => {
+      await withTempDir(async (dir) => {
+        const open = vi.spyOn(fs, 'open');
+        const stat = vi.spyOn(fs, 'stat');
+        const access = vi.spyOn(fs, 'access');
+        const runner = createFakeRunner(queueHandler([ok(`${lastTag}\n`), ok(log)]));
+        const { calls, fetchFn } = createRecordingFetch(() => {
+          throw new Error('overflow must stop GitHub work');
+        });
+        await expect(
+          runReleaseTag({
+            cwd: dir,
+            baseBranch: 'main',
+            githubTokenFile: 'unopened-token',
+            runner,
+            fetchFn,
+            allowEmptyRelease,
+          }),
+        ).rejects.toThrow(/determined.version.*safe integers/);
+        expect(open).not.toHaveBeenCalled();
+        expect(stat).not.toHaveBeenCalled();
+        expect(access).not.toHaveBeenCalled();
+        expect(runner.captures.map((call) => call.args[0])).toEqual(['describe', 'log']);
+        expect(runner.runs).toHaveLength(0);
+        expect(calls).toHaveLength(0);
+      });
+    },
+  );
+});
+
 describe('runReleaseTag skip versus not selected', () => {
   it('invokes release when skipRelease is true and returns a skipped result', async () => {
     await withEnv({ GITHUB_TOKEN: undefined, GITHUB_REPOSITORY: undefined, GITHUB_REF_NAME: undefined }, async () => {
-      const runner = createFakeRunner(queueHandler(withPreflight(releaseCaptures(''))));
+      const runner = createReleaseRunner();
       const { calls, fetchFn } = createRecordingFetch(() => {
         throw new Error('fetch must not be called');
       });
@@ -486,7 +656,7 @@ describe('runReleaseTag skip versus not selected', () => {
 
   it('invokes pr when skipPr is true and returns a skipped result', async () => {
     await withEnv({ GITHUB_TOKEN: undefined, GITHUB_REPOSITORY: undefined, GITHUB_REF_NAME: undefined }, async () => {
-      const runner = createFakeRunner(queueHandler(withPreflight(releaseCaptures('msg'))));
+      const runner = createReleaseRunner({ tagMessage: 'msg' });
       const { calls, fetchFn } = createRecordingFetch(() => {
         throw new Error('fetch must not be called');
       });
@@ -525,7 +695,7 @@ describe('runReleaseTag skip versus not selected', () => {
       });
       expect(unselected.release).toBeNull();
       expect(unselected.pullRequest).toBeNull();
-      const skippedRunner = createFakeRunner(queueHandler(withPreflight(releaseCaptures(''))));
+      const skippedRunner = createReleaseRunner();
       const { fetchFn: skippedFetch } = createRecordingFetch(() => {
         throw new Error('fetch must not be called');
       });
@@ -614,11 +784,11 @@ describe('runReleaseTag errors and redaction', () => {
   it('stops pr when release fails', async () => {
     await withTempDir(async (dir) => {
       const releasePath = join(dir, 'fake-release-it');
-      await writeFile(releasePath, '#!/usr/bin/env node\n', 'utf8');
-      await chmod(releasePath, 0o755);
+      await fs.writeFile(releasePath, '#!/usr/bin/env node\n', 'utf8');
+      await fs.chmod(releasePath, 0o755);
       await withEnv({ GITHUB_TOKEN: undefined, GITHUB_REPOSITORY: undefined, GITHUB_REF_NAME: undefined }, async () => {
-        const runner = createFakeRunner(queueHandler(withPreflight(releaseCaptures(''))), () => {
-          throw new Error('controlled release failure');
+        const runner = createReleaseRunner({
+          release: () => failed(1, '', 'controlled release failure'),
         });
         const { calls, fetchFn } = createRecordingFetch(() => {
           throw new Error('fetch must not be called');
@@ -643,7 +813,7 @@ describe('runReleaseTag errors and redaction', () => {
 
   it('redacts explicit and env tokens from propagated errors', async () => {
     await withEnv({ GITHUB_TOKEN: ENV_TOKEN, GITHUB_REPOSITORY: undefined, GITHUB_REF_NAME: undefined }, async () => {
-      const runner = createFakeRunner(queueHandler(withPreflight(releaseCaptures('notes'))));
+      const runner = createReleaseRunner({ tagMessage: 'notes' });
       const { fetchFn } = createRecordingFetch((call, index) => {
         if (index === 0) {
           return makeResponse(200, { permissions: { push: true } });
@@ -670,7 +840,7 @@ describe('runReleaseTag errors and redaction', () => {
 
   it('never includes token bytes in the result', async () => {
     await withEnv({ GITHUB_TOKEN: undefined, GITHUB_REPOSITORY: undefined, GITHUB_REF_NAME: undefined }, async () => {
-      const runner = createFakeRunner(queueHandler(withPreflight(releaseCaptures(''))));
+      const runner = createReleaseRunner();
       const { fetchFn } = createRecordingFetch(() => {
         throw new Error('fetch must not be called');
       });
@@ -709,7 +879,7 @@ describe('runReleaseTag preflight', () => {
         const runner = createFakeRunner(
           queueHandler([
             ok('v1.2.2\n'),
-            ok('feat: new thing\n'),
+            ok(commitLog('feat: new thing\n')),
             failed(1, '', ''),
             failed(128, '', 'git@github.com: Permission denied (publickey).'),
           ]),
@@ -761,7 +931,7 @@ describe('runReleaseTag preflight', () => {
 
   it('runs stages with zero preflight invocations when skipPreflight is true', async () => {
     await withEnv({ GITHUB_TOKEN: undefined, GITHUB_REPOSITORY: undefined, GITHUB_REF_NAME: undefined }, async () => {
-      const runner = createFakeRunner(queueHandler(releaseCaptures('')));
+      const runner = createReleaseRunner();
       const { calls, fetchFn } = createRecordingFetch(() => {
         throw new Error('fetch must not be called');
       });
@@ -777,8 +947,14 @@ describe('runReleaseTag preflight', () => {
         fetchFn,
       });
       expect(result.release?.skippedReason).toBe('skipped via skipRelease');
-      expect(runner.captures).toHaveLength(8);
-      expect(runner.captures[0]?.args[0]).toBe('config');
+      expect(runner.captures.map((call) => call.args)).toContainEqual([
+        'symbolic-ref',
+        '--quiet',
+        '--no-recurse',
+        'refs/heads/main',
+      ]);
+      expect(runner.captures.map((call) => call.args)).not.toContainEqual(['config', '--get', 'core.sshCommand']);
+      expect(runner.captures.map((call) => call.args)).not.toContainEqual(['ls-remote', 'origin', 'HEAD']);
       expect(calls).toHaveLength(0);
     });
   });

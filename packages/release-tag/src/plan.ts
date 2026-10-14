@@ -1,8 +1,24 @@
+import { inspect } from 'node:util';
+
 import { isCapturingProcessRunner, isPlainObject, type CapturingProcessRunner } from '@repo-toolkit/publish-package';
+
+import { resolveExplicitToken } from './credentials';
+import { knownCredentialSecrets, readProperty, redactText, safeError, safeMetadata } from './diagnostics';
+import { resolveGitHubApiUrl } from './github-url';
+import { assertProcessLimits } from './process';
+import {
+  assertBranchName,
+  assertPlanIdentity,
+  normalizeStableTag,
+  parseOwnerRepo,
+  resolveMergeMethod,
+} from './validation';
 
 export type ReleaseTagStage = 'determine' | 'release' | 'pr';
 
 export type ReleaseTagTokenSource = 'explicit' | 'file' | 'env' | 'none';
+
+export type ReleaseTagMergeMethod = 'merge' | 'squash' | 'rebase';
 
 const RELEASE_TAG_STAGES: ReadonlyArray<ReleaseTagStage> = ['determine', 'release', 'pr'];
 
@@ -11,16 +27,13 @@ const DEFAULT_GIT_USER_NAME = 'github-actions[bot]';
 const DEFAULT_GIT_USER_EMAIL = 'github-actions[bot]@users.noreply.github.com';
 const DEFAULT_RELEASE_COMMAND = './node_modules/.bin/release-it';
 const DEFAULT_GITHUB_TOKEN_ENV = 'GITHUB_TOKEN';
-const DEFAULT_GITHUB_API_URL = 'https://api.github.com';
 const DEFAULT_TIMEOUT_MS = 60000;
 const DEFAULT_MAX_OUTPUT_BYTES = 1048576;
-
-const VERSION_CORE_PATTERN = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
-const WHITESPACE_PATTERN = /\s/;
 
 export interface ReleaseTagOptions {
   cwd?: string;
   tag?: string;
+  allowEmptyRelease?: boolean;
   baseBranch?: string;
   releaseBranch?: string;
   gitExecutable?: string;
@@ -30,12 +43,14 @@ export interface ReleaseTagOptions {
   releaseCommand?: string;
   releaseArgs?: ReadonlyArray<string>;
   skipRelease?: boolean;
+  resetReleaseBranch?: boolean;
   githubToken?: string;
   githubTokenFile?: string;
   githubTokenEnv?: string;
   githubRepository?: string;
   githubApiUrl?: string;
   autoMergePr?: boolean;
+  mergeMethod?: ReleaseTagMergeMethod;
   deleteMergedBranch?: boolean;
   skipPr?: boolean;
   skipPreflight?: boolean;
@@ -50,6 +65,7 @@ export interface ReleaseTagOptions {
 export interface ReleaseTagPlan {
   cwd: string;
   tag?: string;
+  allowEmptyRelease: boolean;
   baseBranch?: string;
   releaseBranch?: string;
   gitExecutable: string;
@@ -59,11 +75,13 @@ export interface ReleaseTagPlan {
   releaseCommand: string;
   releaseArgs: ReadonlyArray<string>;
   skipRelease: boolean;
+  resetReleaseBranch: boolean;
   githubTokenEnv: string;
   githubTokenFile?: string;
   githubRepository?: string;
   githubApiUrl: string;
   autoMergePr: boolean;
+  mergeMethod: ReleaseTagMergeMethod;
   deleteMergedBranch: boolean;
   skipPr: boolean;
   skipPreflight: boolean;
@@ -97,17 +115,6 @@ function optionalString(value: unknown, label: string): string | undefined {
   return value;
 }
 
-function optionalSecret(value: unknown, label: string): string | undefined {
-  if (value === undefined) {
-    return undefined;
-  }
-  if (typeof value !== 'string') {
-    throw new Error(`${label} must be a string`);
-  }
-  assertNoNul(value, label);
-  return value.length === 0 ? undefined : value;
-}
-
 function stringOrDefault(value: unknown, label: string, fallback: string): string {
   const resolved = optionalString(value, label);
   return resolved === undefined ? fallback : resolved;
@@ -134,41 +141,15 @@ function positiveIntOrDefault(value: unknown, label: string, fallback: number): 
 }
 
 function resolveTag(value: unknown): string | undefined {
-  if (value === undefined) {
-    return undefined;
-  }
-  if (typeof value !== 'string') {
-    throw new Error('tag must be a string');
-  }
-  assertNoNul(value, 'tag');
-  if (value.length === 0) {
-    throw new Error('tag must be a X.Y.Z version with an optional single leading v');
-  }
-  const stripped = value.startsWith('v') ? value.slice(1) : value;
-  if (!VERSION_CORE_PATTERN.test(stripped)) {
-    throw new Error(`tag must be a X.Y.Z version with an optional single leading v: ${value}`);
-  }
-  return stripped;
+  return value === undefined ? undefined : normalizeStableTag(value);
 }
 
 function resolveReleaseBranch(value: unknown, tag: string | undefined): string | undefined {
-  if (value === undefined) {
-    return tag === undefined ? undefined : `changelog/${tag}`;
+  const branch = value === undefined && tag !== undefined ? `changelog/${tag}` : value;
+  if (branch !== undefined) {
+    assertBranchName(branch, 'releaseBranch');
   }
-  if (typeof value !== 'string') {
-    throw new Error('releaseBranch must be a string');
-  }
-  assertNoNul(value, 'releaseBranch');
-  if (value.length === 0) {
-    throw new Error('releaseBranch must be a non-empty string');
-  }
-  if (WHITESPACE_PATTERN.test(value)) {
-    throw new Error('releaseBranch must not contain whitespace');
-  }
-  if (value === 'HEAD') {
-    throw new Error('releaseBranch must not be HEAD');
-  }
-  return value;
+  return branch;
 }
 
 function resolveGithubRepository(value: unknown): string | undefined {
@@ -176,33 +157,7 @@ function resolveGithubRepository(value: unknown): string | undefined {
   if (resolved === undefined) {
     return undefined;
   }
-  if (WHITESPACE_PATTERN.test(resolved)) {
-    throw new Error('githubRepository must use owner/repo form with no empty segments or whitespace');
-  }
-  const parts = resolved.split('/');
-  if (parts.length !== 2 || parts[0].length === 0 || parts[1].length === 0) {
-    throw new Error('githubRepository must use owner/repo form with no empty segments or whitespace');
-  }
-  return resolved;
-}
-
-function resolveGithubApiUrl(value: unknown): string {
-  const resolved = stringOrDefault(value, 'githubApiUrl', DEFAULT_GITHUB_API_URL);
-  let url: URL;
-  try {
-    url = new URL(resolved);
-  } catch {
-    throw new Error('githubApiUrl is not a valid URL');
-  }
-  if (url.username !== '' || url.password !== '') {
-    throw new Error('githubApiUrl must not contain credentials');
-  }
-  if (url.hash !== '') {
-    throw new Error('githubApiUrl must not contain a fragment');
-  }
-  if (url.protocol !== 'https:' && url.protocol !== 'http:') {
-    throw new Error('githubApiUrl must use http or https');
-  }
+  parseOwnerRepo(resolved, 'githubRepository');
   return resolved;
 }
 
@@ -277,15 +232,15 @@ function resolveFetchFn(value: unknown): typeof fetch | undefined {
   return value as typeof fetch;
 }
 
-export function resolveReleaseTagPlan(options: ReleaseTagOptions = {}): ReleaseTagPlan {
+function buildPlan(options: ReleaseTagOptions): ReleaseTagPlan {
   if (!isPlainObject(options)) {
     throw new Error('options must be an object');
   }
 
   const tag = resolveTag(options.tag);
   const githubTokenEnv = stringOrDefault(options.githubTokenEnv, 'githubTokenEnv', DEFAULT_GITHUB_TOKEN_ENV);
-  const githubToken = optionalSecret(options.githubToken, 'githubToken');
-  const githubTokenFile = optionalSecret(options.githubTokenFile, 'githubTokenFile');
+  const githubToken = resolveExplicitToken(options.githubToken);
+  const githubTokenFile = optionalString(options.githubTokenFile, 'githubTokenFile');
 
   let tokenSource: ReleaseTagTokenSource = 'none';
   if (githubToken !== undefined) {
@@ -298,6 +253,7 @@ export function resolveReleaseTagPlan(options: ReleaseTagOptions = {}): ReleaseT
 
   const plan: ReleaseTagPlan = {
     cwd: stringOrDefault(options.cwd, 'cwd', process.cwd()),
+    allowEmptyRelease: booleanOrDefault(options.allowEmptyRelease, 'allowEmptyRelease', false),
     gitExecutable: stringOrDefault(options.gitExecutable, 'gitExecutable', DEFAULT_GIT_EXECUTABLE),
     gitUserName: stringOrDefault(options.gitUserName, 'gitUserName', DEFAULT_GIT_USER_NAME),
     gitUserEmail: stringOrDefault(options.gitUserEmail, 'gitUserEmail', DEFAULT_GIT_USER_EMAIL),
@@ -305,9 +261,11 @@ export function resolveReleaseTagPlan(options: ReleaseTagOptions = {}): ReleaseT
     releaseCommand: stringOrDefault(options.releaseCommand, 'releaseCommand', DEFAULT_RELEASE_COMMAND),
     releaseArgs: resolveReleaseArgs(options.releaseArgs),
     skipRelease: booleanOrDefault(options.skipRelease, 'skipRelease', false),
+    resetReleaseBranch: booleanOrDefault(options.resetReleaseBranch, 'resetReleaseBranch', false),
     githubTokenEnv,
-    githubApiUrl: resolveGithubApiUrl(options.githubApiUrl),
+    githubApiUrl: resolveGitHubApiUrl(options.githubApiUrl),
     autoMergePr: booleanOrDefault(options.autoMergePr, 'autoMergePr', false),
+    mergeMethod: resolveMergeMethod(options.mergeMethod),
     deleteMergedBranch: booleanOrDefault(options.deleteMergedBranch, 'deleteMergedBranch', false),
     skipPr: booleanOrDefault(options.skipPr, 'skipPr', false),
     skipPreflight: booleanOrDefault(options.skipPreflight, 'skipPreflight', false),
@@ -339,12 +297,88 @@ export function resolveReleaseTagPlan(options: ReleaseTagOptions = {}): ReleaseT
   }
   const runner = resolveRunner(options.runner);
   if (runner !== undefined) {
-    plan.runner = runner;
+    Object.defineProperty(plan, 'runner', { value: runner, configurable: true, writable: true });
   }
   const fetchFn = resolveFetchFn(options.fetchFn);
   if (fetchFn !== undefined) {
-    plan.fetchFn = fetchFn;
+    Object.defineProperty(plan, 'fetchFn', { value: fetchFn, configurable: true, writable: true });
   }
 
+  assertProcessLimits(plan);
+  assertPlanIdentity(plan);
   return plan;
+}
+
+export function snapshotReleaseTagPlan(
+  plan: ReleaseTagPlan,
+  secrets: ReadonlyArray<string | undefined>,
+): ReleaseTagPlan {
+  return safeMetadata(
+    {
+      cwd: plan.cwd,
+      ...(plan.tag === undefined ? {} : { tag: plan.tag }),
+      allowEmptyRelease: plan.allowEmptyRelease,
+      ...(plan.baseBranch === undefined ? {} : { baseBranch: plan.baseBranch }),
+      ...(plan.releaseBranch === undefined ? {} : { releaseBranch: plan.releaseBranch }),
+      gitExecutable: plan.gitExecutable,
+      gitUserName: plan.gitUserName,
+      gitUserEmail: plan.gitUserEmail,
+      signCommit: plan.signCommit,
+      releaseCommand: plan.releaseCommand,
+      releaseArgs: plan.releaseArgs.map((arg) => redactText(arg, secrets)),
+      skipRelease: plan.skipRelease,
+      resetReleaseBranch: plan.resetReleaseBranch,
+      githubTokenEnv: plan.githubTokenEnv,
+      ...(plan.githubTokenFile === undefined ? {} : { githubTokenFile: plan.githubTokenFile }),
+      ...(plan.githubRepository === undefined ? {} : { githubRepository: plan.githubRepository }),
+      githubApiUrl: plan.githubApiUrl,
+      autoMergePr: plan.autoMergePr,
+      mergeMethod: plan.mergeMethod,
+      deleteMergedBranch: plan.deleteMergedBranch,
+      skipPr: plan.skipPr,
+      skipPreflight: plan.skipPreflight,
+      tokenSource: plan.tokenSource,
+      tokenAvailable: plan.tokenAvailable,
+      dryRun: plan.dryRun,
+      only: [...plan.only],
+      timeoutMs: plan.timeoutMs,
+      maxOutputBytes: plan.maxOutputBytes,
+    },
+    secrets,
+  );
+}
+
+export function cloneStagePlan(
+  plan: ReleaseTagPlan,
+  refs: { baseBranch: string; releaseBranch: string },
+  secrets: ReadonlyArray<string | undefined>,
+): ReleaseTagPlan {
+  const clone = { ...plan, ...refs };
+  for (const key of ['runner', 'fetchFn'] as const) {
+    if (plan[key] !== undefined) {
+      Object.defineProperty(clone, key, { value: plan[key], configurable: true, writable: true });
+    }
+  }
+  return attachPlanSnapshot(clone, snapshotReleaseTagPlan(clone, secrets));
+}
+
+function attachPlanSnapshot(plan: ReleaseTagPlan, snapshot: ReleaseTagPlan): ReleaseTagPlan {
+  Object.freeze(snapshot.releaseArgs);
+  Object.freeze(snapshot.only);
+  Object.freeze(snapshot);
+  Object.defineProperties(plan, {
+    toJSON: { value: () => snapshot },
+    [inspect.custom]: { value: () => snapshot },
+  });
+  return plan;
+}
+
+export function resolveReleaseTagPlan(options: ReleaseTagOptions = {}): ReleaseTagPlan {
+  const secrets = knownCredentialSecrets(readProperty(options, 'githubToken'), readProperty(options, 'githubTokenEnv'));
+  try {
+    const plan = buildPlan(options);
+    return attachPlanSnapshot(plan, snapshotReleaseTagPlan(plan, secrets));
+  } catch (error) {
+    throw safeError(error, secrets);
+  }
 }

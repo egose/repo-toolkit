@@ -10,6 +10,7 @@ import type {
 } from '@repo-toolkit/publish-package';
 
 import { resolveReleaseTagPlan, runPreflight, type ReleaseTagPlan } from '../src/index';
+import { makeResponse } from './http-fixture';
 
 const FAKE_CWD = '/fake/workdir';
 const TOKEN_CANARY = 'preflight-canary-token-1a2b3c-do-not-leak';
@@ -68,16 +69,6 @@ interface RecordedFetch {
   headers: Record<string, string>;
   body: string | undefined;
   hasSignal: boolean;
-}
-
-function makeResponse(status: number, body: unknown): Response {
-  const text = typeof body === 'string' ? body : JSON.stringify(body);
-  return {
-    ok: status >= 200 && status < 300,
-    status,
-    headers: new Headers(),
-    text: async () => text,
-  } as Response;
 }
 
 function normalizeHeaders(input: unknown): Record<string, string> {
@@ -213,6 +204,8 @@ describe('runPreflight git check', () => {
       expect(runner.calls[0]?.options).toEqual({
         cwd: FAKE_CWD,
         timeoutMs: 1234,
+        maxOutputBytes: 1048576,
+        stdio: 'pipe',
         env: { GIT_TERMINAL_PROMPT: '0' },
       });
       expect(runner.calls[1]?.executable).toBe('git');
@@ -318,7 +311,7 @@ describe('runPreflight git check', () => {
       });
       const message = await errorMessage(runPreflight({ plan, runner, fetchFn }));
       expect(message).toContain('preflight failed');
-      expect(message).toContain('spawn git ENOENT');
+      expect(message).toContain('process transport failed (ENOENT)');
       expect(message).toContain('ssh-agent');
     });
   });

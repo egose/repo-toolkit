@@ -17,6 +17,7 @@ function HomepageHeader() {
           {siteConfig.title}
         </Heading>
         <p className="hero__subtitle">{siteConfig.tagline}</p>
+
         <div className={styles.buttons}>
           <Link className="button button--secondary button--lg" to="/docs/packages">
             Browse Package Docs
@@ -32,6 +33,7 @@ export default function Home(): ReactElement {
   return (
     <Layout title={siteConfig.title} description="Documentation for the repo-toolkit workspace packages.">
       <HomepageHeader />
+
       <main>
         <HomepageFeatures />
       </main>

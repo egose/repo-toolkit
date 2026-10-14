@@ -1,44 +1,24 @@
-import { readFile } from 'node:fs/promises';
-import { resolve as resolvePath } from 'node:path';
+import { performance } from 'node:perf_hooks';
 
-import { redactSensitiveValues } from '@repo-toolkit/publish-package';
-
+import { resolveExplicitToken } from './credentials';
+import { diagnosticText, safeError } from './diagnostics';
+import { assertGitHubRequestUrl } from './github-url';
 import type { ReleaseTagPlan } from './plan';
+import { assertProcessLimits } from './process';
+import { resolveOptionalOwnerRepo } from './validation';
 
 export const GITHUB_API_VERSION = '2022-11-28';
 export const USER_AGENT = 'repo-toolkit-release-tag';
 export const MAX_ERROR_CHARS = 2048;
 export const MAX_RESPONSE_BYTES_CAP = 1048576;
 
-const WHITESPACE_PATTERN = /\s/;
-
 export interface GitHubRequestResult {
   status: number;
   text: string;
 }
 
-export function truncateChars(text: string): string {
-  if (text.length <= MAX_ERROR_CHARS) {
-    return text;
-  }
-  return `${text.slice(0, MAX_ERROR_CHARS)}...[truncated]`;
-}
-
-function makeTimeoutSignal(timeoutMs: number): AbortSignal {
-  const candidate = AbortSignal as unknown as { timeout?: (ms: number) => AbortSignal };
-  if (typeof candidate.timeout === 'function') {
-    return candidate.timeout(timeoutMs);
-  }
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(new Error(`Request timed out after ${timeoutMs}ms`)), timeoutMs);
-  const maybeUnref = timer as unknown as { unref?: () => void };
-  if (typeof maybeUnref.unref === 'function') {
-    maybeUnref.unref();
-  }
-  return controller.signal;
-}
-
 export function createGitHubHeaders(token: string): Record<string, string> {
+  resolveExplicitToken(token);
   return {
     Accept: 'application/vnd.github+json',
     'X-GitHub-Api-Version': GITHUB_API_VERSION,
@@ -48,71 +28,12 @@ export function createGitHubHeaders(token: string): Record<string, string> {
   };
 }
 
-export function resolveExplicitToken(value: unknown): string | undefined {
-  if (value === undefined) {
-    return undefined;
-  }
-  if (typeof value !== 'string') {
-    throw new Error('githubToken must be a string');
-  }
-  if (value.includes('\0')) {
-    throw new Error('githubToken must not contain NUL bytes');
-  }
-  return value.length === 0 ? undefined : value;
-}
-
-export async function resolveGitHubToken(
-  plan: ReleaseTagPlan,
-  explicit: string | undefined,
-): Promise<string | undefined> {
-  if (explicit !== undefined) {
-    return explicit;
-  }
-  if (plan.githubTokenFile !== undefined) {
-    const path = resolvePath(plan.cwd, plan.githubTokenFile);
-    let raw: string;
-    try {
-      raw = await readFile(path, 'utf8');
-    } catch (error) {
-      const wrapped = new Error(`Failed to read githubTokenFile at ${path}`) as Error & { cause?: unknown };
-      wrapped.cause = error;
-      throw wrapped;
-    }
-    const token = raw.trim();
-    if (token.length === 0) {
-      throw new Error(`githubTokenFile at ${path} is empty`);
-    }
-    return token;
-  }
-  const envValue = process.env[plan.githubTokenEnv];
-  if (typeof envValue === 'string' && envValue.length > 0) {
-    return envValue;
-  }
-  return undefined;
-}
-
 export function resolveOwnerRepo(plan: ReleaseTagPlan): { owner: string; repo: string } {
-  let raw: string;
-  let label: string;
-  if (plan.githubRepository !== undefined) {
-    raw = plan.githubRepository;
-    label = 'githubRepository';
-  } else {
-    const envValue = process.env.GITHUB_REPOSITORY;
-    if (envValue === undefined || envValue.trim().length === 0) {
-      throw new Error('githubRepository is required (explicit --github-repository or GITHUB_REPOSITORY).');
-    }
-    raw = envValue.trim();
-    label = 'GITHUB_REPOSITORY';
+  const repository = resolveOptionalOwnerRepo(plan, process.env);
+  if (repository === undefined) {
+    throw new Error('githubRepository is required (explicit --github-repository or GITHUB_REPOSITORY).');
   }
-  if (WHITESPACE_PATTERN.test(raw)) {
-    throw new Error(`${label} must use owner/repo form with no empty segments or whitespace`);
-  }
-  const parts = raw.split('/');
-  if (parts.length !== 2 || parts[0].length === 0 || parts[1].length === 0) {
-    throw new Error(`${label} must use owner/repo form with no empty segments or whitespace`);
-  }
-  return { owner: parts[0], repo: parts[1] };
+  return repository;
 }
 
 export function resolveFetchFn(plan: ReleaseTagPlan, input: { fetchFn?: typeof fetch }): typeof fetch {
@@ -121,6 +42,14 @@ export function resolveFetchFn(plan: ReleaseTagPlan, input: { fetchFn?: typeof f
     throw new Error('fetchFn must be a function');
   }
   return candidate;
+}
+
+function cancelBody(body: ReadableStream<Uint8Array> | null | undefined): void {
+  try {
+    void body?.cancel().catch(() => undefined);
+  } catch {
+    return;
+  }
 }
 
 export async function sendGitHubRequest(
@@ -132,40 +61,116 @@ export async function sendGitHubRequest(
   timeoutMs: number,
   responseLimit: number,
   label: string,
-  token: string,
+  secrets: ReadonlyArray<string | undefined>,
 ): Promise<GitHubRequestResult> {
-  let response: Response;
-  try {
-    response = await fetchFn(url, {
-      method,
-      headers,
-      body,
-      signal: makeTimeoutSignal(timeoutMs),
-    } as unknown as Parameters<typeof fetch>[1]);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    if (error instanceof Error && error.name === 'AbortError') {
-      const wrapped = new Error(
-        redactSensitiveValues(`GitHub API request to ${label} timed out after ${timeoutMs}ms: ${message}`, [token]),
-      ) as Error & { cause?: unknown };
-      wrapped.cause = error;
-      throw wrapped;
+  assertGitHubRequestUrl(url);
+  assertProcessLimits({ timeoutMs, maxOutputBytes: responseLimit });
+  const limit = Math.min(responseLimit, MAX_RESPONSE_BYTES_CAP);
+  const controller = new AbortController();
+  const started = performance.now();
+  let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+  let finished = false;
+  let timedOut = false;
+  let phase = 'request';
+  const timeoutError = new Error(`GitHub API request to ${label} timed out after ${timeoutMs}ms`);
+  timeoutError.name = 'TimeoutError';
+
+  const cancel = (): void => {
+    controller.abort();
+    try {
+      void reader?.cancel().catch(() => undefined);
+    } catch {
+      return;
     }
-    const wrapped = new Error(
-      redactSensitiveValues(`GitHub API request to ${label} failed: ${message}`, [token]),
-    ) as Error & { cause?: unknown };
-    wrapped.cause = error;
-    throw wrapped;
+  };
+  const checkDeadline = (): void => {
+    if (timedOut || performance.now() - started >= timeoutMs) {
+      timedOut = true;
+      throw timeoutError;
+    }
+  };
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => {
+      timedOut = true;
+      cancel();
+      reject(timeoutError);
+    }, timeoutMs);
+  });
+
+  const consume = async (): Promise<GitHubRequestResult> => {
+    const response = await fetchFn(url, { method, headers, body, signal: controller.signal, redirect: 'error' });
+    if (finished || timedOut || performance.now() - started >= timeoutMs) {
+      cancelBody(response.body);
+      throw timeoutError;
+    }
+    if (
+      response.redirected ||
+      response.type === 'opaqueredirect' ||
+      (response.status >= 300 && response.status < 400)
+    ) {
+      cancelBody(response.body);
+      throw new Error('authenticated redirects are disabled');
+    }
+    if (!Number.isInteger(response.status) || response.status < 200 || response.status > 599) {
+      cancelBody(response.body);
+      throw new Error('fetchFn returned an invalid HTTP response status');
+    }
+    phase = 'response body';
+    if (response.body === null) {
+      return { status: response.status, text: '' };
+    }
+    reader = response.body.getReader();
+    let retained: Buffer | undefined;
+    let size = 0;
+    while (true) {
+      checkDeadline();
+      const chunk = await reader.read();
+      checkDeadline();
+      if (chunk.done) {
+        break;
+      }
+      if (!(chunk.value instanceof Uint8Array)) {
+        throw new Error('fetchFn returned a response body with non-byte chunks');
+      }
+      if (chunk.value.byteLength > limit - size) {
+        throw new Error(
+          `GitHub API response from ${label} produced more than ${limit} bytes, exceeding the ${limit}-byte response limit`,
+        );
+      }
+      if (chunk.value.byteLength > 0) {
+        retained ??= Buffer.allocUnsafe(limit);
+        retained.set(chunk.value, size);
+        size += chunk.value.byteLength;
+      }
+    }
+    const text = retained?.toString('utf8', 0, size) ?? '';
+    checkDeadline();
+    return { status: response.status, text };
+  };
+
+  try {
+    return await Promise.race([consume(), deadline]);
+  } catch (error) {
+    cancel();
+    if (timedOut || performance.now() - started >= timeoutMs) {
+      throw safeError(timeoutError, secrets);
+    }
+    const sanitized = safeError(error, secrets);
+    const name = sanitized.name;
+    const problem =
+      name === 'AbortError' ? 'was aborted' : name === 'TimeoutError' ? 'timed out in the transport' : 'failed';
+    const detail = diagnosticText(sanitized.message, secrets, MAX_ERROR_CHARS);
+    const wrapped = new Error(`GitHub API ${phase} to ${label} ${problem}: ${detail}`);
+    wrapped.name = name;
+    throw safeError(wrapped, secrets);
+  } finally {
+    finished = true;
+    clearTimeout(timer);
+    try {
+      reader?.releaseLock();
+    } catch {
+      cancel();
+    }
   }
-  const text = await response.text();
-  const bytes = Buffer.byteLength(text, 'utf8');
-  if (bytes > responseLimit) {
-    throw new Error(
-      redactSensitiveValues(
-        `GitHub API response from ${label} produced ${bytes} bytes, exceeding the ${responseLimit}-byte response limit`,
-        [token],
-      ),
-    );
-  }
-  return { status: response.status, text };
 }

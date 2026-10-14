@@ -4,6 +4,8 @@ Created: 2026-10-09 09:16:44 (local timestamp)
 
 Status: complete; RELTAG-01 through RELTAG-07 all completed with V1/V2/V3 green (RELTAG-07: fail-fast preflight follow-up from live-fire session).
 
+Post-implementation review: [Release Tag Review And Remediation](20261012-185911-release-tag-review-remediation.md) tracks the subsequent release-integrity, recovery, bounded-execution, and usability improvements. Historical findings and evidence below are preserved.
+
 ## Objective And Scope
 
 Build `@repo-toolkit/release-tag` with one `repo-toolkit-release-tag` executable that ports the behavior of `<egose-actions-checkout>/release-tag` (composite GitHub Action) into a testable TypeScript package following this repo's conventions.

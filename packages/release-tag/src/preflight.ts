@@ -1,23 +1,19 @@
-import {
-  defaultProcessRunner,
-  isCapturingProcessRunner,
-  isPlainObject,
-  redactSensitiveValues,
-  type CapturingProcessRunner,
-  type ProcessCaptureResult,
-} from '@repo-toolkit/publish-package';
+import { isPlainObject, type CapturingProcessRunner } from '@repo-toolkit/publish-package';
 
+import { stageCredentialContext, type CredentialContext } from './credentials';
+import { diagnosticText, safeError } from './diagnostics';
 import {
+  MAX_ERROR_CHARS,
   MAX_RESPONSE_BYTES_CAP,
   createGitHubHeaders,
-  resolveExplicitToken,
   resolveFetchFn,
-  resolveGitHubToken,
   resolveOwnerRepo,
   sendGitHubRequest,
-  truncateChars,
 } from './github';
+import { buildGitHubApiUrl } from './github-url';
 import type { ReleaseTagPlan } from './plan';
+import { captureCommand, resolveProcessRunner } from './process';
+import { assertPlanIdentity } from './validation';
 
 export interface PreflightCheckResult {
   name: 'git' | 'token';
@@ -39,26 +35,6 @@ export interface RunPreflightInput {
 
 const GUIDE_PREREQUISITES_URL = 'https://repo-toolkit.pages.dev/docs/packages/release-tag#prerequisites';
 const GIT_REMOTE = 'origin';
-const STDERR_TAIL_MAX_CHARS = 2048;
-
-function truncateTail(text: string): string {
-  if (text.length <= STDERR_TAIL_MAX_CHARS) {
-    return text;
-  }
-  return `...[truncated] ${text.slice(text.length - STDERR_TAIL_MAX_CHARS)}`;
-}
-
-function failureDetails(result: ProcessCaptureResult): string {
-  const parts: string[] = [];
-  if (result.error) {
-    parts.push(`error: ${result.error.message}`);
-  }
-  const tail = result.stderr.trim();
-  if (tail.length > 0) {
-    parts.push(`stderr: ${truncateTail(tail)}`);
-  }
-  return parts.length === 0 ? '' : ` (${parts.join('; ')})`;
-}
 
 function skipped(name: 'git' | 'token', reason: string): PreflightCheckResult {
   return { name, skipped: true, skippedReason: reason };
@@ -68,9 +44,9 @@ function passed(name: 'git' | 'token'): PreflightCheckResult {
   return { name, skipped: false, skippedReason: null };
 }
 
-function gitGuidance(details: string): string {
+function gitGuidance(): string {
   return [
-    `preflight failed: git ls-remote ${GIT_REMOTE} HEAD did not succeed${details}.`,
+    `preflight failed: git ls-remote ${GIT_REMOTE} HEAD did not succeed.`,
     'Stage 2 pushes require non-interactive git authentication:',
     'load your SSH key into an agent (eval "$(ssh-agent -s)" && ssh-add ~/.ssh/<key>)',
     'configure core.sshCommand with your key and -o BatchMode=yes, or configure an HTTPS credential helper,',
@@ -88,7 +64,11 @@ function tokenGuidance(repository: string, problem: string): string {
   ].join(' ');
 }
 
-async function checkGitAuth(plan: ReleaseTagPlan, runner: CapturingProcessRunner): Promise<void> {
+async function checkGitAuth(
+  plan: ReleaseTagPlan,
+  runner: CapturingProcessRunner | undefined,
+  context: CredentialContext,
+): Promise<void> {
   const env: Record<string, string> = { GIT_TERMINAL_PROMPT: '0' };
   const sshCommand = process.env.GIT_SSH_COMMAND;
   const sshExecutable = process.env.GIT_SSH;
@@ -96,52 +76,55 @@ async function checkGitAuth(plan: ReleaseTagPlan, runner: CapturingProcessRunner
     (sshCommand === undefined || sshCommand.length === 0) &&
     (sshExecutable === undefined || sshExecutable.length === 0)
   ) {
-    const configuredSsh = await runner.capture(plan.gitExecutable, ['config', '--get', 'core.sshCommand'], {
-      cwd: plan.cwd,
-      timeoutMs: plan.timeoutMs,
-      env: { ...env },
-    });
-    if (!configuredSsh.error && configuredSsh.code === 1) {
+    const configuredSsh = await captureCommand(
+      runner,
+      plan,
+      plan.gitExecutable,
+      ['config', '--get', 'core.sshCommand'],
+      {
+        ...context.diagnostics(plan),
+        label: 'git config --get core.sshCommand',
+        failureMessage: `${gitGuidance()} SSH configuration probe failed`,
+        acceptedExitCodes: [0, 1],
+        env: { ...env },
+      },
+    );
+    if (configuredSsh.code === 1) {
       env.GIT_SSH_COMMAND = 'ssh -o BatchMode=yes';
-    } else if (!configuredSsh.error && configuredSsh.code === 0 && sshCommand === '') {
+    } else if (configuredSsh.code === 0 && sshCommand === '') {
       env.GIT_SSH_COMMAND = configuredSsh.stdout.trim();
     }
   }
-  const result = await runner.capture(plan.gitExecutable, ['ls-remote', GIT_REMOTE, 'HEAD'], {
-    cwd: plan.cwd,
-    timeoutMs: plan.timeoutMs,
+  await captureCommand(runner, plan, plan.gitExecutable, ['ls-remote', GIT_REMOTE, 'HEAD'], {
+    ...context.diagnostics(plan),
+    label: `git ls-remote ${GIT_REMOTE} HEAD`,
+    failureMessage: gitGuidance(),
     env,
   });
-  if (result.error || result.code !== 0) {
-    throw new Error(redactSensitiveValues(gitGuidance(failureDetails(result)), []));
-  }
 }
 
-function hasPushPermission(text: string, status: number, repository: string, token: string): boolean {
+function hasPushPermission(text: string, status: number, repository: string, secrets: ReadonlyArray<string>): boolean {
   let parsed: unknown;
   try {
     parsed = JSON.parse(text);
   } catch {
     throw new Error(
-      redactSensitiveValues(
-        `preflight failed: GitHub token check GET /repos/${repository} returned invalid JSON (status=${status}): ${truncateChars(text)}. Bypass with --skip-preflight.`,
-        [token],
-      ),
+      `preflight failed: GitHub token check GET /repos/${repository} returned invalid JSON (status=${status}): ${diagnosticText(text, secrets, MAX_ERROR_CHARS)}. Bypass with --skip-preflight.`,
     );
   }
   if (!isPlainObject(parsed)) {
     throw new Error(
-      redactSensitiveValues(
-        `preflight failed: GitHub token check GET /repos/${repository} returned an unexpected shape (status=${status}): ${truncateChars(text)}. Bypass with --skip-preflight.`,
-        [token],
-      ),
+      `preflight failed: GitHub token check GET /repos/${repository} returned an unexpected shape (status=${status}): ${diagnosticText(text, secrets, MAX_ERROR_CHARS)}. Bypass with --skip-preflight.`,
     );
   }
   const permissions = (parsed as Record<string, unknown>).permissions;
   return isPlainObject(permissions) && (permissions as Record<string, unknown>).push === true;
 }
 
-export async function runPreflight(input: RunPreflightInput): Promise<PreflightResult> {
+export async function runPreflightWithContext(
+  input: RunPreflightInput,
+  context: CredentialContext,
+): Promise<PreflightResult> {
   if (!isPlainObject(input)) {
     throw new Error('input must be an object');
   }
@@ -149,7 +132,7 @@ export async function runPreflight(input: RunPreflightInput): Promise<PreflightR
     throw new Error('plan must be an object');
   }
   const plan = input.plan;
-  const explicitToken = resolveExplicitToken(input.githubToken);
+  assertPlanIdentity(plan, process.env);
 
   if (plan.skipPreflight) {
     return { git: skipped('git', 'skipped via skipPreflight'), token: skipped('token', 'skipped via skipPreflight') };
@@ -158,15 +141,18 @@ export async function runPreflight(input: RunPreflightInput): Promise<PreflightR
     return { git: skipped('git', 'dry-run'), token: skipped('token', 'dry-run') };
   }
 
+  const checkToken = plan.only.includes('pr') && !plan.skipPr;
+  if (checkToken) {
+    buildGitHubApiUrl(plan.githubApiUrl, ['repos']);
+    await context.resolve(plan);
+  }
+
   let git: PreflightCheckResult;
   if (!plan.only.includes('release')) {
     git = skipped('git', 'stage not selected');
   } else {
-    const runner = input.runner ?? plan.runner ?? defaultProcessRunner;
-    if (!isCapturingProcessRunner(runner)) {
-      throw new Error('runner must be a CapturingProcessRunner with a capture function');
-    }
-    await checkGitAuth(plan, runner);
+    const runner = resolveProcessRunner(plan, input.runner);
+    await checkGitAuth(plan, runner, context);
     git = passed('git');
   }
 
@@ -176,56 +162,51 @@ export async function runPreflight(input: RunPreflightInput): Promise<PreflightR
   } else if (plan.skipPr) {
     token = skipped('token', 'skipped via skipPr');
   } else {
-    const resolved = await resolveGitHubToken(plan, explicitToken);
+    const resolved = await context.resolve(plan);
     if (resolved === undefined) {
       token = skipped('token', 'github token not available');
     } else {
       const fetchFn = resolveFetchFn(plan, input);
       const ownerRepo = resolveOwnerRepo(plan);
-      const owner = encodeURIComponent(ownerRepo.owner);
-      const repo = encodeURIComponent(ownerRepo.repo);
-      const apiBase = plan.githubApiUrl.replace(/\/+$/, '');
       const responseLimit = Math.min(plan.maxOutputBytes, MAX_RESPONSE_BYTES_CAP);
       const repository = `${ownerRepo.owner}/${ownerRepo.repo}`;
+      const secrets = context.secrets();
       const result = await sendGitHubRequest(
         fetchFn,
-        `${apiBase}/repos/${owner}/${repo}`,
+        buildGitHubApiUrl(plan.githubApiUrl, ['repos', ownerRepo.owner, ownerRepo.repo]),
         'GET',
         createGitHubHeaders(resolved),
         undefined,
         plan.timeoutMs,
         responseLimit,
         'GET repo',
-        resolved,
+        secrets,
       );
       if (result.status < 200 || result.status >= 300) {
         throw new Error(
-          redactSensitiveValues(
-            tokenGuidance(repository, `failed (status=${result.status}): ${truncateChars(result.text)}`),
-            [resolved],
+          tokenGuidance(
+            repository,
+            `failed (status=${result.status}): ${diagnosticText(result.text, secrets, MAX_ERROR_CHARS)}`,
           ),
         );
       }
-      if (!hasPushPermission(result.text, result.status, repository, resolved)) {
+      if (!hasPushPermission(result.text, result.status, repository, secrets)) {
         const installation = await sendGitHubRequest(
           fetchFn,
-          `${apiBase}/installation/repositories?per_page=1`,
+          buildGitHubApiUrl(plan.githubApiUrl, ['installation', 'repositories'], { per_page: '1' }),
           'HEAD',
           createGitHubHeaders(resolved),
           undefined,
           plan.timeoutMs,
           responseLimit,
           'HEAD /installation/repositories',
-          resolved,
+          secrets,
         );
         if (installation.status < 200 || installation.status >= 300) {
           throw new Error(
-            redactSensitiveValues(
-              tokenGuidance(
-                repository,
-                `lacks push permission and HEAD /installation/repositories could not confirm an installation token (status=${installation.status}): ${truncateChars(installation.text)}`,
-              ),
-              [resolved],
+            tokenGuidance(
+              repository,
+              `lacks push permission and HEAD /installation/repositories could not confirm an installation token (status=${installation.status}): ${diagnosticText(installation.text, secrets, MAX_ERROR_CHARS)}`,
             ),
           );
         }
@@ -235,4 +216,13 @@ export async function runPreflight(input: RunPreflightInput): Promise<PreflightR
   }
 
   return { git, token };
+}
+
+export async function runPreflight(input: RunPreflightInput): Promise<PreflightResult> {
+  const context = stageCredentialContext(input);
+  try {
+    return await runPreflightWithContext(input, context);
+  } catch (error) {
+    throw safeError(error, context.secrets());
+  }
 }

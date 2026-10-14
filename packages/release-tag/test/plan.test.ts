@@ -36,6 +36,7 @@ describe('resolveReleaseTagPlan', () => {
       const plan = resolveReleaseTagPlan({});
       expect(plan.cwd).toBe(process.cwd());
       expect(plan.tag).toBeUndefined();
+      expect(plan.allowEmptyRelease).toBe(false);
       expect(plan.baseBranch).toBeUndefined();
       expect(plan.releaseBranch).toBeUndefined();
       expect(plan.gitExecutable).toBe('git');
@@ -45,11 +46,13 @@ describe('resolveReleaseTagPlan', () => {
       expect(plan.releaseCommand).toBe('./node_modules/.bin/release-it');
       expect(plan.releaseArgs).toEqual([]);
       expect(plan.skipRelease).toBe(false);
+      expect(plan.resetReleaseBranch).toBe(false);
       expect(plan.githubTokenEnv).toBe('GITHUB_TOKEN');
       expect(plan.githubTokenFile).toBeUndefined();
       expect(plan.githubRepository).toBeUndefined();
       expect(plan.githubApiUrl).toBe('https://api.github.com');
       expect(plan.autoMergePr).toBe(false);
+      expect(plan.mergeMethod).toBe('merge');
       expect(plan.deleteMergedBranch).toBe(false);
       expect(plan.skipPr).toBe(false);
       expect(plan.skipPreflight).toBe(false);
@@ -92,7 +95,7 @@ describe('resolveReleaseTagPlan', () => {
   });
 
   it('rejects tags outside the X.Y.Z manual contract', () => {
-    for (const tag of ['1.2.3.4', 'v1.2', '1.2.3-beta', 'vv1.2.3', '', 'v', '1.2.3+build', ' 1.2.3']) {
+    for (const tag of ['1.2.3.4', 'v1.2', '1.2.3-beta', 'vv1.2.3', '', 'v', '1.2.3+build', ' 1.2.3', '1.2.3\n']) {
       expect(() => resolveReleaseTagPlan({ tag })).toThrow(/tag/);
     }
   });
@@ -182,7 +185,7 @@ describe('resolveReleaseTagPlan', () => {
   });
 
   it('rejects non-positive timeoutMs and maxOutputBytes', () => {
-    for (const timeoutMs of [0, -1, Number.NaN, 1.5, 'x']) {
+    for (const timeoutMs of [0, -1, Number.NaN, Infinity, 1.5, 'x']) {
       expect(() => resolveReleaseTagPlan({ timeoutMs: timeoutMs as unknown as number })).toThrow(/timeoutMs/);
     }
     for (const maxOutputBytes of [0, -1, Number.NaN, 1.5, 'x']) {
@@ -197,6 +200,29 @@ describe('resolveReleaseTagPlan', () => {
     expect(() => resolveReleaseTagPlan({ dryRun: 'yes' as unknown as boolean })).toThrow(/dryRun/);
     expect(() => resolveReleaseTagPlan({ skipRelease: 1 as unknown as boolean })).toThrow(/skipRelease/);
     expect(() => resolveReleaseTagPlan({ skipPreflight: 0 as unknown as boolean })).toThrow(/skipPreflight/);
+    expect(() => resolveReleaseTagPlan({ resetReleaseBranch: 'true' as unknown as boolean })).toThrow(
+      /resetReleaseBranch/,
+    );
+    expect(resolveReleaseTagPlan({ resetReleaseBranch: true }).resetReleaseBranch).toBe(true);
+  });
+
+  it.each([false, true])('resolves and snapshots allowEmptyRelease=%s', (allowEmptyRelease) => {
+    const plan = resolveReleaseTagPlan({ allowEmptyRelease });
+    expect(plan.allowEmptyRelease).toBe(allowEmptyRelease);
+    expect(JSON.parse(JSON.stringify(plan)).allowEmptyRelease).toBe(allowEmptyRelease);
+  });
+
+  it.each(['true', 'false', 0, 1, null, {}, []])('rejects non-boolean allowEmptyRelease %j', (allowEmptyRelease) => {
+    expect(() => resolveReleaseTagPlan({ allowEmptyRelease } as ReleaseTagOptions)).toThrow(
+      /allowEmptyRelease must be a boolean/,
+    );
+  });
+
+  it('accepts the largest Node timer deadline and rejects values that would wrap', () => {
+    expect(resolveReleaseTagPlan({ timeoutMs: 2147483647 }).timeoutMs).toBe(2147483647);
+    for (const timeoutMs of [2147483648, 4294967296, Number.MAX_SAFE_INTEGER]) {
+      expect(() => resolveReleaseTagPlan({ timeoutMs })).toThrow(/timeoutMs.*2147483647/);
+    }
   });
 
   it('accepts a capturing runner and rejects invalid runner shapes', () => {
@@ -205,6 +231,18 @@ describe('resolveReleaseTagPlan', () => {
     for (const bad of [{}, { run() {}, runShell() {}, capture: 'x' }, null, 'x']) {
       expect(() => resolveReleaseTagPlan({ runner: bad } as unknown as ReleaseTagOptions)).toThrow(/runner/);
     }
+  });
+
+  it.each(['merge', 'squash', 'rebase'] as const)('resolves and snapshots mergeMethod %s', (mergeMethod) => {
+    const plan = resolveReleaseTagPlan({ mergeMethod });
+    expect(plan.mergeMethod).toBe(mergeMethod);
+    expect(JSON.parse(JSON.stringify(plan)).mergeMethod).toBe(mergeMethod);
+  });
+
+  it.each(['queue', 'MERGE', 'merge ', '', null, 0, false, {}, []])('rejects invalid mergeMethod %j', (mergeMethod) => {
+    expect(() => resolveReleaseTagPlan({ mergeMethod } as ReleaseTagOptions)).toThrow(
+      /mergeMethod must be merge, squash, or rebase/,
+    );
   });
 
   it('accepts a fetch function and rejects invalid fetch shapes', () => {

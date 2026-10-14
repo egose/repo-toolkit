@@ -2,6 +2,7 @@ export {
   resolveReleaseTagPlan,
   type ReleaseTagOptions,
   type ReleaseTagPlan,
+  type ReleaseTagMergeMethod,
   type ReleaseTagStage,
   type ReleaseTagTokenSource,
 } from './plan';

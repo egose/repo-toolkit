@@ -9,7 +9,23 @@ To work around this, you can set up an **SSH key** to fetch the repository in th
 
 The Git preflight preserves the `core.sshCommand` configured by `actions/checkout`, so the same deploy key is used for the authentication probe and subsequent pushes.
 
-The built-in `GITHUB_TOKEN` is an App installation token. Repository metadata may omit `permissions` or report `permissions.push: false` for this token even when the workflow grants write access. Preflight confirms the token type with a read-only installation probe; the workflow grants `contents: write`, `issues: write`, and `pull-requests: write` for the release requests.
+The built-in `GITHUB_TOKEN` is an App installation token. Repository metadata may omit `permissions` or report `permissions.push: false` for this token even when the workflow grants write access. Preflight confirms the token type with a read-only installation probe; the workflow grants `contents: write`, `issues: write`, and `pull-requests: write` for the release requests. That probe is fail-fast only: it does not prove write permission on every endpoint the run will touch, and GitHub still enforces each permission when the PR is created, labeled, merged, or deleted.
+
+Serialize releases so only one runs at a time, and never cancel an active release mid-push: branch cleanup is a non-atomic GET-then-DELETE without a SHA lease, a cancelled job can strand a pushed branch or tag, and there is no distributed release lock. Add a concurrency guard to any workflow that runs the release step:
+
+```yaml
+concurrency:
+  group: release-tag
+  cancel-in-progress: false
+```
+
+When the release step fails after the branch or tag exists, recover without rerunning the release or deleting the tag: inspect the stranded state with `git status --short --branch`, `git show-ref`, and `git ls-remote origin`, then resume only the PR step from the verified local identity:
+
+```sh
+repo-toolkit-release-tag --only pr --tag 1.2.3 --base-branch main --auto-merge-pr --delete-merged-branch
+```
+
+Release tags are immutable; choosing a new version is always preferred over deleting or overwriting a tag. A retry that reruns the full release against an existing target tag is correctly refused.
 
 The workflow uses these repository secrets:
 
