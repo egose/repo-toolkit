@@ -1,3 +1,5 @@
+## [0.44.1](https://github.com/egose/repo-toolkit/compare/v0.44.0...v0.44.1) (2026-10-14)
+
 ## [0.44.0](https://github.com/egose/repo-toolkit/compare/v0.43.0...v0.44.0) (2026-10-11)
 
 ### Features
