@@ -65,6 +65,7 @@ import { rewriteMermaidBlocks, preflightMermaidBlocks } from './mermaid';
 export { rewriteMermaidBlocks, preflightMermaidBlocks };
 export type { MermaidRewriteResult, MermaidRewriteOptions, MermaidPreflightResult } from './mermaid';
 
+import { findOrCreateDisambiguatedFolderPage, pathQualifiedFolderTitle } from './folder-pages';
 import {
   renderParentSummary,
   mergeParentSummaryBody,
@@ -107,6 +108,7 @@ export interface ConfluenceSyncOptions {
    * directory-segment titles. See {@link PAGE_TITLE_STRATEGIES}.
    */
   pageTitleStrategy?: PageTitleStrategy;
+  disambiguateFolderTitles?: boolean;
   /** Render ```html fenced blocks as inline HTML via the Confluence `html` macro instead of a code box (default: false). */
   renderHtmlBlocks?: boolean;
   /** Repository URL appended to synced pages as an italic source notice. */
@@ -120,10 +122,11 @@ export interface ConfluenceSyncOptions {
   clean?: boolean;
   /**
    * Update the target parent summary (default: true). When true, a successful
-   * real sync fetches and merges a deterministic tool-managed region into the
-   * parent page body, preserving all external content.
+   * real sync writes a deterministic summary, preserving all external parent
+   * content unless `overwriteParentPage` is enabled.
    */
   updateParentPage?: boolean;
+  overwriteParentPage?: boolean;
   /**
    * Dry-run: walk the tree and validate every markdown file and local image
    * source (same preflight as a real sync) then print the plan, but make no
@@ -159,8 +162,10 @@ export interface ConfluenceSyncPlan {
   clean: boolean;
   /** Parent-summary flag; resolved from {@link ConfluenceSyncOptions.updateParentPage} with default true. */
   updateParentPage: boolean;
+  overwriteParentPage: boolean;
   /** Validated leaf page title strategy applied during planning. */
   pageTitleStrategy: PageTitleStrategy;
+  disambiguateFolderTitles: boolean;
 }
 
 /** A single markdown entry's locally-validated sync plan. */
@@ -310,7 +315,7 @@ export class SyncMutationError extends Error {
     failure: SyncFailure;
     unprocessed: ReadonlyArray<DocEntry>;
   }) {
-    super(input.failure.error.message);
+    super(`${input.failure.entry.segments.join('/')}: ${input.failure.error.message}`);
     this.name = 'SyncMutationError';
     this.changes = input.changes;
     this.failure = input.failure;
@@ -562,6 +567,12 @@ function hasManagedMarker(labels: ReadonlyArray<PageLabel>): boolean {
 
 export function resolveConfluenceSyncPlan(options: ConfluenceSyncOptions = {}): ConfluenceSyncPlan {
   const pageTitleStrategy = resolvePageTitleStrategy(options.pageTitleStrategy);
+  if (options.overwriteParentPage !== undefined && typeof options.overwriteParentPage !== 'boolean') {
+    throw new Error('overwriteParentPage must be a boolean');
+  }
+  if (options.disambiguateFolderTitles !== undefined && typeof options.disambiguateFolderTitles !== 'boolean') {
+    throw new Error('disambiguateFolderTitles must be a boolean');
+  }
   const cwd = resolve(options.cwd ?? process.cwd());
   const folder = resolveInputPath(cwd, options.folder ?? '');
   if (!options.folder) {
@@ -622,7 +633,9 @@ export function resolveConfluenceSyncPlan(options: ConfluenceSyncOptions = {}): 
     repositoryUrl,
     clean: options.clean ?? false,
     updateParentPage: options.updateParentPage ?? true,
+    overwriteParentPage: options.overwriteParentPage ?? false,
     pageTitleStrategy,
+    disambiguateFolderTitles: options.disambiguateFolderTitles ?? false,
   };
 }
 
@@ -658,7 +671,13 @@ export async function syncConfluenceToDocs(options: ConfluenceSyncOptions = {}):
     log(
       '[dry-run] a real sync would label every mapped page with the ownership marker and prune stale labeled descendants.',
     );
+    if (plan.disambiguateFolderTitles) {
+      log('[dry-run] folder title disambiguation enabled; actual folder titles depend on existing pages in Confluence.');
+    }
     if (plan.updateParentPage) {
+      if (plan.overwriteParentPage) {
+        log('[dry-run] parent overwrite requested: a real sync would replace the entire parent page body with the generated summary.');
+      }
       const stats = computeDryRunStats(localPlan);
       log(
         `[dry-run] parent summary: Markdown pages: ${stats.markdownPages}, Directory pages: ${stats.directoryPages}, Total managed pages: ${stats.totalPages}, Maximum depth: ${stats.maxDepth}, Attachment references: ${stats.attachmentReferences}, Mermaid blocks: ${stats.mermaidBlocks}`,
@@ -666,11 +685,19 @@ export async function syncConfluenceToDocs(options: ConfluenceSyncOptions = {}):
       if (localPlan.entries.length === 0) {
         log('[dry-run] parent tree: No managed child pages');
       } else {
+        const shownFolders = new Set<string>();
         for (const entryPlan of localPlan.entries) {
           const dirParts = entryPlan.entry.segments.slice(0, -1);
           for (let i = 0; i < dirParts.length; i += 1) {
-            const dirPath = dirParts.slice(0, i + 1).join('/');
-            log(`[dry-run] parent tree: ${dirPath} (directory) => "${dirParts[i] ?? ''}"`);
+            const dirSegments = dirParts.slice(0, i + 1);
+            const dirPath = dirSegments.join('/');
+            if (shownFolders.has(dirPath)) {
+              continue;
+            }
+            shownFolders.add(dirPath);
+            const title = folderPageTitle(dirSegments, plan.pageTitleStrategy);
+            const fallback = plan.disambiguateFolderTitles ? ` (fallback: "${pathQualifiedFolderTitle(title, dirPath)}")` : '';
+            log(`[dry-run] parent tree: ${dirPath} (directory) => "${title}"${fallback}`);
           }
           log(`[dry-run] parent tree: ${entryPlan.entry.segments.join('/')} (page) => "${entryPlan.title}"`);
         }
@@ -759,17 +786,20 @@ export async function syncConfluenceToDocs(options: ConfluenceSyncOptions = {}):
       const parentPage = await client.getPage(plan.parentPageId);
       const stats = computeParentStats(localPlan, syncState);
       const pages = [...syncState.mappedRecords.values()].sort((a, b) => a.relativePath.localeCompare(b.relativePath));
-      const region = renderParentSummary({ repositoryUrl: plan.repositoryUrl, stats, pages });
       const currentBody = parentPage.body?.storage?.value ?? '';
-      const merged = mergeParentSummaryBody(currentBody, region);
-      if (merged === currentBody) {
+      const summary = renderParentSummary(
+        { repositoryUrl: plan.repositoryUrl, stats, pages },
+        { includeMarkers: !plan.overwriteParentPage },
+      );
+      const nextBody = plan.overwriteParentPage ? summary : mergeParentSummaryBody(currentBody, summary);
+      if (nextBody === currentBody) {
         log(`parent-unchanged: page ${plan.parentPageId}`);
         parentStatus = 'unchanged';
       } else {
         await client.updatePage({
           id: plan.parentPageId,
           title: parentPage.title,
-          body: { representation: 'storage', value: merged },
+          body: { representation: 'storage', value: nextBody },
           version: { number: (parentPage.version?.number ?? 0) + 1, message: plan.versionMessage },
         });
         log(`parent-updated: page ${plan.parentPageId}`);
@@ -1042,20 +1072,23 @@ async function syncEntry(
       return;
     }
 
-    if (isMarkdownName(segment)) {
-      const title = pageTitleFromSegments(segments.slice(0, idx + 1), plan.pageTitleStrategy);
-      const page = await cache.findOrCreate(title, currentParentId);
-      state.mappedIds.add(page.id);
-      await ensureManagedLabel(page.id, client, state, log);
-      recordDirectory(segments.slice(0, idx + 1).join('/'), title, page.id, idx + 1);
-      currentParentId = page.id;
+    const dirSegments = segments.slice(0, idx + 1);
+    const relativePath = dirSegments.join('/');
+    const mapped = state.mappedRecords.get(relativePath);
+    if (mapped) {
+      currentParentId = mapped.pageId;
       continue;
     }
-
-    const page = await cache.findOrCreate(segment, currentParentId);
+    const title = folderPageTitle(dirSegments, plan.pageTitleStrategy);
+    const page = plan.disambiguateFolderTitles
+      ? await cache.findOrCreateDisambiguatedFolder(title, currentParentId, relativePath)
+      : { ...await cache.findOrCreate(title, currentParentId), title };
     state.mappedIds.add(page.id);
     await ensureManagedLabel(page.id, client, state, log);
-    recordDirectory(segments.slice(0, idx + 1).join('/'), segment, page.id, idx + 1);
+    recordDirectory(relativePath, page.title, page.id, idx + 1);
+    if (page.title !== title) {
+      log(`folder title: ${relativePath} as "${page.title}" (page ${page.id})`);
+    }
     currentParentId = page.id;
   }
 }
@@ -1129,6 +1162,10 @@ class PageTitleCache {
     const pageId = created.id;
     this.cache.set(`${input.parentId}::${input.title}`, { id: pageId });
     return pageId;
+  }
+
+  async findOrCreateDisambiguatedFolder(title: string, parentId: string, relativePath: string): Promise<Page> {
+    return findOrCreateDisambiguatedFolderPage({ client: this.client, spaceId: this.spaceId, title, parentId, relativePath });
   }
 
   async findOrCreate(title: string, parentId: string): Promise<{ id: string }> {
@@ -1281,6 +1318,11 @@ async function predictBody(
   return predicted;
 }
 
+function folderPageTitle(segments: readonly string[], strategy: PageTitleStrategy): string {
+  const segment = segments[segments.length - 1] ?? '';
+  return isMarkdownName(segment) ? pageTitleFromSegments(segments, strategy) : segment;
+}
+
 function validateLocalHierarchy(entries: ReadonlyArray<LocalSyncEntryPlan>, strategy: PageTitleStrategy): void {
   const seen = new Map<string, 'file' | 'dir'>();
 
@@ -1291,12 +1333,8 @@ function validateLocalHierarchy(entries: ReadonlyArray<LocalSyncEntryPlan>, stra
     for (let index = 0; index < entry.segments.length; index += 1) {
       const segment = entry.segments[index] ?? '';
       const isLast = index === entry.segments.length - 1;
-      const title = isMarkdownName(segment)
-        ? isLast
-          ? entryPlan.title
-          : pageTitleFromSegments(entry.segments.slice(0, index + 1), strategy)
-        : segment;
       const kind: 'file' | 'dir' = isLast && isMarkdownName(segment) ? 'file' : 'dir';
+      const title = kind === 'file' ? entryPlan.title : folderPageTitle(entry.segments.slice(0, index + 1), strategy);
       const key = `${parentKey}::${title}`;
       const existing = seen.get(key);
 

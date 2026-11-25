@@ -89,10 +89,11 @@ export function mergeParentSummaryBody(currentBody: string, generatedRegion: str
   throw new Error('malformed or duplicate parent summary markers: expected 0 or 1 managed region');
 }
 
-export function renderParentSummary(input: ParentSummaryInput): string {
-  const lines: string[] = [];
-  lines.push(PARENT_SUMMARY_START_MARKER);
-  lines.push('<h2>Synced documentation</h2>');
+export function renderParentSummary(
+  input: ParentSummaryInput,
+  { includeMarkers = true }: { includeMarkers?: boolean } = {},
+): string {
+  const lines = ['<h2>Synced documentation</h2>'];
   if (input.repositoryUrl) {
     const url = escapeXmlAttribute(input.repositoryUrl);
     const text = escapeHtml(input.repositoryUrl);
@@ -113,8 +114,8 @@ export function renderParentSummary(input: ParentSummaryInput): string {
   } else {
     lines.push(renderTree(input.pages));
   }
-  lines.push(PARENT_SUMMARY_END_MARKER);
-  return lines.join('\n');
+  const summary = lines.join('\n');
+  return includeMarkers ? `${PARENT_SUMMARY_START_MARKER}\n${summary}\n${PARENT_SUMMARY_END_MARKER}` : summary;
 }
 
 function renderTree(pages: ReadonlyArray<ManagedPageRecord>): string {

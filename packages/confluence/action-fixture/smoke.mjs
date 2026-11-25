@@ -68,6 +68,8 @@ async function main() {
     delete baseEnv['INPUT_PASSWORD-FILE'];
     delete baseEnv['INPUT_CLEAN'];
     delete baseEnv['INPUT_UPDATE-PARENT-PAGE'];
+    delete baseEnv['INPUT_OVERWRITE-PARENT-PAGE'];
+    delete baseEnv['INPUT_DISAMBIGUATE-FOLDER-TITLES'];
 
     const failures = [];
 
@@ -83,6 +85,7 @@ async function main() {
       if (stdout.includes(MOCK_TOKEN) || stderr.includes(MOCK_TOKEN)) failures.push(`base: token "${MOCK_TOKEN}" was echoed to stdout or stderr`);
       if (!stdout.includes('[dry-run] parent summary:')) failures.push('base: expected default parent summary (update-parent-page true) to emit [dry-run] parent summary');
       if (stdout.includes('[dry-run] clean requested')) failures.push('base: did not expect clean intent with default clean false');
+      if (stdout.includes('[dry-run] parent overwrite requested:')) failures.push('base: did not expect parent overwrite intent by default');
     }
 
     {
@@ -112,6 +115,16 @@ async function main() {
       if (!stdout.includes('[dry-run]') ) failures.push('clean+parent: expected dry-run lines');
     }
 
+    {
+      const env = { ...baseEnv, 'INPUT_OVERWRITE-PARENT-PAGE': 'true', 'INPUT_DISAMBIGUATE-FOLDER-TITLES': 'true' };
+      const { status, stdout, stderr } = run(env);
+      if (status !== 0) failures.push(`overwrite-parent-page=true: expected exit 0, got ${status}`);
+      if (!stdout.includes('[dry-run] parent overwrite requested:')) failures.push('overwrite-parent-page=true: expected parent overwrite intent');
+      if (!stdout.includes('[dry-run] parent summary: Markdown pages: 2')) failures.push('overwrite-parent-page=true: expected parent summary statistics');
+      if (!stdout.includes('sub (directory) => "sub" (fallback: "sub (./sub)")')) failures.push('disambiguate-folder-titles=true: expected folder title fallback');
+      if (stdout.includes(MOCK_TOKEN) || stderr.includes(MOCK_TOKEN)) failures.push('overwrite-parent-page=true: token was echoed');
+    }
+
     if (failures.length > 0) {
       console.error('FAIL: confluence action smoke fixture');
       for (const f of failures) console.error('  - ' + f);
@@ -121,7 +134,7 @@ async function main() {
 
     console.error('PASS: confluence action smoke fixture');
     console.error('  spawn target: ' + cliPath);
-    console.error('  INPUT_* resolved by dist/cli.js; dry-run plan emitted; token not echoed; clean and update-parent-page inputs verified.');
+    console.error('  INPUT_* resolved by dist/cli.js; dry-run plan emitted; token not echoed; clean, parent, and folder title inputs verified.');
   } catch (error) {
     console.error('FAIL: confluence action smoke fixture (threw)');
     console.error(error instanceof Error ? error.stack ?? error.message : String(error));

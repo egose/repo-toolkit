@@ -76,7 +76,8 @@ Flags:
   italic source notice. The `--folder` path is added to the notice link when it
   is relative to `--cwd`. When omitted, GitHub Actions runs infer this from
   `GITHUB_SERVER_URL` and `GITHUB_REPOSITORY`.
-- `--page-title-strategy <value>` — leaf page title strategy (default: `filename-stem`). One of `filename-stem`, `filename`, `sentence-case-parent`, `sentence-case-parents`, `sentence-case-path`. Applied only to Markdown leaf pages; folder-generated parent pages keep their raw directory-segment titles. See [leaf page title strategies](#leaf-page-title-strategies).
+- `--page-title-strategy <value>` — leaf page title strategy (default: `filename-stem`). One of `filename-stem`, `filename`, `sentence-case-parent`, `sentence-case-parents`, `sentence-case-path`. See [leaf page title strategies](#leaf-page-title-strategies).
+- `--disambiguate-folder-titles` / `--no-disambiguate-folder-titles` — use distinct titles for new folder pages whose short names are taken (default: `false`). See [Folder page title conflicts](#folder-page-title-conflicts).
 - `--skip-unchanged` / `--no-skip-unchanged` — skip pages whose body is unchanged (default: `skip`)
 - `--dry-run` — walk the doc tree and validate every markdown file and local
   image source (same preflight as a real sync) then log the plan. No API
@@ -88,7 +89,8 @@ Flags:
   the Confluence `html` macro instead of a code box (default: `false`). **Unsafe
   for untrusted Markdown** — see the raw HTML section of the website guide.
 - `--clean` — move all page descendants to trash before recreation (default: `false`). **WARNING: destructive — all page descendants, including manual/unlabeled pages, are moved to trash before recreation; `parentPageId` itself is retained and never deleted.** Pages are moved to trash (recoverable), never purged.
-- `--update-parent-page` / `--no-update-parent-page` — update the parent page summary region (default: `true`). Use `--no-update-parent-page` to opt out.
+- `--update-parent-page` / `--no-update-parent-page` — update the parent page summary (default: `true`). Use `--no-update-parent-page` to leave the parent body untouched, even if overwrite is enabled.
+- `--overwrite-parent-page` / `--no-overwrite-parent-page` — replace the entire parent page body with the generated summary (default: `false`). **Removes any existing manual content from the parent body.** Enable only for a fully generated parent page.
 - `-i, --interactive` — prompt interactively (on a real TTY) for missing
   non-secret required fields. The API token is never prompted.
 
@@ -111,11 +113,13 @@ both read for every option. Boolean env values accept `true|1|yes|on` /
 | versionMessage          | `CONFLUENCE_VERSION_MESSAGE`     | `INPUT_VERSION-MESSAGE`                       |
 | repositoryUrl           | `CONFLUENCE_REPOSITORY_URL`      | `INPUT_REPOSITORY-URL`                        |
 | pageTitleStrategy       | `CONFLUENCE_PAGE_TITLE_STRATEGY` | `INPUT_PAGE-TITLE-STRATEGY`                   |
+| disambiguateFolderTitles (bool) | `CONFLUENCE_DISAMBIGUATE_FOLDER_TITLES` | `INPUT_DISAMBIGUATE-FOLDER-TITLES` |
 | skipUnchanged (bool)    | `CONFLUENCE_SKIP_UNCHANGED`      | `INPUT_SKIP-UNCHANGED`                        |
 | dryRun (bool)           | `CONFLUENCE_DRY_RUN`             | `INPUT_DRY-RUN`                               |
 | renderHtmlBlocks (bool) | `CONFLUENCE_RENDER_HTML_BLOCKS`  | `INPUT_RENDER-HTML-BLOCKS`                    |
 | clean (bool)            | `CONFLUENCE_CLEAN`               | `INPUT_CLEAN`                                 |
 | updateParentPage (bool) | `CONFLUENCE_UPDATE_PARENT_PAGE`  | `INPUT_UPDATE-PARENT-PAGE`                    |
+| overwriteParentPage (bool) | `CONFLUENCE_OVERWRITE_PARENT_PAGE` | `INPUT_OVERWRITE-PARENT-PAGE`              |
 
 Errors, `--help`, and all log lines never print the supplied token value. The
 secret-file loader wraps fs errors via `Error.cause` (`Failed to read
@@ -124,7 +128,7 @@ the file contents.
 
 ## Leaf page title strategies
 
-Leaf Confluence page titles are derived from the Markdown file's relative path segments. Directory segments become synthetic parent-page titles and retain their raw segment text for every strategy — only the Markdown leaf file uses `pageTitleStrategy`.
+Leaf Confluence page titles are derived from the Markdown file's relative path segments. Ordinary directory names are used for folder-page titles by default; `pageTitleStrategy` does not disambiguate those names.
 
 | Strategy                  | Behavior                                                                                      | Example for `community-nodes/cdogs-document-generator/credentials.md`   |
 | ------------------------- | --------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
@@ -142,7 +146,15 @@ Root-file behavior: for `sentence-case-parent` and `sentence-case-parents` the p
 
 > **Changing the strategy changes title-based identity.** Sync looks up Confluence pages by title under parent. Switching the strategy therefore seeks a new title and may **create a new page while leaving the old page untouched** — it does not rename or move existing pages. Previously labeled pages created under the old strategy carry the `repo-toolkit-confluence` ownership label and are **pruned (moved to trash) after a successful sync** under the new strategy because they become stale labeled descendants. Pages created before the labeling feature or otherwise unlabeled remain unlabeled and are **never pruned automatically** — they require manual cleanup in Confluence. Use `--dry-run` to preview generated titles (`would sync <path> as "<title>"`) before switching strategies in production.
 
-Path-based strategies reduce predictable local collisions (for example, repeated basenames such as `credentials.md` or `README.md` in separate subtrees) but cannot guarantee uniqueness against unrelated or manually created pages already present in the target Confluence space. Existing spaces may still cause Confluence API conflicts if a generated title collides with an unrelated page under the same parent. Do not truncate or hash titles locally; if Confluence imposes a remote title-length limit, the existing API error behavior applies.
+Path-based strategies reduce predictable local collisions (for example, repeated basenames such as `credentials.md` or `README.md` in separate subtrees) but cannot guarantee uniqueness against unrelated or manually created pages already present in the target Confluence space. A title may already be taken elsewhere in the same space, even under a different parent. Leaf titles are not truncated or hashed, so remote title-length and uniqueness errors can still occur.
+
+## Folder page title conflicts
+
+Confluence may require unique titles across a space. For example, `community-nodes/chefs` and `integrations/chefs` both normally use `chefs` as a folder-page title, even with `sentence-case-path` enabled for Markdown files.
+
+Set `--disambiguate-folder-titles`, `disambiguateFolderTitles: true`, or `CONFLUENCE_DISAMBIGUATE_FOLDER_TITLES=true` to resolve new folder conflicts without renaming the source tree. If `community-nodes/chefs` already maps to `chefs`, it keeps its title and page ID, while `integrations/chefs` can be created as `chefs (integrations/chefs)`. If the path-qualified title is also taken elsewhere, the tool tries one more title with a stable suffix based on the expected parent ID and folder path. An existing match must be under the expected parent; if multiple candidate pages match there, the sync stops instead of guessing. A failed create is retried with another title only after an explicit duplicate-title response, not after unrelated API failures.
+
+Keep the option enabled after using it: a folder page created with an alternate title is reused on subsequent syncs even when its short name becomes available. No pages are renamed or moved by this option, and no `--clean` is required. Markdown titles are unaffected; use `sentence-case-path` alongside this option for repeated Markdown filenames. With parent updates enabled, `--dry-run` shows possible folder fallbacks but cannot choose the final title without checking Confluence.
 
 ## Managed ownership and reconciliation
 
@@ -158,18 +170,21 @@ If sync or labeling fails before pruning, no stale-page deletions occur.
 
 `updateParentPage` defaults to `true` via API/config, `--update-parent-page` (positive CLI), `CONFLUENCE_UPDATE_PARENT_PAGE`, and `INPUT_UPDATE-PARENT-PAGE` (GitHub Action). Use `--no-update-parent-page` or set `updateParentPage: false` / `CONFLUENCE_UPDATE_PARENT_PAGE=false` / `INPUT_UPDATE-PARENT-PAGE=false` to opt out.
 
-After child-page sync, labeling, and clean/prune reconciliation succeed, the tool fetches the current target parent page, preserves its title and every byte outside one tool-managed region bounded by `<!-- repo-toolkit-confluence:parent-summary:start -->` / `<!-- repo-toolkit-confluence:parent-summary:end -->`, and updates that region with `version.number = current + 1`. The target parent itself remains unlabeled and is never deleted. On first run the region is appended; later runs replace it in place. Setting opt-out leaves both existing managed and manual parent content untouched — it does not remove a previously generated region. The PUT is skipped when the reconstructed body is byte-equal to the current body; no wall-clock timestamp, version, or per-run counters are included so identical deployments are idempotent. Malformed or duplicate markers fail closed without rewriting the parent. If any earlier phase fails, the parent summary is left unchanged; a parent GET/PUT failure after successful child reconciliation surfaces as `ParentSummaryError` (phase `parent-summary`) with child evidence and the failed parent id.
+After child-page sync, labeling, and clean/prune reconciliation succeed, the tool fetches the current target parent page and updates its body with `version.number = current + 1`. The parent's ID and title are unchanged, and the page is never labeled or deleted. A byte-identical body skips the PUT. If any earlier phase fails, the parent is left unchanged; a parent GET/PUT failure after successful child reconciliation surfaces as `ParentSummaryError` (phase `parent-summary`) with child evidence and the failed parent id.
 
-The generated region contains:
+By default, the tool preserves every byte outside one managed region bounded by `<!-- repo-toolkit-confluence:parent-summary:start -->` / `<!-- repo-toolkit-confluence:parent-summary:end -->`. It appends the region if both markers are absent and replaces it in place if exactly one valid pair is present. Malformed or duplicate markers fail closed without rewriting the parent. Turning off parent updates leaves both managed and manual parent content untouched.
 
-- `Synced documentation` heading with source provenance — when `repositoryUrl` resolves, the link is included; otherwise a generic `maintained by repo-toolkit-confluence` statement is rendered without exposing runner paths.
+For a fully generated parent page, pass `--overwrite-parent-page`, set `overwriteParentPage: true`, or set `CONFLUENCE_OVERWRITE_PARENT_PAGE=true`. This replaces the entire body with one current set of statistics and a linked file tree, even if previous summaries were duplicated or the markers were lost. It also removes any manual body content. Overwrite mode does not write markers; before switching back to the default mode, remove the unmarked summary once to avoid appending a duplicate. Overwrite has no effect if parent updates are disabled.
+
+The generated summary contains:
+
+- `Synced documentation` heading with a source link when `repositoryUrl` resolves.
 - Deterministic statistics derived from the validated local plan and final mapping: Markdown page count, generated directory-page count, total managed child-page count, maximum documentation depth, local attachment-reference count, and Mermaid-block count (zero values render explicitly for an empty tree).
 - A nested deterministic directory-style tree for every generated directory and Markdown page, in local relative-path order, displaying the resolved Confluence title, distinguishing directory pages from Markdown leaves, and linking each item to its mapped Confluence page via id-backed storage links.
-- Stable guidance that generated descendants carry the `repo-toolkit-confluence` label, missing labeled pages are pruned after successful sync, unlabeled pages are preserved by default, and explicit clean moves all safely deletable page descendants to trash.
 
-With an empty local tree, provenance/guidance, zero statistics, and an explicit `No managed child pages` tree state are rendered. No child-page bodies, headings, excerpts, attachment names, secrets, credentials, local absolute paths, or unbounded remote metadata are copied into the parent.
+With an empty local tree, zero statistics and an explicit `No managed child pages` tree state are rendered. No child-page bodies, headings, excerpts, attachment names, secrets, credentials, local absolute paths, or unbounded remote metadata are copied into the parent.
 
-Dry-run with `updateParentPage: true` prints locally known parent-summary statistics and title tree but cannot fetch parent content or provide mapped remote links because it makes zero API calls.
+Dry-run with `updateParentPage: true` prints locally known parent-summary statistics, the title tree, and whether overwrite is requested. It cannot fetch parent content or provide mapped remote links because it makes zero API calls.
 
 ## Dry run
 
@@ -187,8 +202,6 @@ Required Confluence permissions and API scopes for a real sync:
 
 Concurrent sync/clean jobs against the same `parentPageId` are unsupported and dangerous. Callers must serialize deployments for the same target; the tool does not add distributed locking. Two syncs racing on the same page are detected via optimistic concurrency (server returns HTTP 409 on version conflict) and the loser exits nonzero — rerun to reconcile.
 
-Downstream `egose/actions/confluence` wiring for `clean` and `update-parent-page` is a named release follow-up if that repository requires separately declared inputs (this package already accepts them via CLI/config/`CONFLUENCE_*`/`INPUT_*`; the Action example below lists them).
-
 ## JavaScript API
 
 ```ts
@@ -203,15 +216,16 @@ await syncConfluenceToDocs({
   parentPageId: '123456789',
   versionMessage: 'chore(docs): sync',
   pageTitleStrategy: 'sentence-case-parents', // optional; default: 'filename-stem'
+  disambiguateFolderTitles: true,
   clean: false, // optional; default: false — when true, trash every page descendant before recreation
   updateParentPage: true, // optional; default: true — set false to skip parent summary update
+  overwriteParentPage: false,
 });
 ```
 
 `resolveConfluenceSyncPlan(options)` resolves the same plan without starting a
-sync; it validates `pageTitleStrategy`, fills `clean` (default `false`) and
-`updateParentPage` (default `true`), and is the documented way to validate
-options up front.
+sync; it validates options and fills defaults for `clean` (`false`),
+`updateParentPage` (`true`), and `overwriteParentPage` (`false`).
 
 `syncConfluenceToDocs` runs a **local preflight** before any remote mutation:
 every markdown file is read and converted to storage HTML, and every local
@@ -280,23 +294,29 @@ inputs:
   parent-page-id: { required: true }
   version-message: { required: false }
   page-title-strategy: { required: false, default: 'filename-stem' }
+  disambiguate-folder-titles: { required: false, default: 'false' }
   dry-run: { required: false, default: 'false' }
   skip-unchanged: { required: false, default: 'true' }
   render-html-blocks: { required: false, default: 'false' }
   clean: { required: false, default: 'false' }
   update-parent-page: { required: false, default: 'true' }
+  overwrite-parent-page: { required: false, default: 'false' }
 ```
 
 The `clean` input is destructive — when `true`, every page descendant of
 `parentPageId`, including manual/unlabeled pages, is moved to trash before
-recreation. The `update-parent-page` input controls the parent summary region
-(default on); set `false` to skip parent updates and leave existing managed and
-manual parent content untouched. If `egose/actions/confluence` requires
-separately declared inputs, wire both there as a release follow-up.
+recreation. The `update-parent-page` input controls parent updates (default on).
+Set `overwrite-parent-page: 'true'` to replace the entire parent body; this takes
+effect only if parent updates are on. For a wrapper without that input, use
+`CONFLUENCE_OVERWRITE_PARENT_PAGE: 'true'` as a step environment variable with a
+bundle that supports overwrite mode.
+
+For a wrapper without a `disambiguate-folder-titles` input, add `CONFLUENCE_DISAMBIGUATE_FOLDER_TITLES: 'true'` to the sync step's `env:` once the toolkit build in use supports it.
 
 A runnable smoke fixture lives under `packages/confluence/action-fixture/` and
 demonstrates starting a sync with mocked `INPUT_*` inputs (no network), proving
-`INPUT_CLEAN` and `INPUT_UPDATE-PARENT-PAGE` reach planning via dry-run.
+`INPUT_CLEAN`, `INPUT_UPDATE-PARENT-PAGE`, `INPUT_OVERWRITE-PARENT-PAGE`, and
+`INPUT_DISAMBIGUATE-FOLDER-TITLES` reach planning via dry-run.
 
 ## Notes
 

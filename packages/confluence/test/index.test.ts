@@ -9,6 +9,7 @@ const DIST_INDEX_DTS = resolve(TEST_DIR, '..', 'dist', 'index.d.ts');
 
 import {
   CONFLUENCE_MANAGED_LABEL,
+  ConfluenceApiError,
   PAGE_TITLE_STRATEGIES,
   formatMermaidStatus,
   planCleanDeletions,
@@ -55,6 +56,7 @@ function buildFakeClient(opts: {
   initialAttachmentIds?: Record<string, string>;
   initialLabels?: Record<string, PageLabel[]>;
   extraDescendants?: PageDescendant[];
+  uniqueTitles?: boolean;
 }): { client: ConfluenceGateway; calls: RecordedCall[] } {
   const spaceId = opts.spaceId ?? 'SPACE';
   const pages = new Map<string, Page>();
@@ -118,6 +120,9 @@ function buildFakeClient(opts: {
     },
     async createPage(input: { title: string; parentId: string; body?: { value: string } }): Promise<Page> {
       calls.push({ method: 'createPage', args: [input] });
+      if (opts.uniqueTitles && [...allPages().values()].some((page) => page.title === input.title)) {
+        throw new ConfluenceApiError('Client error (400)', 400, '/wiki/api/v2/pages', 'A page already exists with the same TITLE in this space');
+      }
       const id = String(pageIdCounter);
       pageIdCounter += 1;
       const bodyValue = input.body?.value ?? '';
@@ -276,6 +281,7 @@ describe('resolveConfluenceSyncPlan', () => {
     expect(plan.skipUnchanged).toBe(true);
     expect(plan.dryRun).toBe(false);
     expect(plan.renderHtmlBlocks).toBe(false);
+    expect(plan.disambiguateFolderTitles).toBe(false);
     expect(plan.versionMessage).toMatch(/repo-toolkit-confluence/);
   });
 
@@ -854,6 +860,65 @@ describe('CFNAME-02: page title strategies in sync', () => {
     expect(parentIds[0]).not.toBe(parentIds[1]);
   });
 
+  it('keeps the existing chefs folder and publishes and reuses an alternate title in the other branch', async () => {
+    await mkdir(join(tmp, 'community-nodes', 'chefs'), { recursive: true });
+    await mkdir(join(tmp, 'integrations', 'chefs'), { recursive: true });
+    await writeFile(join(tmp, 'community-nodes', 'chefs', 'README.md'), '# Nodes');
+    await writeFile(join(tmp, 'integrations', 'chefs', 'README.md'), '# Integrations');
+    const { client, calls } = buildFakeClient({
+      uniqueTitles: true,
+      existingPages: [
+        pageFixture('123', 'Anchor', 1),
+        pageFixture('nodes', 'community-nodes', 1, '', '123'),
+        pageFixture('existing-chefs', 'chefs', 4, '<p>Existing folder</p>', 'nodes'),
+        pageFixture('integrations', 'integrations', 1, '', '123'),
+      ],
+    });
+    const options: ConfluenceSyncOptions = {
+      ...baseOptions(client),
+      pageTitleStrategy: 'sentence-case-path',
+      disambiguateFolderTitles: true,
+      updateParentPage: true,
+    };
+    const first = await syncConfluenceToDocs(options);
+    expect(first?.parentStatus).toBe('updated');
+    expect(first?.pruneDeletions).toEqual([]);
+    expect(await client.getPage('existing-chefs')).toMatchObject({
+      title: 'chefs', version: { number: 4 }, body: { storage: { value: '<p>Existing folder</p>' } },
+    });
+    const [fallback] = await client.getPagesByTitle('SPACE', 'chefs (integrations/chefs)');
+    expect(fallback).toMatchObject({ parentId: 'integrations' });
+    const [leaf] = await client.getPagesByTitle('SPACE', 'Readme (integrations/chefs/README.md)');
+    expect(leaf).toMatchObject({ parentId: fallback.id });
+    const parentBody = (await client.getPage('123')).body?.storage?.value ?? '';
+    expect(parentBody).toContain(`ri:content-id="${fallback.id}"`);
+    expect(parentBody).toContain('chefs (integrations/chefs)');
+
+    await rm(join(tmp, 'community-nodes', 'chefs', 'README.md'));
+    await syncConfluenceToDocs(options);
+    expect(await client.getPagesByTitle('SPACE', 'chefs')).toEqual([]);
+
+    calls.length = 0;
+    const unchanged = await syncConfluenceToDocs(options);
+    expect(unchanged?.parentStatus).toBe('unchanged');
+    expect(unchanged?.changes).toEqual([expect.objectContaining({ kind: 'unchanged', pageId: leaf.id })]);
+    expect(calls.filter((call) => ['createPage', 'updatePage', 'deletePage'].includes(call.method))).toEqual([]);
+  });
+
+  it('shows a possible folder fallback in dry-run without contacting Confluence', async () => {
+    await mkdir(join(tmp, 'integrations', 'chefs'), { recursive: true });
+    await writeFile(join(tmp, 'integrations', 'chefs', 'README.md'), '# Integration');
+    const log = vi.fn();
+    const { client, calls } = buildFakeClient({});
+    await syncConfluenceToDocs({
+      ...baseOptions(client), dryRun: true, disambiguateFolderTitles: true, updateParentPage: true, log,
+    });
+    expect(calls).toHaveLength(0);
+    expect(log).toHaveBeenCalledWith(
+      '[dry-run] parent tree: integrations/chefs (directory) => "chefs" (fallback: "chefs (integrations/chefs)")',
+    );
+  });
+
   it('rejects an invalid strategy before any gateway call or remote mutation', async () => {
     await writeNestedLeaf();
     const { client, calls } = buildFakeClient({ spaceId: 'SPACE' });
@@ -1359,7 +1424,7 @@ describe('CFARC-03: validate locally before remote mutation', () => {
     expect(syncErr.unprocessed.map((e) => e.segments.join('/'))).toEqual(['c.md']);
 
     // SyncMutationError carries the underlying message so existing .toThrowError(/regex/) keep matching.
-    expect(syncErr.message).toMatch(/server 500 during updatePage/);
+    expect(syncErr.message).toBe('b.md: server 500 during updatePage');
   });
 
   it('reports a typed gateway fake via `client` without `unknown as` at the call site', async () => {
@@ -2152,7 +2217,7 @@ describe('CFPARENT-01: parent documentation dashboard', () => {
     ...extra,
   });
 
-  it('resolves updateParentPage to true by default', () => {
+  it('updates the parent summary without overwriting the parent body by default', () => {
     const plan = resolveConfluenceSyncPlan({
       folder: 'docs',
       username: 'u',
@@ -2162,6 +2227,7 @@ describe('CFPARENT-01: parent documentation dashboard', () => {
       parentPageId: '1234',
     });
     expect(plan.updateParentPage).toBe(true);
+    expect(plan.overwriteParentPage).toBe(false);
     const disabled = resolveConfluenceSyncPlan({
       folder: 'docs',
       username: 'u',
@@ -2174,12 +2240,21 @@ describe('CFPARENT-01: parent documentation dashboard', () => {
     expect(disabled.updateParentPage).toBe(false);
   });
 
-  it('disabled option performs zero parent GET/PUT and leaves existing region untouched', async () => {
+  it('rejects non-boolean overwrite options', () => {
+    expect(() => resolveConfluenceSyncPlan({
+      folder: tmp,
+      dryRun: true,
+      overwriteParentPage: 'false' as unknown as boolean,
+    })).toThrow('overwriteParentPage must be a boolean');
+  });
+
+  it('disabled parent updates perform no parent GET/PUT even when overwrite is requested', async () => {
     await writeFile(join(tmp, 'a.md'), '# A');
     const parentBody = `<p>Manual</p>\n${PARENT_SUMMARY_START_MARKER}\n<p>old</p>\n${PARENT_SUMMARY_END_MARKER}`;
     const parentPage = pageFixture('123', 'Parent', 5, parentBody, '999');
     const { client, calls } = buildFakeClient({ spaceId: 'SPACE', existingPages: [parentPage] });
-    await syncConfluenceToDocs(baseOptions(client, { updateParentPage: false }));
+    const result = await syncConfluenceToDocs(baseOptions(client, { updateParentPage: false, overwriteParentPage: true }));
+    expect(result?.parentStatus).toBe('skipped');
     expect(calls.some((c) => c.method === 'getPage' && (c.args[0] as string) === '123')).toBe(false);
     expect(calls.some((c) => c.method === 'updatePage' && (c.args[0] as { id: string }).id === '123')).toBe(false);
     const after = await client.getPage('123');
@@ -2221,6 +2296,39 @@ describe('CFPARENT-01: parent documentation dashboard', () => {
     expect(afterSecond.startsWith(firstManual)).toBe(true);
     expect(afterSecond).toContain('Markdown pages: 2');
     expect(afterSecond).not.toContain('Markdown pages: 1');
+  });
+
+  it('overwrites duplicate summaries and refreshes statistics and links without markers', async () => {
+    const oldSummary = '<h2>Synced documentation</h2><h3>Statistics</h3><p>Markdown pages: 99</p><p>stale.md</p>';
+    const oldBody = `<p>Manual content</p>\n${oldSummary}\n${oldSummary}`;
+    const parentPage = pageFixture('123', 'Parent', 5, oldBody, '999');
+    const { client, calls } = buildFakeClient({ spaceId: 'SPACE', existingPages: [parentPage] });
+    const options = baseOptions(client, { overwriteParentPage: true });
+
+    await writeFile(join(tmp, 'intro.md'), '# Intro');
+    expect((await syncConfluenceToDocs(options))?.parentStatus).toBe('updated');
+    const firstParent = await client.getPage('123');
+    expect(firstParent).toMatchObject({ id: '123', title: 'Parent', version: { number: 6 } });
+    const firstBody = firstParent.body?.storage?.value ?? '';
+    expect(firstBody.match(/<h2>Synced documentation<\/h2>/g)).toHaveLength(1);
+    expect(firstBody).toContain('<h3>Statistics</h3>');
+    expect(firstBody).toContain('Markdown pages: 1');
+    expect(firstBody).toContain('<code>intro.md</code>');
+    expect(firstBody).toContain('ri:content-id="100"');
+    expect(firstBody).not.toMatch(/Manual content|stale\.md|Markdown pages: 99|parent-summary:/);
+
+    await writeFile(join(tmp, 'reference.md'), '# Reference');
+    expect((await syncConfluenceToDocs(options))?.parentStatus).toBe('updated');
+    const secondBody = (await client.getPage('123')).body?.storage?.value ?? '';
+    expect(secondBody.match(/<h2>Synced documentation<\/h2>/g)).toHaveLength(1);
+    expect(secondBody).toContain('Markdown pages: 2');
+    expect(secondBody).not.toContain('Markdown pages: 1');
+    expect(secondBody).toContain('<code>intro.md</code>');
+    expect(secondBody).toContain('<code>reference.md</code>');
+    expect(secondBody).toContain('ri:content-id="101"');
+
+    expect((await syncConfluenceToDocs(options))?.parentStatus).toBe('unchanged');
+    expect(calls.filter((c) => c.method === 'updatePage' && (c.args[0] as { id: string }).id === '123')).toHaveLength(2);
   });
 
   it('empty tree renders zero statistics and No managed child pages', async () => {
@@ -2413,7 +2521,7 @@ describe('CFPARENT-01: parent documentation dashboard', () => {
     expect(body).not.toContain('/tmp');
   });
 
-  it('dryRun renders local statistics and title tree without gateway calls or remote links', async () => {
+  it('dryRun previews the overwrite, local statistics, and title tree without gateway calls or remote links', async () => {
     await mkdir(join(tmp, 'guide'));
     await writeFile(join(tmp, 'guide', 'intro.md'), '# Intro');
     const logSpy = vi.fn();
@@ -2421,11 +2529,13 @@ describe('CFPARENT-01: parent documentation dashboard', () => {
     await syncConfluenceToDocs({
       folder: tmp,
       dryRun: true,
+      overwriteParentPage: true,
       client,
       log: logSpy,
     });
     expect(calls).toHaveLength(0);
     const lines = logSpy.mock.calls.map((c) => String(c[0]));
+    expect(lines.some((l) => l.includes('replace the entire parent page body'))).toBe(true);
     expect(lines.some((l) => /parent summary/.test(l))).toBe(true);
     expect(lines.some((l) => /Markdown pages: 1/.test(l))).toBe(true);
     expect(lines.some((l) => /parent tree/.test(l))).toBe(true);
