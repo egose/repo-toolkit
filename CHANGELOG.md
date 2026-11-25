@@ -1,3 +1,13 @@
+## [0.45.0](https://github.com/egose/repo-toolkit/compare/v0.44.1...v0.45.0) (2026-11-25)
+
+### Features
+
+* **confluence:** add folder title disambiguation and parent overwrite controls ([774088d](https://github.com/egose/repo-toolkit/commit/774088d1db19362f5b08f08851ab642b48259c19))
+
+### Documentation
+
+* **confluence:** document npm changelog consumer reliability findings ([6f3d171](https://github.com/egose/repo-toolkit/commit/6f3d17129327e81bd07df880c4ad9cef11a0318f))
+
 ## [0.44.1](https://github.com/egose/repo-toolkit/compare/v0.44.0...v0.44.1) (2026-10-14)
 
 ## [0.44.0](https://github.com/egose/repo-toolkit/compare/v0.43.0...v0.44.0) (2026-10-11)
