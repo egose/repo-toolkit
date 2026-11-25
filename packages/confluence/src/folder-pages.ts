@@ -66,7 +66,11 @@ export async function findOrCreateDisambiguatedFolderPage(options: FolderPageOpt
   );
 }
 
-function uniqueFolderMatch(results: ReadonlyArray<TitleMatches>, relativePath: string, parentId: string): Page | undefined {
+function uniqueFolderMatch(
+  results: ReadonlyArray<TitleMatches>,
+  relativePath: string,
+  parentId: string,
+): Page | undefined {
   const matches = new Map<string, Page>();
   for (const { title, pages } of results) {
     for (const page of pages) {
@@ -83,7 +87,9 @@ function uniqueFolderMatch(results: ReadonlyArray<TitleMatches>, relativePath: s
 }
 
 function isDuplicateTitleError(error: unknown): error is ConfluenceApiError {
-  return error instanceof ConfluenceApiError &&
+  return (
+    error instanceof ConfluenceApiError &&
     (error.status === 400 || error.status === 409) &&
-    /page (?:with this title already exists|already exists with the same title)/i.test(error.responseBody);
+    /page (?:with this title already exists|already exists with the same title)/i.test(error.responseBody)
+  );
 }

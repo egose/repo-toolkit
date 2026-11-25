@@ -61,7 +61,7 @@ Node 26.12.0):
   `Changelog generated at <path>.`
 - `generateChangelog()` JS API before the workaround: rejects with
   `Cannot find package 'conventional-commits-filter' imported from
-  .../node_modules/conventional-changelog/node_modules/@conventional-changelog/git-client/dist/ConventionalGitClient.js`
+.../node_modules/conventional-changelog/node_modules/@conventional-changelog/git-client/dist/ConventionalGitClient.js`
 
 ### Task CHANGELOG-01: Fix CLI entrypoint detection so symlinked bins execute
 
@@ -229,7 +229,7 @@ directory: `<repo-root>`).
 
 - Both tasks: `pnpm lint && pnpm typecheck` and
   `pnpm --filter @repo-toolkit/changelog... build && pnpm --filter
-  @repo-toolkit/changelog test` from `<repo-root>` must pass.
+@repo-toolkit/changelog test` from `<repo-root>` must pass.
 - Joint consumer check (after both): packed-tarball install into a scratch
   npm project, then run the CLI through `node_modules/.bin` against a fixture
   git repository with a `v`-prefixed tag; expect the generated changelog file

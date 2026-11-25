@@ -517,9 +517,12 @@ describe('confluence cli page-title-strategy', () => {
 
     expect((await read()).disambiguateFolderTitles).toBe(false);
     expect(await read('--config', configPath)).toMatchObject({
-      disambiguateFolderTitles: true, pageTitleStrategy: 'sentence-case-path',
+      disambiguateFolderTitles: true,
+      pageTitleStrategy: 'sentence-case-path',
     });
-    expect((await read('--config', configPath, '--no-disambiguate-folder-titles')).disambiguateFolderTitles).toBe(false);
+    expect((await read('--config', configPath, '--no-disambiguate-folder-titles')).disambiguateFolderTitles).toBe(
+      false,
+    );
     expect((await read('--disambiguate-folder-titles')).disambiguateFolderTitles).toBe(true);
     delete process.env.CONFLUENCE_DISAMBIGUATE_FOLDER_TITLES;
     expect((await read()).disambiguateFolderTitles).toBe(true);
@@ -772,9 +775,8 @@ describe('confluence cli clean and parent page options', () => {
     process.env['INPUT_OVERWRITE-PARENT-PAGE'] = 'true';
     process.env.CONFLUENCE_OVERWRITE_PARENT_PAGE = 'false';
     const configPath = await writeConfig({ overwriteParentPage: true });
-    const readOverwrite = async (...argv: string[]) => (
-      await resolveConfluenceOptions({ result: flagResult(argv) })
-    ).overwriteParentPage;
+    const readOverwrite = async (...argv: string[]) =>
+      (await resolveConfluenceOptions({ result: flagResult(argv) })).overwriteParentPage;
 
     expect(await readOverwrite('--overwrite-parent-page')).toBe(true);
     expect(await readOverwrite('--no-overwrite-parent-page', '--config', configPath)).toBe(false);

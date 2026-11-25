@@ -672,11 +672,15 @@ export async function syncConfluenceToDocs(options: ConfluenceSyncOptions = {}):
       '[dry-run] a real sync would label every mapped page with the ownership marker and prune stale labeled descendants.',
     );
     if (plan.disambiguateFolderTitles) {
-      log('[dry-run] folder title disambiguation enabled; actual folder titles depend on existing pages in Confluence.');
+      log(
+        '[dry-run] folder title disambiguation enabled; actual folder titles depend on existing pages in Confluence.',
+      );
     }
     if (plan.updateParentPage) {
       if (plan.overwriteParentPage) {
-        log('[dry-run] parent overwrite requested: a real sync would replace the entire parent page body with the generated summary.');
+        log(
+          '[dry-run] parent overwrite requested: a real sync would replace the entire parent page body with the generated summary.',
+        );
       }
       const stats = computeDryRunStats(localPlan);
       log(
@@ -696,7 +700,9 @@ export async function syncConfluenceToDocs(options: ConfluenceSyncOptions = {}):
             }
             shownFolders.add(dirPath);
             const title = folderPageTitle(dirSegments, plan.pageTitleStrategy);
-            const fallback = plan.disambiguateFolderTitles ? ` (fallback: "${pathQualifiedFolderTitle(title, dirPath)}")` : '';
+            const fallback = plan.disambiguateFolderTitles
+              ? ` (fallback: "${pathQualifiedFolderTitle(title, dirPath)}")`
+              : '';
             log(`[dry-run] parent tree: ${dirPath} (directory) => "${title}"${fallback}`);
           }
           log(`[dry-run] parent tree: ${entryPlan.entry.segments.join('/')} (page) => "${entryPlan.title}"`);
@@ -1082,7 +1088,7 @@ async function syncEntry(
     const title = folderPageTitle(dirSegments, plan.pageTitleStrategy);
     const page = plan.disambiguateFolderTitles
       ? await cache.findOrCreateDisambiguatedFolder(title, currentParentId, relativePath)
-      : { ...await cache.findOrCreate(title, currentParentId), title };
+      : { ...(await cache.findOrCreate(title, currentParentId)), title };
     state.mappedIds.add(page.id);
     await ensureManagedLabel(page.id, client, state, log);
     recordDirectory(relativePath, page.title, page.id, idx + 1);
@@ -1165,7 +1171,13 @@ class PageTitleCache {
   }
 
   async findOrCreateDisambiguatedFolder(title: string, parentId: string, relativePath: string): Promise<Page> {
-    return findOrCreateDisambiguatedFolderPage({ client: this.client, spaceId: this.spaceId, title, parentId, relativePath });
+    return findOrCreateDisambiguatedFolderPage({
+      client: this.client,
+      spaceId: this.spaceId,
+      title,
+      parentId,
+      relativePath,
+    });
   }
 
   async findOrCreate(title: string, parentId: string): Promise<{ id: string }> {

@@ -101,25 +101,25 @@ both read for every option. Boolean env values accept `true|1|yes|on` /
 `false|0|no|off` (empty string is falsy); any other value exits nonzero with
 `Invalid boolean value for <ENV_NAME>: <raw>`.
 
-| Option                  | `CONFLUENCE_*`                   | `INPUT_*` (Actions form)                      |
-| ----------------------- | -------------------------------- | --------------------------------------------- |
-| folder                  | `CONFLUENCE_FOLDER`              | `INPUT_FOLDER`                                |
-| username                | `CONFLUENCE_USERNAME`            | `INPUT_USERNAME`                              |
-| apiToken                | `CONFLUENCE_API_TOKEN`           | `INPUT_API-TOKEN`, `INPUT_PASSWORD`           |
-| apiTokenFile            | `CONFLUENCE_API_TOKEN_FILE`      | `INPUT_API-TOKEN-FILE`, `INPUT_PASSWORD-FILE` |
-| baseUrl                 | `CONFLUENCE_BASE_URL`            | `INPUT_CONFLUENCE-BASE-URL`                   |
-| spaceKey                | `CONFLUENCE_SPACE_KEY`           | `INPUT_SPACE-KEY`                             |
-| parentPageId            | `CONFLUENCE_PARENT_PAGE_ID`      | `INPUT_PARENT-PAGE-ID`                        |
-| versionMessage          | `CONFLUENCE_VERSION_MESSAGE`     | `INPUT_VERSION-MESSAGE`                       |
-| repositoryUrl           | `CONFLUENCE_REPOSITORY_URL`      | `INPUT_REPOSITORY-URL`                        |
-| pageTitleStrategy       | `CONFLUENCE_PAGE_TITLE_STRATEGY` | `INPUT_PAGE-TITLE-STRATEGY`                   |
-| disambiguateFolderTitles (bool) | `CONFLUENCE_DISAMBIGUATE_FOLDER_TITLES` | `INPUT_DISAMBIGUATE-FOLDER-TITLES` |
-| skipUnchanged (bool)    | `CONFLUENCE_SKIP_UNCHANGED`      | `INPUT_SKIP-UNCHANGED`                        |
-| dryRun (bool)           | `CONFLUENCE_DRY_RUN`             | `INPUT_DRY-RUN`                               |
-| renderHtmlBlocks (bool) | `CONFLUENCE_RENDER_HTML_BLOCKS`  | `INPUT_RENDER-HTML-BLOCKS`                    |
-| clean (bool)            | `CONFLUENCE_CLEAN`               | `INPUT_CLEAN`                                 |
-| updateParentPage (bool) | `CONFLUENCE_UPDATE_PARENT_PAGE`  | `INPUT_UPDATE-PARENT-PAGE`                    |
-| overwriteParentPage (bool) | `CONFLUENCE_OVERWRITE_PARENT_PAGE` | `INPUT_OVERWRITE-PARENT-PAGE`              |
+| Option                          | `CONFLUENCE_*`                          | `INPUT_*` (Actions form)                      |
+| ------------------------------- | --------------------------------------- | --------------------------------------------- |
+| folder                          | `CONFLUENCE_FOLDER`                     | `INPUT_FOLDER`                                |
+| username                        | `CONFLUENCE_USERNAME`                   | `INPUT_USERNAME`                              |
+| apiToken                        | `CONFLUENCE_API_TOKEN`                  | `INPUT_API-TOKEN`, `INPUT_PASSWORD`           |
+| apiTokenFile                    | `CONFLUENCE_API_TOKEN_FILE`             | `INPUT_API-TOKEN-FILE`, `INPUT_PASSWORD-FILE` |
+| baseUrl                         | `CONFLUENCE_BASE_URL`                   | `INPUT_CONFLUENCE-BASE-URL`                   |
+| spaceKey                        | `CONFLUENCE_SPACE_KEY`                  | `INPUT_SPACE-KEY`                             |
+| parentPageId                    | `CONFLUENCE_PARENT_PAGE_ID`             | `INPUT_PARENT-PAGE-ID`                        |
+| versionMessage                  | `CONFLUENCE_VERSION_MESSAGE`            | `INPUT_VERSION-MESSAGE`                       |
+| repositoryUrl                   | `CONFLUENCE_REPOSITORY_URL`             | `INPUT_REPOSITORY-URL`                        |
+| pageTitleStrategy               | `CONFLUENCE_PAGE_TITLE_STRATEGY`        | `INPUT_PAGE-TITLE-STRATEGY`                   |
+| disambiguateFolderTitles (bool) | `CONFLUENCE_DISAMBIGUATE_FOLDER_TITLES` | `INPUT_DISAMBIGUATE-FOLDER-TITLES`            |
+| skipUnchanged (bool)            | `CONFLUENCE_SKIP_UNCHANGED`             | `INPUT_SKIP-UNCHANGED`                        |
+| dryRun (bool)                   | `CONFLUENCE_DRY_RUN`                    | `INPUT_DRY-RUN`                               |
+| renderHtmlBlocks (bool)         | `CONFLUENCE_RENDER_HTML_BLOCKS`         | `INPUT_RENDER-HTML-BLOCKS`                    |
+| clean (bool)                    | `CONFLUENCE_CLEAN`                      | `INPUT_CLEAN`                                 |
+| updateParentPage (bool)         | `CONFLUENCE_UPDATE_PARENT_PAGE`         | `INPUT_UPDATE-PARENT-PAGE`                    |
+| overwriteParentPage (bool)      | `CONFLUENCE_OVERWRITE_PARENT_PAGE`      | `INPUT_OVERWRITE-PARENT-PAGE`                 |
 
 Errors, `--help`, and all log lines never print the supplied token value. The
 secret-file loader wraps fs errors via `Error.cause` (`Failed to read

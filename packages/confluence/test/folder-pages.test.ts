@@ -15,7 +15,9 @@ function page(id: string, title: string, parentId: string): Page {
 function setup(initialPages: Page[] = []) {
   const pages = [...initialPages];
   const client = {
-    getPagesByTitle: vi.fn(async (_spaceId: string, title: string) => pages.filter((candidate) => candidate.title === title)),
+    getPagesByTitle: vi.fn(async (_spaceId: string, title: string) =>
+      pages.filter((candidate) => candidate.title === title),
+    ),
     createPage: vi.fn(async (input: CreatePageInput) => {
       const created = page(`created-${pages.length}`, input.title, input.parentId ?? '');
       pages.push(created);
@@ -25,14 +27,22 @@ function setup(initialPages: Page[] = []) {
   return {
     client,
     pages,
-    resolve: () => findOrCreateDisambiguatedFolderPage({ client, spaceId: 'space', parentId, relativePath, title: defaultTitle }),
+    resolve: () =>
+      findOrCreateDisambiguatedFolderPage({ client, spaceId: 'space', parentId, relativePath, title: defaultTitle }),
   };
 }
 
 function duplicateTitle() {
-  return new ConfluenceApiError('Client error (400)', 400, '/wiki/api/v2/pages', JSON.stringify({
-    errors: [{ title: 'A page with this title already exists: A page already exists with the same TITLE in this space' }],
-  }));
+  return new ConfluenceApiError(
+    'Client error (400)',
+    400,
+    '/wiki/api/v2/pages',
+    JSON.stringify({
+      errors: [
+        { title: 'A page with this title already exists: A page already exists with the same TITLE in this space' },
+      ],
+    }),
+  );
 }
 
 describe('folder title disambiguation', () => {
@@ -77,12 +87,11 @@ describe('folder title disambiguation', () => {
   });
 
   it('does not silently choose a new identity if different candidate titles already exist under the intended parent', async () => {
-    const { client, resolve } = setup([
-      page('one', defaultTitle, parentId),
-      page('two', qualifiedTitle, parentId),
-    ]);
+    const { client, resolve } = setup([page('one', defaultTitle, parentId), page('two', qualifiedTitle, parentId)]);
 
-    await expect(resolve()).rejects.toThrow(/Ambiguous Confluence folder "integrations\/chefs" under parent integrations-id/);
+    await expect(resolve()).rejects.toThrow(
+      /Ambiguous Confluence folder "integrations\/chefs" under parent integrations-id/,
+    );
     expect(client.createPage).not.toHaveBeenCalled();
   });
 
@@ -104,7 +113,9 @@ describe('folder title disambiguation', () => {
     const { client, resolve } = setup();
     client.createPage.mockRejectedValue(duplicateTitle());
 
-    await expect(resolve()).rejects.toThrow(/No available Confluence page title for folder "integrations\/chefs" under parent integrations-id/);
+    await expect(resolve()).rejects.toThrow(
+      /No available Confluence page title for folder "integrations\/chefs" under parent integrations-id/,
+    );
     expect(client.createPage).toHaveBeenCalledTimes(3);
     expect(new Set(client.createPage.mock.calls.map(([input]) => input.title)).size).toBe(3);
   });

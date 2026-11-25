@@ -121,7 +121,12 @@ function buildFakeClient(opts: {
     async createPage(input: { title: string; parentId: string; body?: { value: string } }): Promise<Page> {
       calls.push({ method: 'createPage', args: [input] });
       if (opts.uniqueTitles && [...allPages().values()].some((page) => page.title === input.title)) {
-        throw new ConfluenceApiError('Client error (400)', 400, '/wiki/api/v2/pages', 'A page already exists with the same TITLE in this space');
+        throw new ConfluenceApiError(
+          'Client error (400)',
+          400,
+          '/wiki/api/v2/pages',
+          'A page already exists with the same TITLE in this space',
+        );
       }
       const id = String(pageIdCounter);
       pageIdCounter += 1;
@@ -884,7 +889,9 @@ describe('CFNAME-02: page title strategies in sync', () => {
     expect(first?.parentStatus).toBe('updated');
     expect(first?.pruneDeletions).toEqual([]);
     expect(await client.getPage('existing-chefs')).toMatchObject({
-      title: 'chefs', version: { number: 4 }, body: { storage: { value: '<p>Existing folder</p>' } },
+      title: 'chefs',
+      version: { number: 4 },
+      body: { storage: { value: '<p>Existing folder</p>' } },
     });
     const [fallback] = await client.getPagesByTitle('SPACE', 'chefs (integrations/chefs)');
     expect(fallback).toMatchObject({ parentId: 'integrations' });
@@ -911,7 +918,11 @@ describe('CFNAME-02: page title strategies in sync', () => {
     const log = vi.fn();
     const { client, calls } = buildFakeClient({});
     await syncConfluenceToDocs({
-      ...baseOptions(client), dryRun: true, disambiguateFolderTitles: true, updateParentPage: true, log,
+      ...baseOptions(client),
+      dryRun: true,
+      disambiguateFolderTitles: true,
+      updateParentPage: true,
+      log,
     });
     expect(calls).toHaveLength(0);
     expect(log).toHaveBeenCalledWith(
@@ -2241,11 +2252,13 @@ describe('CFPARENT-01: parent documentation dashboard', () => {
   });
 
   it('rejects non-boolean overwrite options', () => {
-    expect(() => resolveConfluenceSyncPlan({
-      folder: tmp,
-      dryRun: true,
-      overwriteParentPage: 'false' as unknown as boolean,
-    })).toThrow('overwriteParentPage must be a boolean');
+    expect(() =>
+      resolveConfluenceSyncPlan({
+        folder: tmp,
+        dryRun: true,
+        overwriteParentPage: 'false' as unknown as boolean,
+      }),
+    ).toThrow('overwriteParentPage must be a boolean');
   });
 
   it('disabled parent updates perform no parent GET/PUT even when overwrite is requested', async () => {
@@ -2253,7 +2266,9 @@ describe('CFPARENT-01: parent documentation dashboard', () => {
     const parentBody = `<p>Manual</p>\n${PARENT_SUMMARY_START_MARKER}\n<p>old</p>\n${PARENT_SUMMARY_END_MARKER}`;
     const parentPage = pageFixture('123', 'Parent', 5, parentBody, '999');
     const { client, calls } = buildFakeClient({ spaceId: 'SPACE', existingPages: [parentPage] });
-    const result = await syncConfluenceToDocs(baseOptions(client, { updateParentPage: false, overwriteParentPage: true }));
+    const result = await syncConfluenceToDocs(
+      baseOptions(client, { updateParentPage: false, overwriteParentPage: true }),
+    );
     expect(result?.parentStatus).toBe('skipped');
     expect(calls.some((c) => c.method === 'getPage' && (c.args[0] as string) === '123')).toBe(false);
     expect(calls.some((c) => c.method === 'updatePage' && (c.args[0] as { id: string }).id === '123')).toBe(false);
@@ -2328,7 +2343,9 @@ describe('CFPARENT-01: parent documentation dashboard', () => {
     expect(secondBody).toContain('ri:content-id="101"');
 
     expect((await syncConfluenceToDocs(options))?.parentStatus).toBe('unchanged');
-    expect(calls.filter((c) => c.method === 'updatePage' && (c.args[0] as { id: string }).id === '123')).toHaveLength(2);
+    expect(calls.filter((c) => c.method === 'updatePage' && (c.args[0] as { id: string }).id === '123')).toHaveLength(
+      2,
+    );
   });
 
   it('empty tree renders zero statistics and No managed child pages', async () => {
