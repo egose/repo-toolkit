@@ -30,23 +30,31 @@ export const SPECS: FlagSpec[] = [
   { name: 'version-message' },
   { name: 'repository-url' },
   { name: 'page-title-strategy' },
+  { name: 'disambiguate-folder-titles', boolean: true, negatable: true },
   { name: 'skip-unchanged', boolean: true, negatable: true },
   { name: 'dry-run', boolean: true },
   { name: 'render-html-blocks', boolean: true },
   { name: 'clean', boolean: true },
   { name: 'update-parent-page', boolean: true, negatable: true },
+  { name: 'overwrite-parent-page', boolean: true, negatable: true },
   INTERACTIVE_FLAG,
 ];
 
 const ENV_TRUTHY = new Set(['true', '1', 'yes', 'on']);
 const ENV_FALSY = new Set(['false', '0', 'no', 'off', '']);
 
-const BOOLEAN_ENV_KEYS = new Set(['skipUnchanged', 'dryRun', 'renderHtmlBlocks', 'clean', 'updateParentPage']);
+const BOOLEAN_ENV_KEYS = new Set<string>([
+  'disambiguateFolderTitles',
+  'skipUnchanged',
+  'dryRun',
+  'renderHtmlBlocks',
+  'clean',
+  'updateParentPage',
+  'overwriteParentPage',
+]);
 
-function isBooleanOption(
-  key: keyof ConfluenceCliOptions,
-): key is 'skipUnchanged' | 'dryRun' | 'renderHtmlBlocks' | 'clean' | 'updateParentPage' {
-  return BOOLEAN_ENV_KEYS.has(key as string);
+function isBooleanOption(key: keyof ConfluenceCliOptions): boolean {
+  return BOOLEAN_ENV_KEYS.has(key);
 }
 
 function parseBooleanEnv(value: string, envName: string): boolean {
@@ -85,11 +93,13 @@ Environment variables (CLI form; GitHub Action INPUT_* form is also read):
   CONFLUENCE_VERSION_MESSAGE            Version-message suffix for every PUT
   CONFLUENCE_REPOSITORY_URL            Repository URL appended to synced pages
   CONFLUENCE_PAGE_TITLE_STRATEGY       Leaf page title strategy (default: filename-stem)
+  CONFLUENCE_DISAMBIGUATE_FOLDER_TITLES true|false (default: false)
   CONFLUENCE_SKIP_UNCHANGED            true|false (default: true)
   CONFLUENCE_DRY_RUN                   true|false (default: false)
   CONFLUENCE_RENDER_HTML_BLOCKS        true|false (default: false)
   CONFLUENCE_CLEAN                     true|false (default: false)
   CONFLUENCE_UPDATE_PARENT_PAGE        true|false (default: true)
+  CONFLUENCE_OVERWRITE_PARENT_PAGE     true|false (default: false)
   INPUT_<UPPER-FLAG>                   GitHub Actions input form (lower precedence)
 
 Note: prefer CONFLUENCE_API_TOKEN_FILE or CONFLUENCE_API_TOKEN over
@@ -109,6 +119,8 @@ Options:
   --repository-url <url>        Repository URL appended to synced pages as an italic notice
   --page-title-strategy <value> Leaf page title strategy: filename-stem (default), filename,
                                 sentence-case-parent, sentence-case-parents, sentence-case-path
+  --disambiguate-folder-titles  Use path-qualified titles for new folders when needed (default: false)
+  --no-disambiguate-folder-titles  Use the directory name for folder pages
   --skip-unchanged               Skip pages whose body is unchanged (default: true)
   --no-skip-unchanged           Re-upload every page even when unchanged
   --dry-run                     Walk the doc tree and print the plan without API calls
@@ -117,8 +129,12 @@ Options:
   --clean                       Move all page descendants to trash before recreation (default: false).
                                 WARNING: destructive — all page descendants, including manual/unlabeled
                                 pages, are moved to trash; parentPageId is retained.
-  --update-parent-page          Update parent page summary region (default: true)
-  --no-update-parent-page       Do not update parent page summary
+  --update-parent-page          Update the parent summary (default: true)
+  --no-update-parent-page       Leave the parent page body untouched
+  --overwrite-parent-page       Replace the entire parent body with the summary (default: false).
+                                WARNING: removes manual content from the parent body.
+                                Ignored with --no-update-parent-page.
+  --no-overwrite-parent-page    Preserve content outside the summary region
   -i, --interactive             Prompt interactively for missing non-secret required values
   -h, --help                    Show this help message
 `);
@@ -179,11 +195,13 @@ const ENV_BINDINGS: ReadonlyArray<EnvBinding> = [
   { envName: 'INPUT_VERSION-MESSAGE', key: 'versionMessage', kind: 'string' },
   { envName: 'INPUT_REPOSITORY-URL', key: 'repositoryUrl', kind: 'string' },
   { envName: 'INPUT_PAGE-TITLE-STRATEGY', key: 'pageTitleStrategy', kind: 'string' },
+  { envName: 'INPUT_DISAMBIGUATE-FOLDER-TITLES', key: 'disambiguateFolderTitles', kind: 'boolean' },
   { envName: 'INPUT_DRY-RUN', key: 'dryRun', kind: 'boolean' },
   { envName: 'INPUT_SKIP-UNCHANGED', key: 'skipUnchanged', kind: 'boolean' },
   { envName: 'INPUT_RENDER-HTML-BLOCKS', key: 'renderHtmlBlocks', kind: 'boolean' },
   { envName: 'INPUT_CLEAN', key: 'clean', kind: 'boolean' },
   { envName: 'INPUT_UPDATE-PARENT-PAGE', key: 'updateParentPage', kind: 'boolean' },
+  { envName: 'INPUT_OVERWRITE-PARENT-PAGE', key: 'overwriteParentPage', kind: 'boolean' },
   { envName: 'CONFLUENCE_FOLDER', key: 'folder', kind: 'string' },
   { envName: 'CONFLUENCE_USERNAME', key: 'username', kind: 'string' },
   { envName: 'CONFLUENCE_API_TOKEN', key: 'apiToken', kind: 'string' },
@@ -194,11 +212,13 @@ const ENV_BINDINGS: ReadonlyArray<EnvBinding> = [
   { envName: 'CONFLUENCE_VERSION_MESSAGE', key: 'versionMessage', kind: 'string' },
   { envName: 'CONFLUENCE_REPOSITORY_URL', key: 'repositoryUrl', kind: 'string' },
   { envName: 'CONFLUENCE_PAGE_TITLE_STRATEGY', key: 'pageTitleStrategy', kind: 'string' },
+  { envName: 'CONFLUENCE_DISAMBIGUATE_FOLDER_TITLES', key: 'disambiguateFolderTitles', kind: 'boolean' },
   { envName: 'CONFLUENCE_DRY_RUN', key: 'dryRun', kind: 'boolean' },
   { envName: 'CONFLUENCE_SKIP_UNCHANGED', key: 'skipUnchanged', kind: 'boolean' },
   { envName: 'CONFLUENCE_RENDER_HTML_BLOCKS', key: 'renderHtmlBlocks', kind: 'boolean' },
   { envName: 'CONFLUENCE_CLEAN', key: 'clean', kind: 'boolean' },
   { envName: 'CONFLUENCE_UPDATE_PARENT_PAGE', key: 'updateParentPage', kind: 'boolean' },
+  { envName: 'CONFLUENCE_OVERWRITE_PARENT_PAGE', key: 'overwriteParentPage', kind: 'boolean' },
 ];
 
 export function optionsFromEnv(env: Record<string, string | undefined> = process.env): Partial<ConfluenceCliOptions> {
@@ -264,6 +284,9 @@ export function buildOptions(result: ReturnType<typeof parseFlags>): Partial<Con
   if (values['page-title-strategy'] !== undefined) {
     options.pageTitleStrategy = values['page-title-strategy'] as string;
   }
+  if (values['disambiguate-folder-titles'] !== undefined) {
+    options.disambiguateFolderTitles = values['disambiguate-folder-titles'] === 'true';
+  }
 
   if (values['skip-unchanged'] !== undefined) {
     options.skipUnchanged = values['skip-unchanged'] === 'true';
@@ -279,6 +302,9 @@ export function buildOptions(result: ReturnType<typeof parseFlags>): Partial<Con
   }
   if (values['update-parent-page'] !== undefined) {
     options.updateParentPage = values['update-parent-page'] === 'true';
+  }
+  if (values['overwrite-parent-page'] !== undefined) {
+    options.overwriteParentPage = values['overwrite-parent-page'] === 'true';
   }
 
   return options as Partial<ConfluenceCliOptions>;

@@ -24,11 +24,13 @@ const PRESERVED_ENV_KEYS = [
   'CONFLUENCE_VERSION_MESSAGE',
   'CONFLUENCE_REPOSITORY_URL',
   'CONFLUENCE_PAGE_TITLE_STRATEGY',
+  'CONFLUENCE_DISAMBIGUATE_FOLDER_TITLES',
   'CONFLUENCE_DRY_RUN',
   'CONFLUENCE_SKIP_UNCHANGED',
   'CONFLUENCE_RENDER_HTML_BLOCKS',
   'CONFLUENCE_CLEAN',
   'CONFLUENCE_UPDATE_PARENT_PAGE',
+  'CONFLUENCE_OVERWRITE_PARENT_PAGE',
   'INPUT_FOLDER',
   'INPUT_USERNAME',
   'INPUT_API-TOKEN',
@@ -41,11 +43,13 @@ const PRESERVED_ENV_KEYS = [
   'INPUT_VERSION-MESSAGE',
   'INPUT_REPOSITORY-URL',
   'INPUT_PAGE-TITLE-STRATEGY',
+  'INPUT_DISAMBIGUATE-FOLDER-TITLES',
   'INPUT_DRY-RUN',
   'INPUT_SKIP-UNCHANGED',
   'INPUT_RENDER-HTML-BLOCKS',
   'INPUT_CLEAN',
   'INPUT_UPDATE-PARENT-PAGE',
+  'INPUT_OVERWRITE-PARENT-PAGE',
   'GITHUB_SERVER_URL',
   'GITHUB_REPOSITORY',
 ];
@@ -505,6 +509,25 @@ describe('confluence cli page-title-strategy', () => {
     expect(optionsFromEnv().pageTitleStrategy).toBe('filename');
   });
 
+  it('resolves disambiguation independently from the leaf strategy through flags, config, and both env forms', async () => {
+    const configPath = await writeConfig({ disambiguateFolderTitles: true, pageTitleStrategy: 'sentence-case-path' });
+    const read = (...argv: string[]) => resolveConfluenceOptions({ result: flagResult(argv) });
+    process.env['INPUT_DISAMBIGUATE-FOLDER-TITLES'] = 'true';
+    process.env.CONFLUENCE_DISAMBIGUATE_FOLDER_TITLES = 'false';
+
+    expect((await read()).disambiguateFolderTitles).toBe(false);
+    expect(await read('--config', configPath)).toMatchObject({
+      disambiguateFolderTitles: true,
+      pageTitleStrategy: 'sentence-case-path',
+    });
+    expect((await read('--config', configPath, '--no-disambiguate-folder-titles')).disambiguateFolderTitles).toBe(
+      false,
+    );
+    expect((await read('--disambiguate-folder-titles')).disambiguateFolderTitles).toBe(true);
+    delete process.env.CONFLUENCE_DISAMBIGUATE_FOLDER_TITLES;
+    expect((await read()).disambiguateFolderTitles).toBe(true);
+  });
+
   it('resolves precedence CLI > config > CONFLUENCE_* > INPUT_* > default', async () => {
     process.env['INPUT_PAGE-TITLE-STRATEGY'] = 'filename';
     process.env.CONFLUENCE_PAGE_TITLE_STRATEGY = 'sentence-case-parent';
@@ -613,6 +636,8 @@ describe('confluence cli page-title-strategy', () => {
     expect(stdout).toContain('filename-stem');
     expect(stdout).toContain('sentence-case-parent');
     expect(stdout).toContain('CONFLUENCE_PAGE_TITLE_STRATEGY');
+    expect(stdout).toContain('--disambiguate-folder-titles');
+    expect(stdout).toContain('CONFLUENCE_DISAMBIGUATE_FOLDER_TITLES');
   });
 
   it('CLI dry-run with non-default strategy emits generated titles', async () => {
@@ -631,7 +656,7 @@ describe('confluence cli page-title-strategy', () => {
   });
 });
 
-describe('confluence cli clean and update-parent-page', () => {
+describe('confluence cli clean and parent page options', () => {
   let envSnapshot: Record<string, string | undefined>;
 
   beforeEach(() => {
@@ -746,7 +771,27 @@ describe('confluence cli clean and update-parent-page', () => {
     expect(plan.updateParentPage).toBe(true);
   });
 
-  it('help output lists --clean with destructive warning and --update-parent-page with defaults', async () => {
+  it('resolves overwrite-parent-page flags, config, and environment in precedence order', async () => {
+    process.env['INPUT_OVERWRITE-PARENT-PAGE'] = 'true';
+    process.env.CONFLUENCE_OVERWRITE_PARENT_PAGE = 'false';
+    const configPath = await writeConfig({ overwriteParentPage: true });
+    const readOverwrite = async (...argv: string[]) =>
+      (await resolveConfluenceOptions({ result: flagResult(argv) })).overwriteParentPage;
+
+    expect(await readOverwrite('--overwrite-parent-page')).toBe(true);
+    expect(await readOverwrite('--no-overwrite-parent-page', '--config', configPath)).toBe(false);
+    expect(await readOverwrite('--config', configPath)).toBe(true);
+    expect(await readOverwrite()).toBe(false);
+    delete process.env.CONFLUENCE_OVERWRITE_PARENT_PAGE;
+    expect(await readOverwrite()).toBe(true);
+  });
+
+  it.each(['CONFLUENCE_OVERWRITE_PARENT_PAGE', 'INPUT_OVERWRITE-PARENT-PAGE'])(
+    'rejects invalid values for %s',
+    (envName) => expect(() => optionsFromEnv({ [envName]: 'maybe' })).toThrow(`Invalid boolean value for ${envName}`),
+  );
+
+  it('help output lists clean and parent page flags with warnings', async () => {
     const { stdout, code } = await runCli(['--help'], {});
     expect(code).toBe(0);
     expect(stdout).toContain('--clean');
@@ -756,6 +801,10 @@ describe('confluence cli clean and update-parent-page', () => {
     expect(stdout).toContain('--update-parent-page');
     expect(stdout).toContain('--no-update-parent-page');
     expect(stdout).toContain('CONFLUENCE_UPDATE_PARENT_PAGE');
+    expect(stdout).toContain('--overwrite-parent-page');
+    expect(stdout).toContain('--no-overwrite-parent-page');
+    expect(stdout).toContain('CONFLUENCE_OVERWRITE_PARENT_PAGE');
+    expect(stdout).toContain('WARNING: removes manual content from the parent body');
   });
 
   it('dry-run with clean logs intent without remote count and with parent summary', async () => {
@@ -771,16 +820,17 @@ describe('confluence cli clean and update-parent-page', () => {
     }
   });
 
-  it('dry-run with --no-update-parent-page omits parent summary', async () => {
+  it('dry-run with --no-update-parent-page omits parent summary and overwrite intent', async () => {
     const tmp = await makeDocTree();
     try {
       const { code, stdout } = await runCli(
-        ['--dry-run', '--folder', join(tmp, 'docs'), '--no-update-parent-page'],
+        ['--dry-run', '--folder', join(tmp, 'docs'), '--overwrite-parent-page', '--no-update-parent-page'],
         {},
       );
       expect(code).toBe(0);
       expect(stdout).not.toContain('[dry-run] parent summary:');
       expect(stdout).not.toContain('[dry-run] parent tree:');
+      expect(stdout).not.toContain('[dry-run] parent overwrite requested:');
     } finally {
       await rm(tmp, { recursive: true, force: true });
     }
